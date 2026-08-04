@@ -19,16 +19,16 @@ export class PointOfSaleController {
 
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.pointOfSaleService.findOne(+id);
+    return this.pointOfSaleService.findOne(id);
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updatePointOfSaleDto: UpdatePointOfSaleDto) {
-    return this.pointOfSaleService.update(+id, updatePointOfSaleDto);
+    return this.pointOfSaleService.update(id, updatePointOfSaleDto);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string) {
-    return this.pointOfSaleService.remove(+id);
+    return this.pointOfSaleService.remove(id);
   }
 }

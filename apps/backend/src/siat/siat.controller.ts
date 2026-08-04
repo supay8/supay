@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { SiatService } from './siat.service';
 
 @Controller('siat')
@@ -10,13 +10,16 @@ export class SiatController {
     return this.siatService.verificarComunicacion();
   }
 
-  @Get('cuis')
-  obtenerCuis() {
-    return this.siatService.obtenerCuis();
+  @Post('cuis/:companyId/:poinOfSaleId')
+  obtenerCuis(@Param('companyId') companyId:string,@Param('poinOfSaleId') pointOfSaleId) {
+    console.log(companyId,pointOfSaleId)
+    return this.siatService.triggerCuis(companyId,pointOfSaleId);
   }
 
-  @Get('cufd')
-  obtenerCufd(@Query('cuis') cuis: string) {
-    return this.siatService.obtenerCufd(cuis);
+  @Post('cufd/:companyId/:poinOfSaleId')
+  obtenerCufd(@Param('companyId') companyId:string,@Param('poinOfSaleId') pointOfSaleId) {
+    console.log(companyId,pointOfSaleId)
+    if(!companyId || !pointOfSaleId ) return {message:'Paramas incompletos'}
+    return this.siatService.createCufd(companyId,pointOfSaleId)
   }
 }

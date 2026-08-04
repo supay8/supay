@@ -3,9 +3,14 @@ import {
     InternalServerErrorException,
 } from '@nestjs/common';
 import * as soap from 'soap';
+import { PrismaService } from '../prisma/prisma.service';
+import { ExceptionsHandler } from '@nestjs/core/exceptions/exceptions-handler';
 
 @Injectable()
 export class SiatService {
+
+    constructor(private readonly prisma: PrismaService) { }
+
     private readonly wsdlUrl =
         'https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionCodigos?wsdl';
 
@@ -51,60 +56,62 @@ export class SiatService {
     }
 
 
-
-    async obtenerCuis() {
-        const cliente = await this.obtenerCliente();
-
-        const solicitud = {
-            codigoAmbiente: this.ambiente,
-            codigoModalidad: this.modalidad,
-            codigoSistema: this.codigoSistema,
-            nit: this.nit,
-            codigoSucursal: this.codigoSucursal,
-            codigoPuntoVenta: this.codigoPuntoVenta,
-        };
-        console.log(solicitud)
-
+    async triggerCuis(companyId: string, pointOfSaleId: string) {
         try {
-            const [respuesta] = await cliente.cuisAsync({
-                SolicitudCuis: solicitud,
-            });
+            const company = await this.prisma.company.findUnique({ where: { id: companyId } })
+            const pointOfSale = await this.prisma.pointOfSale.findUnique({ where: { id: pointOfSaleId } })
 
-            return respuesta;
-        } catch (error: any) {
-            console.error('Error obteniendo CUIS');
+            if (!company && !pointOfSale) throw new Error('No se puedo obtener compnay y pointOfSale para generar las CUIS')
+            const client = await this.obtenerCliente();
+            const request = {
+                codigoAmbiente: this.ambiente,
+                codigoModalidad: this.modalidad,
+                codigoSistema: company?.codigoSistema,
+                nit: company?.nit,
+                codigoSucursal: pointOfSale?.codigoSucursal,
+                codigoPuntoVenta: pointOfSale?.codigoPuntoVenta,
+            };
+            const [response] = await client.cuisAsync({
+                SolicitudCuis: request,
+            })
+            let codeCuis = response.RespuestaCuis.codigo;
+            console.log(response)
 
-            if (error?.response?.data) {
-                console.error(error.response.data);
-            } else {
-                console.error(error);
-            }
-
-            throw new InternalServerErrorException(
-                'No se pudo obtener el CUIS del SIAT',
-            );
+            const updatePointOfSale = await this.prisma.pointOfSale.update({ where: { id: pointOfSaleId }, data: { cuis: codeCuis, cuisCreatedAt: new Date() } })
+            return { succcess: true, data: updatePointOfSale, response }
+        }
+        catch (error) {
+            throw new InternalServerErrorException('No se pudo generar CUIS try later...')
         }
     }
-    async obtenerCufd(cuis: string) {
-        const cliente = await this.obtenerCliente();
-        console.log("obteniendo cuis")
-        console.log(cuis)
-        const solicitud = {
-            codigoAmbiente: this.ambiente,
-            codigoModalidad: this.modalidad,
-            codigoSistema: this.codigoSistema,
-            nit: this.nit,
-            codigoSucursal: this.codigoSucursal,
-            codigoPuntoVenta: this.codigoPuntoVenta,
-            cuis,
-        };
 
+    async createCufd(companyId: string, poinOfSaleId: string) {
         try {
+            const company = await this.prisma.company.findUnique({where:{id:companyId},select:{nit:true,codigoSistema:true}})
+            const pointOfSale = await this.prisma.pointOfSale.findUnique({where:{id:poinOfSaleId}, select:{codigoPuntoVenta:true,codigoSucursal:true,cuis:true}})
+            const cliente = await this.obtenerCliente();
+            const solicitud = {
+                codigoAmbiente: this.ambiente,
+                codigoModalidad: this.modalidad,
+                codigoSistema: company?.codigoSistema,
+                nit: company?.nit,
+                codigoSucursal: pointOfSale?.codigoSucursal,
+                codigoPuntoVenta: pointOfSale?.codigoPuntoVenta,
+                cuis:pointOfSale?.cuis,
+            };
+
             const [respuesta] = await cliente.cufdAsync({
                 SolicitudCufd: solicitud,
             });
-
-            return respuesta;
+            const dat = {
+                 pointOfSaleId:poinOfSaleId,
+                    codigoControl:respuesta.RespuestaCufd.codigoControl,
+                    direccion:respuesta.RespuestaCufd.direccion,
+                    validFrom : new Date(),
+                    cufd:respuesta.RespuestaCufd.codigo,
+                    validTo: respuesta.RespuestaCufd.fechaVigencia
+            }
+            return {respuesta,dat}
         } catch (error) {
             console.error('Error obteniendo CUFD:', error);
             throw new InternalServerErrorException(

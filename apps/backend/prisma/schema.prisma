@@ -100,6 +100,7 @@ model Cufd {
   id               String   @id @default(cuid())
   pointOfSaleId    String
   cufd             String
+  direccion        String
   codigoControl    String
   validFrom        DateTime
   validTo          DateTime

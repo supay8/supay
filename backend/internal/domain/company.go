@@ -12,6 +12,15 @@ const (
 	EnvironmentProduccion SiatEnvironment = "PRODUCCION"
 )
 
+// CodigoAmbiente devuelve el código numérico que el SIAT espera para el ambiente:
+// 1 = producción, 2 = piloto/pruebas.
+func (e SiatEnvironment) CodigoAmbiente() int {
+	if e == EnvironmentProduccion {
+		return 1
+	}
+	return 2
+}
+
 // ErrCompanyNitConflict indica que ya existe una empresa con el mismo NIT
 var ErrCompanyNitConflict = errors.New("ya existe una empresa registrada con este NIT")
 

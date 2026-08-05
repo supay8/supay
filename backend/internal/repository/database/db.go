@@ -47,8 +47,11 @@ func ConnectDB() {
 	log.Println("🔄 Ejecutando migraciones de base de datos...")
 	err = DB.AutoMigrate(
 		&models.Company{},
+		&models.Branch{},
+		&models.TipoPuntoVenta{},
 		&models.PointOfSale{},
 		&models.Cufd{},
+		&models.Cuis{},
 		&models.ContingencyEvent{},
 		&models.Customer{},
 		&models.Invoice{},
@@ -64,6 +67,16 @@ func ConnectDB() {
 	// point_of_sales: unique (company_id, codigo_sucursal, codigo_punto_venta)
 	if err := DB.Migrator().CreateIndex(&models.PointOfSale{}, "idx_company_sucursal_pv"); err != nil {
 		log.Fatalf("❌ Error al crear el índice único idx_company_sucursal_pv: %v", err)
+	}
+
+	// branches: unique (company_id, codigo_sucursal)
+	if err := DB.Migrator().CreateIndex(&models.Branch{}, "idx_company_sucursal"); err != nil {
+		log.Fatalf("❌ Error al crear el índice único idx_company_sucursal: %v", err)
+	}
+
+	// tipo_punto_ventas: unique (company_id, codigo_clasificador)
+	if err := DB.Migrator().CreateIndex(&models.TipoPuntoVenta{}, "idx_company_tipo_pv"); err != nil {
+		log.Fatalf("❌ Error al crear el índice único idx_company_tipo_pv: %v", err)
 	}
 
 	// invoices: unique (point_of_sale_id, invoice_number).

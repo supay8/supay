@@ -73,18 +73,53 @@ type Company struct {
 type PointOfSale struct {
 	ID               string  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	CompanyId        string  `gorm:"type:uuid;uniqueIndex:idx_company_sucursal_pv,priority:1;not null"`
+	BranchId         *string `gorm:"type:uuid;index"`
 	CodigoSucursal   int     `gorm:"uniqueIndex:idx_company_sucursal_pv,priority:2;default:0;not null"`
 	CodigoPuntoVenta int     `gorm:"uniqueIndex:idx_company_sucursal_pv,priority:3;not null"`
 	Description      string  `gorm:"type:varchar(150);not null"`
 	Cuis             *string `gorm:"type:varchar(100)"`
 	CuisCreatedAt    *time.Time
-	IsActive         bool `gorm:"default:true;not null"`
+	IsActive         bool   `gorm:"default:true;not null"`
+	SiatCode         *int   `gorm:"type:int"`
+	Status           string `gorm:"type:varchar(50);default:'CREATING'"`
 	CreatedAt        time.Time
+
+	// Datos del registro oficial ante el SIAT (operación registroPuntoVenta)
+	TipoPuntoVenta   *int `gorm:"type:int"`
+	SiatTransaccion  bool `gorm:"default:false;not null"`
+	SiatRegisteredAt *time.Time
+	SiatResponse     *datatypes.JSON `gorm:"type:jsonb"`
+	SiatError        *string         `gorm:"type:text"`
 
 	Company           Company            `gorm:"foreignKey:CompanyId"`
 	Cufds             []Cufd             `gorm:"foreignKey:PointOfSaleId"`
 	Invoices          []Invoice          `gorm:"foreignKey:PointOfSaleId"`
 	ContingencyEvents []ContingencyEvent `gorm:"foreignKey:PointOfSaleId"`
+}
+
+type Branch struct {
+	ID             string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CompanyId      string `gorm:"type:uuid;uniqueIndex:idx_company_sucursal,priority:1;not null"`
+	CodigoSucursal int    `gorm:"uniqueIndex:idx_company_sucursal,priority:2;not null"`
+	Name           string `gorm:"type:varchar(150);not null"`
+	Address        string `gorm:"type:text"`
+	Active         bool   `gorm:"default:true;not null"`
+	CreatedAt      time.Time
+
+	Company Company `gorm:"foreignKey:CompanyId"`
+}
+
+// TipoPuntoVenta es el catálogo sincronizado de tipos de punto de venta
+// (operación sincronizarParametricaTipoPuntoVenta del SIAT).
+type TipoPuntoVenta struct {
+	ID                 string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CompanyId          string    `gorm:"type:uuid;uniqueIndex:idx_company_tipo_pv,priority:1;not null"`
+	CodigoClasificador int       `gorm:"uniqueIndex:idx_company_tipo_pv,priority:2;not null"`
+	Descripcion        string    `gorm:"type:varchar(200);not null"`
+	SyncedAt           time.Time `gorm:"not null"`
+	CreatedAt          time.Time
+
+	Company Company `gorm:"foreignKey:CompanyId"`
 }
 
 type Cufd struct {
@@ -95,9 +130,23 @@ type Cufd struct {
 	CodigoControl string    `gorm:"type:varchar(100);not null"`
 	ValidFrom     time.Time `gorm:"index:idx_cufd_pos_valid;not null"`
 	ValidTo       time.Time `gorm:"not null"`
+	Active        bool      `gorm:"default:true;not null"`
+	CreatedAt     time.Time
 
 	PointOfSale PointOfSale `gorm:"foreignKey:PointOfSaleId"`
 	Invoices    []Invoice   `gorm:"foreignKey:CufdId"`
+}
+
+type Cuis struct {
+	ID            string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	PointOfSaleId string    `gorm:"type:uuid;index;not null"`
+	Cuis          string    `gorm:"type:varchar(200);not null"`
+	ValidFrom     time.Time `gorm:"not null"`
+	ValidTo       time.Time `gorm:"not null"`
+	Active        bool      `gorm:"default:true;not null"`
+	CreatedAt     time.Time
+
+	PointOfSale PointOfSale `gorm:"foreignKey:PointOfSaleId"`
 }
 
 type ContingencyEvent struct {

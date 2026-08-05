@@ -28,24 +28,34 @@ func (r *PostgresPointOfSaleRepository) Create(pos *domain.PointOfSale) error {
 			return err
 		}
 
-		var next int
-		if err := tx.Model(&models.PointOfSale{}).
-			Where("company_id = ? AND codigo_sucursal = ?", pos.CompanyId, pos.CodigoSucursal).
-			Select("COALESCE(MAX(codigo_punto_venta), 0) + 1").
-			Scan(&next).Error; err != nil {
-			return err
+		if pos.CodigoPuntoVenta <= 0 {
+			var next int
+			if err := tx.Model(&models.PointOfSale{}).
+				Where("company_id = ? AND codigo_sucursal = ?", pos.CompanyId, pos.CodigoSucursal).
+				Select("COALESCE(MAX(codigo_punto_venta), 0) + 1").
+				Scan(&next).Error; err != nil {
+				return err
+			}
+			pos.CodigoPuntoVenta = next
 		}
-		pos.CodigoPuntoVenta = next
 
 		dbModel := models.PointOfSale{
 			ID:               uuid.NewString(),
 			CompanyId:        pos.CompanyId,
+			BranchId:         pos.BranchId,
 			CodigoSucursal:   pos.CodigoSucursal,
 			CodigoPuntoVenta: pos.CodigoPuntoVenta,
 			Description:      pos.Description,
 			Cuis:             pos.Cuis,
 			CuisCreatedAt:    pos.CuisCreatedAt,
 			IsActive:         pos.IsActive,
+			SiatCode:         pos.SiatCode,
+			Status:           pos.Status,
+			TipoPuntoVenta:   pos.TipoPuntoVenta,
+			SiatTransaccion:  pos.SiatTransaccion,
+			SiatRegisteredAt: pos.SiatRegisteredAt,
+			SiatResponse:     pos.SiatResponse,
+			SiatError:        pos.SiatError,
 		}
 
 		if err := tx.Create(&dbModel).Error; err != nil {
@@ -88,6 +98,19 @@ func (r *PostgresPointOfSaleRepository) List(companyID string) ([]*domain.PointO
 	return pointsOfSale, nil
 }
 
+func (r *PostgresPointOfSaleRepository) ListByBranch(branchID string) ([]*domain.PointOfSale, error) {
+	var dbModels []models.PointOfSale
+	if err := r.db.Where("branch_id = ?", branchID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
+		return nil, err
+	}
+
+	pointsOfSale := make([]*domain.PointOfSale, 0, len(dbModels))
+	for i := range dbModels {
+		pointsOfSale = append(pointsOfSale, toDomainPointOfSale(&dbModels[i]))
+	}
+	return pointsOfSale, nil
+}
+
 func (r *PostgresPointOfSaleRepository) Update(pos *domain.PointOfSale) error {
 	var dbModel models.PointOfSale
 	if err := r.db.Where("id = ?", pos.ID).First(&dbModel).Error; err != nil {
@@ -95,12 +118,20 @@ func (r *PostgresPointOfSaleRepository) Update(pos *domain.PointOfSale) error {
 	}
 
 	dbModel.CompanyId = pos.CompanyId
+	dbModel.BranchId = pos.BranchId
 	dbModel.CodigoSucursal = pos.CodigoSucursal
 	dbModel.CodigoPuntoVenta = pos.CodigoPuntoVenta
 	dbModel.Description = pos.Description
 	dbModel.Cuis = pos.Cuis
 	dbModel.CuisCreatedAt = pos.CuisCreatedAt
 	dbModel.IsActive = pos.IsActive
+	dbModel.SiatCode = pos.SiatCode
+	dbModel.Status = pos.Status
+	dbModel.TipoPuntoVenta = pos.TipoPuntoVenta
+	dbModel.SiatTransaccion = pos.SiatTransaccion
+	dbModel.SiatRegisteredAt = pos.SiatRegisteredAt
+	dbModel.SiatResponse = pos.SiatResponse
+	dbModel.SiatError = pos.SiatError
 
 	if err := r.db.Save(&dbModel).Error; err != nil {
 		if isUniqueViolation(err) {
@@ -125,12 +156,20 @@ func toDomainPointOfSale(dbModel *models.PointOfSale) *domain.PointOfSale {
 	return &domain.PointOfSale{
 		ID:               dbModel.ID,
 		CompanyId:        dbModel.CompanyId,
+		BranchId:         dbModel.BranchId,
 		CodigoSucursal:   dbModel.CodigoSucursal,
 		CodigoPuntoVenta: dbModel.CodigoPuntoVenta,
 		Description:      dbModel.Description,
 		Cuis:             dbModel.Cuis,
 		CuisCreatedAt:    dbModel.CuisCreatedAt,
 		IsActive:         dbModel.IsActive,
+		SiatCode:         dbModel.SiatCode,
+		Status:           dbModel.Status,
+		TipoPuntoVenta:   dbModel.TipoPuntoVenta,
+		SiatTransaccion:  dbModel.SiatTransaccion,
+		SiatRegisteredAt: dbModel.SiatRegisteredAt,
+		SiatResponse:     dbModel.SiatResponse,
+		SiatError:        dbModel.SiatError,
 		CreatedAt:        dbModel.CreatedAt,
 	}
 }

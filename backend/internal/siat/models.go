@@ -102,7 +102,7 @@ type RespuestaCuis struct {
 	Codigo         string      `xml:"codigo" json:"codigo"`
 	FechaVigencia  XMLDateTime `xml:"fechaVigencia" json:"fechaVigencia"`
 	Transaccion    bool        `xml:"transaccion" json:"transaccion"`
-	Mensajes       []Mensaje   `xml:"mensajesList>mensaje,omitempty" json:"mensajes,omitempty"`
+	Mensajes       []Mensaje   `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
 	CodigoEstado   string      `xml:"codigoEstado,omitempty" json:"codigoEstado,omitempty"`
 	CodigoSistema  string      `xml:"codigoSistema,omitempty" json:"codigoSistema,omitempty"`
 	CodigoAmbiente string      `xml:"codigoAmbiente,omitempty" json:"codigoAmbiente,omitempty"`
@@ -127,7 +127,7 @@ type RespuestaCufd struct {
 	Direccion     string      `xml:"direccion" json:"direccion"`
 	FechaVigencia XMLDateTime `xml:"fechaVigencia" json:"fechaVigencia"`
 	Transaccion   bool        `xml:"transaccion" json:"transaccion"`
-	Mensajes      []Mensaje   `xml:"mensajesList>mensaje,omitempty" json:"mensajes,omitempty"`
+	Mensajes      []Mensaje   `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
 }
 
 func (s SolicitudCuis) Validate() error {

@@ -23,7 +23,7 @@ type ParametricaDto struct {
 
 type RespuestaListaParametricas struct {
 	Transaccion  bool             `xml:"transaccion" json:"transaccion"`
-	Mensajes     []Mensaje        `xml:"mensajesList>mensaje,omitempty" json:"mensajes,omitempty"`
+	Mensajes     []Mensaje        `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
 	ListaCodigos []ParametricaDto `xml:"listaCodigos,omitempty" json:"listaCodigos,omitempty"`
 }
 

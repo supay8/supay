@@ -14,9 +14,13 @@ import (
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Cargar .env antes de leer la configuración para que SIAT_TOKEN_DELEGADO
+	// (y demás variables) estén disponibles para el cliente SOAP.
+	_ = godotenv.Load()
 	fmt.Println("🚀 Iniciando motor SIAT en Go con Chi Router...")
 	appCfg := appconfig.Load()
 

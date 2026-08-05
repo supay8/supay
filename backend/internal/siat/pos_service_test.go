@@ -47,6 +47,21 @@ func mockPuntoVentaServer(t *testing.T) *httptest.Server {
 				    </cierrePuntoVentaResponse>
 				  </soapenv:Body>
 				</soapenv:Envelope>`))
+		case strings.Contains(body, "registroPuntoVenta"):
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+				<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+				  <soapenv:Body>
+				    <registroPuntoVentaResponse>
+				      <RespuestaRegistroPuntoVenta>
+				        <mensajesList>
+				          <codigo>947</codigo>
+				          <descripcion>EL PARAMETRO TIPO DE PUNTO DE VENTA ES INVALIDO</descripcion>
+				        </mensajesList>
+				        <transaccion>false</transaccion>
+				      </RespuestaRegistroPuntoVenta>
+				    </registroPuntoVentaResponse>
+				  </soapenv:Body>
+				</soapenv:Envelope>`))
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte("unknown request"))
@@ -92,6 +107,40 @@ func TestPuntoVentaService_Consultar(t *testing.T) {
 	}
 	if !strings.Contains(resp.RawRequest, "consultaPuntoVenta") {
 		t.Fatal("expected raw request captured")
+	}
+}
+
+func TestPuntoVentaService_Registrar(t *testing.T) {
+	srv := mockPuntoVentaServer(t)
+	defer srv.Close()
+
+	svc := newPuntoVentaTestService(t, srv.URL)
+	req := RegistroPuntoVentaRequest{
+		CodigoAmbiente:       2,
+		CodigoModalidad:      1,
+		CodigoSistema:        "CODE-TEST",
+		CodigoSucursal:       0,
+		CodigoTipoPuntoVenta: 1,
+		Cuis:                 "CUIS-X",
+		Nit:                  "9971522011",
+		NombrePuntoVenta:     "Caja Principal",
+	}
+	ctx := context.Background()
+	resp, err := svc.Registrar(ctx, req)
+	if err != nil {
+		t.Fatalf("registrar: %v", err)
+	}
+	if resp.Transaccion {
+		t.Fatal("expected transaccion=false for rejection response")
+	}
+	if len(resp.Mensajes) != 1 {
+		t.Fatalf("expected 1 mensaje parsed, got %d", len(resp.Mensajes))
+	}
+	if resp.Mensajes[0].Codigo != "947" {
+		t.Fatalf("expected mensaje codigo 947, got %q", resp.Mensajes[0].Codigo)
+	}
+	if resp.Mensajes[0].Descripcion != "EL PARAMETRO TIPO DE PUNTO DE VENTA ES INVALIDO" {
+		t.Fatalf("unexpected descripcion: %q", resp.Mensajes[0].Descripcion)
 	}
 }
 

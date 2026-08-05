@@ -21,7 +21,7 @@ type RegistroPuntoVentaRequest struct {
 type RegistroPuntoVentaResponse struct {
 	CodigoPuntoVenta int       `xml:"codigoPuntoVenta" json:"codigoPuntoVenta"`
 	Transaccion      bool      `xml:"transaccion" json:"transaccion"`
-	Mensajes         []Mensaje `xml:"mensajesList>mensaje,omitempty" json:"mensajes,omitempty"`
+	Mensajes         []Mensaje `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
 
 	// RawRequest / RawResponse capturan el payload SOAP enviado y recibido para
 	// diagnóstico y persistencia.
@@ -50,7 +50,7 @@ type PuntoVentaDto struct {
 
 type RespuestaConsultaPuntoVenta struct {
 	Transaccion      bool            `xml:"transaccion" json:"transaccion"`
-	Mensajes         []Mensaje       `xml:"mensajesList>mensaje,omitempty" json:"mensajes,omitempty"`
+	Mensajes         []Mensaje       `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
 	ListaPuntosVenta []PuntoVentaDto `xml:"listaPuntosVenta,omitempty" json:"listaPuntosVenta,omitempty"`
 	RawRequest       string          `xml:"-" json:"-"`
 	RawResponse      string          `xml:"-" json:"-"`
@@ -70,7 +70,7 @@ type CierrePuntoVentaRequest struct {
 type RespuestaCierrePuntoVenta struct {
 	CodigoPuntoVenta int       `xml:"codigoPuntoVenta" json:"codigoPuntoVenta"`
 	Transaccion      bool      `xml:"transaccion" json:"transaccion"`
-	Mensajes         []Mensaje `xml:"mensajesList>mensaje,omitempty" json:"mensajes,omitempty"`
+	Mensajes         []Mensaje `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
 	RawRequest       string    `xml:"-" json:"-"`
 	RawResponse      string    `xml:"-" json:"-"`
 }

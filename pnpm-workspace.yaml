@@ -1,5 +1,5 @@
 packages:
-  - apps/*
+  - frontend
   - packages/*
 allowBuilds:
   '@prisma/engines': true
@@ -7,3 +7,4 @@ allowBuilds:
   prisma: true
   sharp: true
   unrs-resolver: true
+  esbuild: true

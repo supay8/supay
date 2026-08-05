@@ -8,6 +8,7 @@ import (
 
 	appconfig "github.com/brandsrx/supay/internal/config"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
+	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/repository/database"
 	"github.com/brandsrx/supay/internal/repository/postgres"
 	"github.com/brandsrx/supay/internal/siat"
@@ -43,6 +44,14 @@ func main() {
 	branchUsecase := usecase.NewBranchUsecase(branchRepo, companyRepo)
 	branchHandler := deliveryHttp.NewBranchHandler(branchUsecase)
 
+	customerRepo := postgres.NewPostgresCustomerRepository(database.DB)
+	customerUsecase := usecase.NewCustomerUsecase(customerRepo, companyRepo)
+	customerHandler := deliveryHttp.NewCustomerHandler(customerUsecase)
+
+	invoiceRepo := postgres.NewPostgresInvoiceRepository(database.DB)
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo)
+	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
+
 	var cuisService *siat.CuisService
 	var cufdService *siat.CufdService
 	var emissionService *siat.EmissionService
@@ -55,13 +64,13 @@ func main() {
 		} else {
 			cuisService = siat.NewCuisService(siATClient)
 			cufdService = siat.NewCufdService(siATClient)
-			emissionService = siat.NewEmissionService(database.DB, siATClient, nil)
+			emissionService = siat.NewEmissionService(database.DB, siATClient, appCfg.SIAT, nil)
 			log.Printf("✅ Cliente SIAT listo: WSDL=%s Endpoint=%s", siATClient.WSDLURL(), siATClient.Endpoint())
 		}
 	} else {
 		log.Printf("⚠️ Configuración SIAT inválida o incompleta: %v", err)
 	}
-	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cuisService, cufdService, emissionService, appCfg.SiatModalidad)
+	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, cuisService, cufdService, emissionService, pdf.NewService(database.DB), appCfg.SiatModalidad)
 
 	// Provisioning service and handlers (create POS under branch and provision with SIAT)
 	var branchPosHandler *deliveryHttp.BranchPosHandler
@@ -147,6 +156,19 @@ func main() {
 		r.Post("/cuis/{companyId}/{pointOfSaleId}", siatHandler.SolicitarCUIS)
 		r.Post("/cufd/{companyId}/{pointOfSaleId}", siatHandler.SolicitarCUFD)
 		r.Post("/emit/{invoiceId}", siatHandler.EmitInvoice)
+		r.Get("/invoice/{invoiceId}/pdf", siatHandler.DownloadPDF)
+	})
+
+	r.Route("/customers", func(r chi.Router) {
+		r.Post("/", customerHandler.Create)
+		r.Get("/", customerHandler.List)
+		r.Get("/{id}", customerHandler.GetByID)
+	})
+
+	r.Route("/invoices", func(r chi.Router) {
+		r.Post("/", invoiceHandler.Create)
+		r.Get("/", invoiceHandler.ListByPointOfSale)
+		r.Get("/{id}", invoiceHandler.GetByID)
 	})
 
 	port := ":" + appCfg.Port

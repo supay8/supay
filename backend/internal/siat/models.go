@@ -124,6 +124,7 @@ type RespuestaCufd struct {
 	XMLName       xml.Name    `xml:"RespuestaCufd" json:"-"`
 	Codigo        string      `xml:"codigo" json:"codigo"`
 	CodigoControl string      `xml:"codigoControl" json:"codigoControl"`
+	CodigoQR      *string     `xml:"codigoQR,omitempty" json:"codigoQR,omitempty"`
 	Direccion     string      `xml:"direccion" json:"direccion"`
 	FechaVigencia XMLDateTime `xml:"fechaVigencia" json:"fechaVigencia"`
 	Transaccion   bool        `xml:"transaccion" json:"transaccion"`

@@ -1,0 +1,6 @@
+# Certificados de firma digital (nunca commitear)
+firma_digital/
+*.p12
+*.pfx
+*.pem
+*.key

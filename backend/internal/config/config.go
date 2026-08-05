@@ -44,10 +44,19 @@ func Load() Config {
 		siATConfig.EndpointURL = endpointURL
 	}
 
+	// Certificado de firma digital para la modalidad Electrónica en Línea.
+	siATConfig.CertPath = strings.TrimSpace(os.Getenv("SIAT_CERT_PATH"))
+	siATConfig.CertPassword = os.Getenv("SIAT_CERT_PASSWORD")
+	siATConfig.CertPEMCert = strings.TrimSpace(os.Getenv("SIAT_CERT_PEM_CERT"))
+	siATConfig.CertPEMKey = strings.TrimSpace(os.Getenv("SIAT_CERT_PEM_KEY"))
+
+	modalidad := parseInt(getEnv("SIAT_MODALIDAD", "1"), 1)
+	siATConfig.CodigoModalidad = modalidad
+
 	return Config{
-		Port:          getEnv("PORT", "8080"),
+		Port:          getEnv("PORT", "8081"),
 		SIAT:          siATConfig,
-		SiatModalidad: parseInt(getEnv("SIAT_MODALIDAD", "1"), 1),
+		SiatModalidad: modalidad,
 	}
 }
 

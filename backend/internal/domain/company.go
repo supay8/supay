@@ -29,13 +29,18 @@ var ErrCompanyNitConflict = errors.New("ya existe una empresa registrada con est
 var ErrCompanyHasDependencies = errors.New("no se puede eliminar: la empresa tiene puntos de venta, clientes o facturas asociados")
 
 type Company struct {
-	ID            string          `json:"id"`
-	Nit           string          `json:"nit"`
-	BusinessName  string          `json:"business_name"`
-	CodigoSistema string          `json:"codigo_sistema"`
-	Ambiente      SiatEnvironment `json:"ambiente"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID              string          `json:"id"`
+	Nit             string          `json:"nit"`
+	BusinessName    string          `json:"business_name"`
+	CodigoSistema   string          `json:"codigo_sistema"`
+	Ambiente        SiatEnvironment `json:"ambiente"`
+	Municipio       string          `json:"municipio,omitempty"`
+	Direccion       string          `json:"direccion,omitempty"`
+	Telefono        string          `json:"telefono,omitempty"`
+	CodigoActividad *string         `json:"codigo_actividad,omitempty"`
+	PiePagina       string          `json:"pie_pagina,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 // CompanyRepository define el contrato para la persistencia

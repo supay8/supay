@@ -1,0 +1,63 @@
+package http
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/brandsrx/supay/internal/usecase"
+	"github.com/go-chi/chi/v5"
+)
+
+type InvoiceHandler struct {
+	uc *usecase.InvoiceUsecase
+}
+
+func NewInvoiceHandler(uc *usecase.InvoiceUsecase) *InvoiceHandler {
+	return &InvoiceHandler{uc: uc}
+}
+
+func (h *InvoiceHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var req usecase.CreateInvoiceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+	inv, err := h.uc.Create(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(inv)
+}
+
+func (h *InvoiceHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		return
+	}
+	inv, err := h.uc.GetByID(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inv)
+}
+
+func (h *InvoiceHandler) ListByPointOfSale(w http.ResponseWriter, r *http.Request) {
+	pointOfSaleID := r.URL.Query().Get("pointOfSaleId")
+	if pointOfSaleID == "" {
+		http.Error(w, "pointOfSaleId es obligatorio", http.StatusBadRequest)
+		return
+	}
+	list, err := h.uc.ListByPointOfSale(pointOfSaleID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(list)
+}

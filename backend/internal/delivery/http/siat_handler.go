@@ -2,10 +2,12 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/siat"
 	"github.com/go-chi/chi/v5"
 )
@@ -13,26 +15,32 @@ import (
 type SiatHandler struct {
 	companyRepo     domain.CompanyRepository
 	pointOfSaleRepo domain.PointOfSaleRepository
+	cufdRepo        domain.CufdRepository
 	cuisService     *siat.CuisService
 	cufdService     *siat.CufdService
 	emissionService *siat.EmissionService
+	pdfService      *pdf.Service
 	modalidad       int
 }
 
 func NewSiatHandler(
 	companyRepo domain.CompanyRepository,
 	pointOfSaleRepo domain.PointOfSaleRepository,
+	cufdRepo domain.CufdRepository,
 	cuisService *siat.CuisService,
 	cufdService *siat.CufdService,
 	emissionService *siat.EmissionService,
+	pdfService *pdf.Service,
 	modalidad int,
 ) *SiatHandler {
 	return &SiatHandler{
 		companyRepo:     companyRepo,
 		pointOfSaleRepo: pointOfSaleRepo,
+		cufdRepo:        cufdRepo,
 		cuisService:     cuisService,
 		cufdService:     cufdService,
 		emissionService: emissionService,
+		pdfService:      pdfService,
 		modalidad:       modalidad,
 	}
 }
@@ -148,6 +156,22 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now().UTC()
+	cufd := &domain.Cufd{
+		PointOfSaleID: pointOfSale.ID,
+		Cufd:          resp.Codigo,
+		ControlCode:   resp.CodigoControl,
+		Direccion:     resp.Direccion,
+		CodigoQR:      resp.CodigoQR,
+		ValidFrom:     now,
+		ValidTo:       resp.FechaVigencia.Time,
+		Active:        true,
+	}
+	if err := h.cufdRepo.Create(cufd); err != nil {
+		http.Error(w, "No se pudo persistir el CUFD", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(siatCufdResponse{
@@ -178,6 +202,30 @@ func (h *SiatHandler) EmitInvoice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{"invoice_id": inv.ID, "status": inv.Status, "xml_hash": inv.XmlHash})
+}
+
+// DownloadPDF genera y descarga el PDF de la factura indicada.
+func (h *SiatHandler) DownloadPDF(w http.ResponseWriter, r *http.Request) {
+	if h.pdfService == nil {
+		http.Error(w, "Servicio de PDF no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+	invoiceID := chi.URLParam(r, "invoiceId")
+	if invoiceID == "" {
+		http.Error(w, "invoiceId es obligatorio", http.StatusBadRequest)
+		return
+	}
+
+	data, err := h.pdfService.GenerateInvoicePDF(invoiceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"factura-%s.pdf\"", invoiceID))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (h *SiatHandler) loadCompanyAndPointOfSale(r *http.Request) (*domain.Company, *domain.PointOfSale, error) {

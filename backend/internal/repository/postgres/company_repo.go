@@ -17,11 +17,16 @@ func NewPostgresCompanyRepository(db *gorm.DB) domain.CompanyRepository {
 
 func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 	dbModel := models.Company{
-		ID:            uuid.NewString(),
-		Nit:           c.Nit,
-		BusinessName:  c.BusinessName,
-		CodigoSistema: c.CodigoSistema,
-		Ambiente:      models.SiatEnvironment(c.Ambiente),
+		ID:             uuid.NewString(),
+		Nit:            c.Nit,
+		BusinessName:   c.BusinessName,
+		CodigoSistema:  c.CodigoSistema,
+		Ambiente:       models.SiatEnvironment(c.Ambiente),
+		Municipio:      c.Municipio,
+		Direccion:      c.Direccion,
+		Telefono:       c.Telefono,
+		CodigoActividad: c.CodigoActividad,
+		PiePagina:      c.PiePagina,
 	}
 
 	if err := r.db.Create(&dbModel).Error; err != nil {
@@ -44,13 +49,18 @@ func (r *PostgresCompanyRepository) GetByNit(nit string) (*domain.Company, error
 	}
 
 	return &domain.Company{
-		ID:            dbModel.ID,
-		Nit:           dbModel.Nit,
-		BusinessName:  dbModel.BusinessName,
-		CodigoSistema: dbModel.CodigoSistema,
-		Ambiente:      domain.SiatEnvironment(dbModel.Ambiente),
-		CreatedAt:     dbModel.CreatedAt,
-		UpdatedAt:     dbModel.UpdatedAt,
+		ID:              dbModel.ID,
+		Nit:             dbModel.Nit,
+		BusinessName:    dbModel.BusinessName,
+		CodigoSistema:   dbModel.CodigoSistema,
+		Ambiente:        domain.SiatEnvironment(dbModel.Ambiente),
+		Municipio:       dbModel.Municipio,
+		Direccion:       dbModel.Direccion,
+		Telefono:        dbModel.Telefono,
+		CodigoActividad: dbModel.CodigoActividad,
+		PiePagina:       dbModel.PiePagina,
+		CreatedAt:       dbModel.CreatedAt,
+		UpdatedAt:       dbModel.UpdatedAt,
 	}, nil
 }
 
@@ -61,13 +71,18 @@ func (r *PostgresCompanyRepository) GetByID(id string) (*domain.Company, error) 
 	}
 
 	return &domain.Company{
-		ID:            dbModel.ID,
-		Nit:           dbModel.Nit,
-		BusinessName:  dbModel.BusinessName,
-		CodigoSistema: dbModel.CodigoSistema,
-		Ambiente:      domain.SiatEnvironment(dbModel.Ambiente),
-		CreatedAt:     dbModel.CreatedAt,
-		UpdatedAt:     dbModel.UpdatedAt,
+		ID:              dbModel.ID,
+		Nit:             dbModel.Nit,
+		BusinessName:    dbModel.BusinessName,
+		CodigoSistema:   dbModel.CodigoSistema,
+		Ambiente:        domain.SiatEnvironment(dbModel.Ambiente),
+		Municipio:       dbModel.Municipio,
+		Direccion:       dbModel.Direccion,
+		Telefono:        dbModel.Telefono,
+		CodigoActividad: dbModel.CodigoActividad,
+		PiePagina:       dbModel.PiePagina,
+		CreatedAt:       dbModel.CreatedAt,
+		UpdatedAt:       dbModel.UpdatedAt,
 	}, nil
 }
 
@@ -81,6 +96,11 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	dbModel.BusinessName = c.BusinessName
 	dbModel.CodigoSistema = c.CodigoSistema
 	dbModel.Ambiente = models.SiatEnvironment(c.Ambiente)
+	dbModel.Municipio = c.Municipio
+	dbModel.Direccion = c.Direccion
+	dbModel.Telefono = c.Telefono
+	dbModel.CodigoActividad = c.CodigoActividad
+	dbModel.PiePagina = c.PiePagina
 
 	if err := r.db.Save(&dbModel).Error; err != nil {
 		if isUniqueViolation(err) {

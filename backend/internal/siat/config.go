@@ -18,9 +18,11 @@ const (
 type Service string
 
 const (
-	ServiceCodigos        Service = "FacturacionCodigos"
-	ServiceOperaciones    Service = "FacturacionOperaciones"
-	ServiceSincronizacion Service = "FacturacionSincronizacion"
+	ServiceCodigos                 Service = "FacturacionCodigos"
+	ServiceOperaciones             Service = "FacturacionOperaciones"
+	ServiceSincronizacion          Service = "FacturacionSincronizacion"
+	ServiceFacturacionCompraVenta  Service = "ServicioFacturacionCompraVenta"
+	ServiceFacturacionElectronica  Service = "ServicioFacturacionElectronica"
 )
 
 func (s Service) String() string { return string(s) }
@@ -31,6 +33,16 @@ type Config struct {
 	EndpointURL string
 	Timeout     time.Duration
 	Headers     map[string]string
+
+	// CodigoModalidad: 1 = Electrónica en Línea, 2 = Computarizada en Línea.
+	CodigoModalidad int
+
+	// Certificado de firma digital (modalidad Electrónica en Línea).
+	// Se soporta PKCS#12 (.p12/.pfx) o PEM (cert + key).
+	CertPath     string
+	CertPassword string
+	CertPEMCert  string // ruta al archivo PEM con el certificado X.509
+	CertPEMKey   string // ruta al archivo PEM con la llave privada
 }
 
 func DefaultConfig(environment Environment) Config {
@@ -40,11 +52,12 @@ func DefaultConfig(environment Environment) Config {
 	}
 
 	return Config{
-		Environment: environment,
-		WSDLURL:     baseURL + "/" + ServiceCodigos.String() + "?wsdl",
-		EndpointURL: baseURL + "/" + ServiceCodigos.String(),
-		Timeout:     30 * time.Second,
-		Headers:     map[string]string{},
+		Environment:     environment,
+		WSDLURL:         baseURL + "/" + ServiceCodigos.String() + "?wsdl",
+		EndpointURL:     baseURL + "/" + ServiceCodigos.String(),
+		Timeout:         30 * time.Second,
+		Headers:         map[string]string{},
+		CodigoModalidad: 1, // Electrónica en Línea
 	}
 }
 

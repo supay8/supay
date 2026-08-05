@@ -203,10 +203,8 @@ func mockSiatServer(t *testing.T, registerOK bool) *httptest.Server {
                         <codigoPuntoVenta>0</codigoPuntoVenta>
                         <transaccion>false</transaccion>
                         <mensajesList>
-                          <mensaje>
-                            <codigo>ERROR-1</codigo>
-                            <descripcion>Punto de venta rechazado por el SIAT</descripcion>
-                          </mensaje>
+                          <codigo>ERROR-1</codigo>
+                          <descripcion>Punto de venta rechazado por el SIAT</descripcion>
                         </mensajesList>
                       </RespuestaRegistroPuntoVenta>
                     </registroPuntoVentaResponse>

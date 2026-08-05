@@ -15,6 +15,14 @@ const (
 	EnvironmentProduccion SiatEnvironment = "PRODUCCION"
 )
 
+// CodigoAmbiente devuelve el código numérico que el SIAT espera: 1 = producción, 2 = piloto.
+func (e SiatEnvironment) CodigoAmbiente() int {
+	if e == EnvironmentProduccion {
+		return 1
+	}
+	return 2
+}
+
 type InvoiceStatus string
 
 const (
@@ -22,6 +30,7 @@ const (
 	StatusSent      InvoiceStatus = "SENT"
 	StatusAccepted  InvoiceStatus = "ACCEPTED"
 	StatusRejected  InvoiceStatus = "REJECTED"
+	StatusObserved  InvoiceStatus = "OBSERVED"
 	StatusOffline   InvoiceStatus = "OFFLINE"
 	StatusCancelled InvoiceStatus = "CANCELLED"
 )
@@ -57,13 +66,18 @@ const (
 // --- Modelos de Base de Datos ---
 
 type Company struct {
-	ID            string          `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Nit           string          `gorm:"type:varchar(20);uniqueIndex;not null"`
-	BusinessName  string          `gorm:"type:varchar(150);not null"`
-	CodigoSistema string          `gorm:"type:varchar(100);not null"`
-	Ambiente      SiatEnvironment `gorm:"type:varchar(20);default:'PILOTO'"`
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID             string          `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Nit            string          `gorm:"type:varchar(20);uniqueIndex;not null"`
+	BusinessName   string          `gorm:"type:varchar(150);not null"`
+	CodigoSistema  string          `gorm:"type:varchar(100);not null"`
+	Ambiente       SiatEnvironment `gorm:"type:varchar(20);default:'PILOTO'"`
+	Municipio      string          `gorm:"type:varchar(100);not null;default:''"`
+	Direccion      string          `gorm:"type:text;not null;default:''"`
+	Telefono       string          `gorm:"type:varchar(50);not null;default:''"`
+	CodigoActividad *string        `gorm:"type:varchar(20)"`
+	PiePagina      string          `gorm:"type:text;not null;default:''"`
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 
 	PointsOfSale []PointOfSale `gorm:"foreignKey:CompanyId"`
 	Customers    []Customer    `gorm:"foreignKey:CompanyId"`
@@ -128,6 +142,7 @@ type Cufd struct {
 	Cufd          string    `gorm:"type:text;not null"`
 	Direccion     string    `gorm:"type:text;not null"`
 	CodigoControl string    `gorm:"type:varchar(100);not null"`
+	CodigoQR      *string   `gorm:"type:text"`
 	ValidFrom     time.Time `gorm:"index:idx_cufd_pos_valid;not null"`
 	ValidTo       time.Time `gorm:"not null"`
 	Active        bool      `gorm:"default:true;not null"`
@@ -171,6 +186,7 @@ type Customer struct {
 	DocumentNumber string       `gorm:"type:varchar(30);index:idx_company_doc,priority:3;not null"`
 	Complement     *string      `gorm:"type:varchar(10)"`
 	Name           string       `gorm:"type:varchar(150);not null"`
+	CreatedAt      time.Time
 
 	Company  Company   `gorm:"foreignKey:CompanyId"`
 	Invoices []Invoice `gorm:"foreignKey:CustomerId"`

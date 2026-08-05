@@ -22,6 +22,7 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 		Cufd:          c.Cufd,
 		Direccion:     c.Direccion,
 		CodigoControl: c.ControlCode,
+		CodigoQR:      c.CodigoQR,
 		ValidFrom:     c.ValidFrom,
 		ValidTo:       c.ValidTo,
 		Active:        c.Active,
@@ -41,17 +42,7 @@ func (r *PostgresCufdRepository) GetActiveByPos(pointOfSaleID string) (*domain.C
 		Order("created_at DESC").First(&m).Error; err != nil {
 		return nil, err
 	}
-	return &domain.Cufd{
-		ID:            m.ID,
-		PointOfSaleID: m.PointOfSaleId,
-		Cufd:          m.Cufd,
-		ControlCode:   m.CodigoControl,
-		Direccion:     m.Direccion,
-		ValidFrom:     m.ValidFrom,
-		ValidTo:       m.ValidTo,
-		Active:        m.Active,
-		CreatedAt:     m.CreatedAt,
-	}, nil
+	return toDomainCufd(&m), nil
 }
 
 func (r *PostgresCufdRepository) DeactivateExpired() error {

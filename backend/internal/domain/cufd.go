@@ -8,6 +8,7 @@ type Cufd struct {
 	Cufd          string    `json:"cufd"`
 	ControlCode   string    `json:"control_code"`
 	Direccion     string    `json:"direccion"`
+	CodigoQR      *string   `json:"codigo_qr,omitempty"`
 	ValidFrom     time.Time `json:"valid_from"`
 	ValidTo       time.Time `json:"valid_to"`
 	Active        bool      `json:"active"`

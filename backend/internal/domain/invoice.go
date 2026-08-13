@@ -48,6 +48,8 @@ type Invoice struct {
 	Xml                *string        `json:"xml,omitempty"`
 	XmlHash            *string        `json:"xml_hash,omitempty"`
 	SiatReceptionCode  *string        `json:"siat_reception_code,omitempty"`
+	MotivoAnulacion    *int           `json:"motivo_anulacion,omitempty"`
+	FechaAnulacion     *time.Time     `json:"fecha_anulacion,omitempty"`
 	Status             InvoiceStatus  `json:"status"`
 	CreatedAt          time.Time      `json:"created_at"`
 

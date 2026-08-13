@@ -82,6 +82,29 @@ type ResultadoEmision struct {
 	XmlHash         string    `json:"xmlHash,omitempty"`
 }
 
+// SolicitudDocumento identifica un documento ya emitido ante el SIAT para las
+// operaciones de consulta de estado, anulación y reversión de anulación.
+type SolicitudDocumento struct {
+	CodigoAmbiente   int    `json:"codigoAmbiente"`
+	CodigoSistema    string `json:"codigoSistema"`
+	Nit              string `json:"nit"`
+	Modalidad        int    `json:"modalidad"`
+	Cuf              string `json:"cuf"`
+	CodigoSucursal   int    `json:"codigoSucursal"`
+	CodigoPuntoVenta int    `json:"codigoPuntoVenta"`
+	Cuis             string `json:"cuis"`
+	Cufd             string `json:"cufd"`
+}
+
+// ResultadoDocumento es la respuesta procesada del SIAT para una operación
+// sobre un documento ya emitido (verificar estado, anular o revertir).
+type ResultadoDocumento struct {
+	Transaccion     bool      `json:"transaccion"`
+	CodigoEstado    int       `json:"codigoEstado"`
+	CodigoRecepcion string    `json:"codigoRecepcion,omitempty"`
+	Mensajes        []Mensaje `json:"mensajes,omitempty"`
+}
+
 // EmitirFactura construye, firma (si corresponde) y envía una factura de
 // compraventa al SIAT usando el SDK go-siat. El SDK serializa el XML, lo firma
 // con XMLDSig cuando la modalidad es electrónica, lo comprime en gzip y calcula
@@ -207,6 +230,122 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	}, nil
 }
 
+// VerificarEstado consulta al SIAT el estado real de un documento ya emitido
+// (verificacionEstadoFactura) usando la fachada compraventa del SDK.
+func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (*ResultadoDocumento, error) {
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat verificacion: servicio SIAT no inicializado")
+	}
+
+	request := models.NewVerificacionEstadoFacturaBuilder().
+		WithCodigoSucursal(req.CodigoSucursal).
+		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+		WithCodigoDocumentoSector(1).
+		WithCodigoEmision(goSiat.EmisionOnline).
+		WithTipoFacturaDocumento(1).
+		WithCuf(req.Cuf).
+		WithCuis(req.Cuis).
+		WithCufd(req.Cufd).
+		WithCodigoModalidad(req.Modalidad).
+		Build()
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	resp, err := s.sdk.CompraVenta().VerificacionEstadoFactura(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("siat verificacion: %w", err)
+	}
+
+	result := resp.Body.Content.RespuestaServicioFacturacion
+	return &ResultadoDocumento{
+		Transaccion:     result.Transaccion,
+		CodigoEstado:    result.CodigoEstado,
+		CodigoRecepcion: result.CodigoRecepcion,
+		Mensajes:        toMensajes(result.MensajesList),
+	}, nil
+}
+
+// AnularFactura anula un documento ya emitido ante el SIAT (anulacionFactura)
+// indicando el motivo del catálogo sincronizado motivoAnulacion.
+func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, codigoMotivo int) (*ResultadoDocumento, error) {
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat anulacion: servicio SIAT no inicializado")
+	}
+
+	request := models.NewAnulacionFacturaBuilder().
+		WithCodigoSucursal(req.CodigoSucursal).
+		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+		WithCodigoDocumentoSector(1).
+		WithCodigoEmision(goSiat.EmisionOnline).
+		WithTipoFacturaDocumento(1).
+		WithCuf(req.Cuf).
+		WithCuis(req.Cuis).
+		WithCufd(req.Cufd).
+		WithCodigoMotivo(codigoMotivo).
+		WithCodigoModalidad(req.Modalidad).
+		Build()
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	resp, err := s.sdk.CompraVenta().AnulacionFactura(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("siat anulacion: %w", err)
+	}
+
+	result := resp.Body.Content.RespuestaServicioFacturacion
+	return &ResultadoDocumento{
+		Transaccion:     result.Transaccion,
+		CodigoEstado:    result.CodigoEstado,
+		CodigoRecepcion: result.CodigoRecepcion,
+		Mensajes:        toMensajes(result.MensajesList),
+	}, nil
+}
+
+// RevertirAnulacion revierte una anulación previamente aceptada por el SIAT
+// (reversionAnulacionFactura), devolviendo el documento a su estado anterior.
+func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento) (*ResultadoDocumento, error) {
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat reversion anulacion: servicio SIAT no inicializado")
+	}
+
+	request := models.NewReversionAnulacionFacturaBuilder().
+		WithCodigoSucursal(req.CodigoSucursal).
+		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+		WithCodigoDocumentoSector(1).
+		WithCodigoEmision(goSiat.EmisionOnline).
+		WithTipoFacturaDocumento(1).
+		WithCuf(req.Cuf).
+		WithCuis(req.Cuis).
+		WithCufd(req.Cufd).
+		WithCodigoModalidad(req.Modalidad).
+		Build()
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	resp, err := s.sdk.CompraVenta().ReversionAnulacionFactura(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("siat reversion anulacion: %w", err)
+	}
+
+	result := resp.Body.Content.RespuestaServicioFacturacion
+	return &ResultadoDocumento{
+		Transaccion:     result.Transaccion,
+		CodigoEstado:    result.CodigoEstado,
+		CodigoRecepcion: result.CodigoRecepcion,
+		Mensajes:        toMensajes(result.MensajesList),
+	}, nil
+}
+
+
 // signedXMLAndHash serializa la factura, la firma si la modalidad lo exige y
 // calcula el hash SHA-256 (hex) del XML gzipeado, replicando exactamente lo que
 // el SDK envía en Archivo/HashArchivo.
@@ -307,6 +446,31 @@ func (s SolicitudFactura) validate() error {
 		if item.PrecioUnitario < 0 || item.SubTotal < 0 {
 			return fmt.Errorf("siat emision: precio y subtotal del ítem %d no pueden ser negativos", i+1)
 		}
+	}
+	return nil
+}
+
+func (s SolicitudDocumento) validate() error {
+	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+		return fmt.Errorf("siat documento: codigoAmbiente inválido")
+	}
+	if strings.TrimSpace(s.CodigoSistema) == "" {
+		return fmt.Errorf("siat documento: codigoSistema es obligatorio")
+	}
+	if strings.TrimSpace(s.Nit) == "" {
+		return fmt.Errorf("siat documento: nit es obligatorio")
+	}
+	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
+		return fmt.Errorf("siat documento: modalidad inválida (%d)", s.Modalidad)
+	}
+	if strings.TrimSpace(s.Cuf) == "" {
+		return fmt.Errorf("siat documento: cuf es obligatorio")
+	}
+	if s.CodigoSucursal < 0 || s.CodigoPuntoVenta < 0 {
+		return fmt.Errorf("siat documento: codigoSucursal y codigoPuntoVenta deben ser >= 0")
+	}
+	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" {
+		return fmt.Errorf("siat documento: cuis y cufd son obligatorios")
 	}
 	return nil
 }

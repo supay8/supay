@@ -115,6 +115,8 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		Xml:               inv.Xml,
 		XmlHash:           inv.XmlHash,
 		SiatReceptionCode: inv.SiatReceptionCode,
+		MotivoAnulacion:   inv.MotivoAnulacion,
+		FechaAnulacion:    inv.FechaAnulacion,
 		Status:            models.InvoiceStatus(inv.Status),
 		CreatedAt:         inv.CreatedAt,
 	}
@@ -164,6 +166,8 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		Xml:               m.Xml,
 		XmlHash:           m.XmlHash,
 		SiatReceptionCode: m.SiatReceptionCode,
+		MotivoAnulacion:   m.MotivoAnulacion,
+		FechaAnulacion:    m.FechaAnulacion,
 		Status:            domain.InvoiceStatus(m.Status),
 		CreatedAt:         m.CreatedAt,
 	}

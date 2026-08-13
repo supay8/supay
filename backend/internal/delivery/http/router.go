@@ -77,6 +77,9 @@ func NewRouter(h Handlers) http.Handler {
 		r.Get("/", h.Invoice.ListByPointOfSale)
 		r.Get("/{id}", h.Invoice.GetByID)
 		r.Post("/{id}/emit", h.Invoice.Emit)
+		r.Get("/{id}/siat-status", h.Invoice.SiatStatus)
+		r.Post("/{id}/annul", h.Invoice.Annul)
+		r.Post("/{id}/annul/revert", h.Invoice.RevertAnnul)
 	})
 
 	return r

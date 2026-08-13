@@ -82,3 +82,65 @@ func (h *InvoiceHandler) Emit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(inv)
 }
+
+func (h *InvoiceHandler) SiatStatus(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		return
+	}
+	inv, err := h.uc.VerifyStatus(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inv)
+}
+
+func (h *InvoiceHandler) Annul(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		CodigoMotivo int `json:"codigo_motivo"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+	inv, err := h.uc.Annul(r.Context(), id, req.CodigoMotivo)
+	if err != nil {
+		var rejected *usecase.EmissionRejectedError
+		if errors.As(err, &rejected) {
+			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inv)
+}
+
+func (h *InvoiceHandler) RevertAnnul(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		return
+	}
+	inv, err := h.uc.RevertAnnul(r.Context(), id)
+	if err != nil {
+		var rejected *usecase.EmissionRejectedError
+		if errors.As(err, &rejected) {
+			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inv)
+}

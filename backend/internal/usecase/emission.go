@@ -13,9 +13,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// SiatEmissionService es el contrato de emisión de facturas sobre el SDK go-siat.
+// SiatEmissionService es el contrato de operaciones de facturación sobre el SDK
+// go-siat: emisión de facturas, verificación de estado, anulación y reversión de
+// anulación de documentos ya emitidos.
 type SiatEmissionService interface {
 	EmitirFactura(ctx context.Context, req siat.SolicitudFactura) (*siat.ResultadoEmision, error)
+	VerificarEstado(ctx context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error)
+	AnularFactura(ctx context.Context, req siat.SolicitudDocumento, codigoMotivo int) (*siat.ResultadoDocumento, error)
+	RevertirAnulacion(ctx context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error)
 }
 
 // EmissionRejectedError indica que el SIAT respondió y rechazó la factura
@@ -122,6 +127,223 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	}
 
 	return inv, nil
+}
+
+// VerifyStatus consulta al SIAT el estado real de un documento emitido
+// (verificacionEstadoFactura) y reconcilia el estado local de la factura con el
+// CodigoEstado devuelto (904 ACCEPTED, 905 OBSERVED, 906 REJECTED, 907
+// CANCELLED). Un error de transporte no modifica el estado local.
+func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.Invoice, error) {
+	inv, err := uc.invoiceRepo.GetByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("factura no encontrada")
+		}
+		return nil, err
+	}
+	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
+		return nil, errors.New("la factura no ha sido emitida (no tiene CUF asignado)")
+	}
+	if uc.siatService == nil {
+		return nil, errors.New("el servicio SIAT no está disponible")
+	}
+
+	req, err := uc.buildSolicitudDocumento(inv)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := uc.siatService.VerificarEstado(ctx, *req)
+	if err != nil {
+		return nil, fmt.Errorf("error de verificación: %w", err)
+	}
+
+	if estado, ok := siatEstadoToDomain(result.CodigoEstado); ok && inv.Status != estado {
+		inv.Status = estado
+		if err := uc.invoiceRepo.Update(inv); err != nil {
+			return nil, err
+		}
+	}
+
+	return inv, nil
+}
+
+// Annul anula ante el SIAT una factura emitida (anulacionFactura) con el motivo
+// del catálogo sincronizado motivoAnulacion. Al ser aceptada (907 CANCELLED) se
+// persiste el estado, el motivo y la fecha de anulación.
+func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error) {
+	inv, err := uc.invoiceRepo.GetByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("factura no encontrada")
+		}
+		return nil, err
+	}
+	if inv.Status != domain.InvoiceAccepted {
+		return nil, errors.New("solo se pueden anular facturas en estado ACCEPTED")
+	}
+	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
+		return nil, errors.New("la factura no tiene CUF asignado")
+	}
+	if err := uc.validateMotivoAnulacion(inv.CompanyId, codigoMotivo); err != nil {
+		return nil, err
+	}
+	if uc.siatService == nil {
+		return nil, errors.New("el servicio SIAT no está disponible")
+	}
+
+	req, err := uc.buildSolicitudDocumento(inv)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := uc.siatService.AnularFactura(ctx, *req, codigoMotivo)
+	if err != nil {
+		return nil, fmt.Errorf("error de anulación: %w", err)
+	}
+
+	if !result.Transaccion {
+		return nil, &EmissionRejectedError{
+			CodigoEstado:    result.CodigoEstado,
+			CodigoRecepcion: result.CodigoRecepcion,
+			Mensajes:        result.Mensajes,
+		}
+	}
+
+	now := time.Now()
+	inv.Status = domain.InvoiceCancelled
+	inv.MotivoAnulacion = &codigoMotivo
+	inv.FechaAnulacion = &now
+	if result.CodigoRecepcion != "" {
+		inv.SiatReceptionCode = &result.CodigoRecepcion
+	}
+	if err := uc.invoiceRepo.Update(inv); err != nil {
+		return nil, err
+	}
+
+	return inv, nil
+}
+
+// RevertAnnul revierte una anulación aceptada por el SIAT
+// (reversionAnulacionFactura), devolviendo la factura a ACCEPTED y limpiando el
+// motivo y la fecha de anulación persistidos.
+func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.Invoice, error) {
+	inv, err := uc.invoiceRepo.GetByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("factura no encontrada")
+		}
+		return nil, err
+	}
+	if inv.Status != domain.InvoiceCancelled {
+		return nil, errors.New("solo se pueden revertir anulaciones de facturas en estado CANCELLED")
+	}
+	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
+		return nil, errors.New("la factura no tiene CUF asignado")
+	}
+	if uc.siatService == nil {
+		return nil, errors.New("el servicio SIAT no está disponible")
+	}
+
+	req, err := uc.buildSolicitudDocumento(inv)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := uc.siatService.RevertirAnulacion(ctx, *req)
+	if err != nil {
+		return nil, fmt.Errorf("error de reversión de anulación: %w", err)
+	}
+
+	if !result.Transaccion {
+		return nil, &EmissionRejectedError{
+			CodigoEstado:    result.CodigoEstado,
+			CodigoRecepcion: result.CodigoRecepcion,
+			Mensajes:        result.Mensajes,
+		}
+	}
+
+	inv.Status = domain.InvoiceAccepted
+	inv.MotivoAnulacion = nil
+	inv.FechaAnulacion = nil
+	if result.CodigoRecepcion != "" {
+		inv.SiatReceptionCode = &result.CodigoRecepcion
+	}
+	if err := uc.invoiceRepo.Update(inv); err != nil {
+		return nil, err
+	}
+
+	return inv, nil
+}
+
+// buildSolicitudDocumento reúne la identificación del documento ya emitido para
+// las operaciones de verificación, anulación y reversión de anulación.
+func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.SolicitudDocumento, error) {
+	pos := inv.PointOfSale
+	if pos.Cuis == nil || strings.TrimSpace(*pos.Cuis) == "" {
+		return nil, errors.New("el punto de venta no tiene CUIS activo")
+	}
+	cufd := inv.CufdRecord
+	if cufd.ID == "" || strings.TrimSpace(cufd.Cufd) == "" {
+		return nil, errors.New("la factura no tiene CUFD asociado")
+	}
+
+	codigoPuntoVenta := pos.CodigoPuntoVenta
+	if pos.SiatCode != nil {
+		codigoPuntoVenta = *pos.SiatCode
+	}
+
+	modalidad := uc.modalidad
+	if modalidad <= 0 {
+		modalidad = siat.ModalidadElectronica
+	}
+
+	return &siat.SolicitudDocumento{
+		CodigoAmbiente:   inv.Company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:    inv.Company.CodigoSistema,
+		Nit:              inv.Company.Nit,
+		Modalidad:        modalidad,
+		Cuf:              *inv.Cuf,
+		CodigoSucursal:   pos.CodigoSucursal,
+		CodigoPuntoVenta: codigoPuntoVenta,
+		Cuis:             *pos.Cuis,
+		Cufd:             cufd.Cufd,
+	}, nil
+}
+
+// validateMotivoAnulacion valida que el motivo exista en el catálogo
+// sincronizado motivoAnulacion del SIAT.
+func (uc *InvoiceUsecase) validateMotivoAnulacion(companyID string, codigoMotivo int) error {
+	if uc.catalogRepo == nil {
+		return nil
+	}
+	items, err := uc.catalogRepo.List(companyID, "motivoAnulacion")
+	if err != nil {
+		return fmt.Errorf("no se pudo consultar el catálogo de motivos de anulación: %w", err)
+	}
+	for _, item := range items {
+		if item.Codigo == codigoMotivo {
+			return nil
+		}
+	}
+	return fmt.Errorf("motivo de anulación %d no es válido; consulte el catálogo motivoAnulacion", codigoMotivo)
+}
+
+// siatEstadoToDomain mapea el CodigoEstado de una respuesta de facturación del
+// SIAT al estado de dominio local.
+func siatEstadoToDomain(codigoEstado int) (domain.InvoiceStatus, bool) {
+	switch codigoEstado {
+	case 904:
+		return domain.InvoiceAccepted, true
+	case 905:
+		return domain.InvoiceObserved, true
+	case 906:
+		return domain.InvoiceRejected, true
+	case 907:
+		return domain.InvoiceCancelled, true
+	default:
+		return "", false
+	}
 }
 
 // buildSolicitudFactura reúne los prerrequisitos de la factura y los mapea a

@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/brandsrx/supay/internal/usecase"
@@ -60,4 +61,24 @@ func (h *InvoiceHandler) ListByPointOfSale(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(list)
+}
+
+func (h *InvoiceHandler) Emit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		return
+	}
+	inv, err := h.uc.Emit(r.Context(), id)
+	if err != nil {
+		var rejected *usecase.EmissionRejectedError
+		if errors.As(err, &rejected) {
+			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inv)
 }

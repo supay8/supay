@@ -45,8 +45,6 @@ func main() {
 	customerHandler := deliveryHttp.NewCustomerHandler(customerUsecase)
 
 	invoiceRepo := postgres.NewPostgresInvoiceRepository(database.DB)
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo)
-	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
 	// 3. Servicio SIAT sobre el SDK go-siat (CUIS y CUFD)
 	var siatService *siat.Service
@@ -61,6 +59,14 @@ func main() {
 	} else {
 		log.Printf("⚠️ Configuración SIAT inválida o incompleta: %v", err)
 	}
+
+	var emissionService usecase.SiatEmissionService
+	if siatService != nil {
+		emissionService = siatService
+	}
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, emissionService, appCfg.SiatModalidad)
+	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
+
 	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, siatService, pdf.NewService(database.DB), appCfg.SiatModalidad)
 
 	// 4. Router

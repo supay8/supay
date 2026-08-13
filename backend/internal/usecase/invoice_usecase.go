@@ -15,14 +15,20 @@ type InvoiceUsecase struct {
 	customerRepo domain.CustomerRepository
 	companyRepo  domain.CompanyRepository
 	posRepo      domain.PointOfSaleRepository
+	catalogRepo  domain.CatalogRepository
+	siatService  SiatEmissionService
+	modalidad    int
 }
 
-func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository) *InvoiceUsecase {
+func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository, catalogRepo domain.CatalogRepository, siatService SiatEmissionService, modalidad int) *InvoiceUsecase {
 	return &InvoiceUsecase{
 		invoiceRepo:  invoiceRepo,
 		customerRepo: customerRepo,
 		companyRepo:  companyRepo,
 		posRepo:      posRepo,
+		catalogRepo:  catalogRepo,
+		siatService:  siatService,
+		modalidad:    modalidad,
 	}
 }
 

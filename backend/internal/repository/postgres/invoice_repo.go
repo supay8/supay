@@ -77,6 +77,16 @@ func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
 	return r.db.Save(&m).Error
 }
 
+func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
+	res := r.db.Model(&models.Invoice{}).
+		Where("id = ? AND status = ?", id, models.StatusPending).
+		Update("status", models.StatusSending)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
 func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*domain.Cufd, error) {
 	var cufd models.Cufd
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ?", pointOfSaleID, at, at).Order("valid_from desc").First(&cufd).Error; err != nil {
@@ -157,8 +167,10 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		Status:            domain.InvoiceStatus(m.Status),
 		CreatedAt:         m.CreatedAt,
 	}
+	inv.Company = *toDomainCompany(&m.Company)
 	inv.Customer = *toDomainCustomer(&m.Customer)
 	inv.PointOfSale = *toDomainPointOfSale(&m.PointOfSale)
+	inv.CufdRecord = *toDomainCufd(&m.CufdRecord)
 	inv.Items = make([]domain.InvoiceItem, 0, len(m.Items))
 	for i := range m.Items {
 		mi := m.Items[i]

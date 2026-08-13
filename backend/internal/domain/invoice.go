@@ -6,6 +6,7 @@ type InvoiceStatus string
 
 const (
 	InvoicePending   InvoiceStatus = "PENDING"
+	InvoiceSending   InvoiceStatus = "SENDING"
 	InvoiceSent      InvoiceStatus = "SENT"
 	InvoiceAccepted  InvoiceStatus = "ACCEPTED"
 	InvoiceRejected  InvoiceStatus = "REJECTED"
@@ -50,8 +51,10 @@ type Invoice struct {
 	Status             InvoiceStatus  `json:"status"`
 	CreatedAt          time.Time      `json:"created_at"`
 
-	Customer    Customer    `json:"customer"`
-	PointOfSale PointOfSale `json:"point_of_sale"`
+	Company     Company       `json:"company"`
+	Customer    Customer      `json:"customer"`
+	PointOfSale PointOfSale   `json:"point_of_sale"`
+	CufdRecord  Cufd          `json:"cufd_record"`
 	Items       []InvoiceItem `json:"items"`
 }
 
@@ -62,5 +65,8 @@ type InvoiceRepository interface {
 	GetByID(id string) (*Invoice, error)
 	ListByPointOfSale(pointOfSaleID string) ([]*Invoice, error)
 	Update(inv *Invoice) error
+	// ClaimForEmission marca la factura como SENDING si está PENDING
+	// (transición atómica), retornando false si el estado ya no es PENDING.
+	ClaimForEmission(id string) (bool, error)
 	FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*Cufd, error)
 }

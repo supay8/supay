@@ -46,6 +46,13 @@ type Config struct {
 
 	// Timeout usado si no se provee un HTTPClient (opcional, default 45s).
 	Timeout time.Duration
+
+	// Credenciales de firma digital (PEM cert/key o P12). Opcional: se
+	// requieren solo para emitir facturas en modalidad electrónica.
+	CertPemCert string
+	CertPemKey  string
+	CertP12     string
+	CertP12Pass string
 }
 
 func (c Config) Validate() error {

@@ -39,6 +39,10 @@ func Load() Config {
 		TraceId:        strings.TrimSpace(os.Getenv("SIAT_TRACE_ID")),
 		UserAgent:      strings.TrimSpace(os.Getenv("SIAT_USER_AGENT")),
 		Timeout:        parseDuration(getEnv("SIAT_TIMEOUT", "45s"), 45*time.Second),
+		CertPemCert:    strings.TrimSpace(os.Getenv("SIAT_CERT_PEM_CERT")),
+		CertPemKey:     strings.TrimSpace(os.Getenv("SIAT_CERT_PEM_KEY")),
+		CertP12:        strings.TrimSpace(os.Getenv("SIAT_CERT_P12")),
+		CertP12Pass:    strings.TrimSpace(os.Getenv("SIAT_CERT_P12_PASSWORD")),
 	}
 
 	modalidad := parseInt(getEnv("SIAT_MODALIDAD", "1"), siat.ModalidadElectronica)

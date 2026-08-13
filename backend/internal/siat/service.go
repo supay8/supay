@@ -43,12 +43,26 @@ func NewService(cfg Config) (*Service, error) {
 		TraceId:        cfg.TraceId,
 		UserAgent:      cfg.UserAgent,
 		HTTPClient:     httpClient,
+		CredentialSign: buildCredentialSign(cfg),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("siat: %w", err)
 	}
 
 	return &Service{sdk: sdk}, nil
+}
+
+// buildCredentialSign construye la credencial de firma digital a partir de la
+// configuración. Prioriza P12 si se provee; en caso contrario usa el par
+// PEM cert/key. Devuelve una credencial vacía si no hay datos.
+func buildCredentialSign(cfg Config) goSiat.CredentialSign {
+	if strings.TrimSpace(cfg.CertP12) != "" {
+		return goSiat.NewP12Credential(strings.TrimSpace(cfg.CertP12), cfg.CertP12Pass)
+	}
+	if strings.TrimSpace(cfg.CertPemCert) != "" && strings.TrimSpace(cfg.CertPemKey) != "" {
+		return goSiat.NewPEMCredential(strings.TrimSpace(cfg.CertPemCert), strings.TrimSpace(cfg.CertPemKey))
+	}
+	return goSiat.CredentialSign{}
 }
 
 // SolicitarCUIS solicita un CUIS al SIAT usando el SDK go-siat.

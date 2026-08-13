@@ -47,21 +47,7 @@ func (r *PostgresCompanyRepository) GetByNit(nit string) (*domain.Company, error
 	if err := r.db.Where("nit = ?", nit).First(&dbModel).Error; err != nil {
 		return nil, err
 	}
-
-	return &domain.Company{
-		ID:              dbModel.ID,
-		Nit:             dbModel.Nit,
-		BusinessName:    dbModel.BusinessName,
-		CodigoSistema:   dbModel.CodigoSistema,
-		Ambiente:        domain.SiatEnvironment(dbModel.Ambiente),
-		Municipio:       dbModel.Municipio,
-		Direccion:       dbModel.Direccion,
-		Telefono:        dbModel.Telefono,
-		CodigoActividad: dbModel.CodigoActividad,
-		PiePagina:       dbModel.PiePagina,
-		CreatedAt:       dbModel.CreatedAt,
-		UpdatedAt:       dbModel.UpdatedAt,
-	}, nil
+	return toDomainCompany(&dbModel), nil
 }
 
 func (r *PostgresCompanyRepository) GetByID(id string) (*domain.Company, error) {
@@ -69,7 +55,10 @@ func (r *PostgresCompanyRepository) GetByID(id string) (*domain.Company, error) 
 	if err := r.db.Where("id = ?", id).First(&dbModel).Error; err != nil {
 		return nil, err
 	}
+	return toDomainCompany(&dbModel), nil
+}
 
+func toDomainCompany(dbModel *models.Company) *domain.Company {
 	return &domain.Company{
 		ID:              dbModel.ID,
 		Nit:             dbModel.Nit,
@@ -83,7 +72,7 @@ func (r *PostgresCompanyRepository) GetByID(id string) (*domain.Company, error) 
 		PiePagina:       dbModel.PiePagina,
 		CreatedAt:       dbModel.CreatedAt,
 		UpdatedAt:       dbModel.UpdatedAt,
-	}, nil
+	}
 }
 
 func (r *PostgresCompanyRepository) Update(c *domain.Company) error {

@@ -76,6 +76,7 @@ func NewRouter(h Handlers) http.Handler {
 		r.Post("/", h.Invoice.Create)
 		r.Get("/", h.Invoice.ListByPointOfSale)
 		r.Get("/{id}", h.Invoice.GetByID)
+		r.Post("/{id}/emit", h.Invoice.Emit)
 	})
 
 	return r

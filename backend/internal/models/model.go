@@ -27,6 +27,7 @@ type InvoiceStatus string
 
 const (
 	StatusPending   InvoiceStatus = "PENDING"
+	StatusSending   InvoiceStatus = "SENDING"
 	StatusSent      InvoiceStatus = "SENT"
 	StatusAccepted  InvoiceStatus = "ACCEPTED"
 	StatusRejected  InvoiceStatus = "REJECTED"

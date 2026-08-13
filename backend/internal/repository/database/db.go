@@ -52,6 +52,7 @@ func ConnectDB() {
 		&models.PointOfSale{},
 		&models.Cufd{},
 		&models.Cuis{},
+		&models.Catalog{},
 		&models.ContingencyEvent{},
 		&models.Customer{},
 		&models.Invoice{},

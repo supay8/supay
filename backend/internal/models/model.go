@@ -136,6 +136,20 @@ type TipoPuntoVenta struct {
 	Company Company `gorm:"foreignKey:CompanyId"`
 }
 
+// Catalog es un elemento de un catálogo sincronizado del SIAT (operaciones
+// sincronizarParametrica* y sincronizar* del servicio FacturacionSincronizacion).
+type Catalog struct {
+	ID           string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CompanyId    string    `gorm:"type:uuid;index:idx_catalog_company_tipo,priority:1;not null"`
+	Tipo         string    `gorm:"type:varchar(50);index:idx_catalog_company_tipo,priority:2;not null"`
+	Codigo       int       `gorm:"not null"`
+	Descripcion  string    `gorm:"type:text;not null"`
+	SyncedAt     time.Time `gorm:"not null"`
+	CreatedAt    time.Time
+
+	Company Company `gorm:"foreignKey:CompanyId"`
+}
+
 type Cufd struct {
 	ID            string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	PointOfSaleId string    `gorm:"type:uuid;index:idx_cufd_pos_valid;not null"`

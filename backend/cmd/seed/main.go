@@ -4,14 +4,18 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	appconfig "github.com/brandsrx/supay/internal/config"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/repository/database"
 	"github.com/brandsrx/supay/internal/repository/postgres"
+	"github.com/brandsrx/supay/internal/siat"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	_ = godotenv.Load()
 	fmt.Println("🔧 Seed SIAT: creando company y point of sale de prueba...")
 
 	cfg := appconfig.Load()
@@ -20,26 +24,28 @@ func main() {
 	companyRepo := postgres.NewPostgresCompanyRepository(database.DB)
 	posRepo := postgres.NewPostgresPointOfSaleRepository(database.DB)
 
-	// Crear o obtener company usando NIT de env
-	nit := cfg.SIAT.CloneHeaders()["nit"]
-	if nit == "" {
-		// Fallback: usar valor de SIAT_NIT del entorno directamente
-		nit = getenv("SIAT_NIT", "")
-	}
-
-	if nit == "" {
+	// Crear u obtener company usando el NIT de la configuración SIAT
+	nit := strconv.FormatInt(cfg.SIAT.Nit, 10)
+	if nit == "" || nit == "0" {
 		log.Fatalf("SIAT_NIT no está definido en el entorno; configura tu .env antes de correr este seed")
 	}
 
-	company := &domain.Company{
-		Nit:           nit,
-		BusinessName:  "Supay Seed Company",
-		CodigoSistema: getenv("SIAT_CODIGO_SISTEMA", ""),
-		Ambiente:      domain.EnvironmentPiloto,
+	ambiente := domain.EnvironmentPiloto
+	if cfg.SIAT.CodigoAmbiente == siat.AmbienteProduccion {
+		ambiente = domain.EnvironmentProduccion
 	}
 
-	if err := companyRepo.Create(company); err != nil {
-		log.Fatalf("Error creando company: %v", err)
+	company, err := companyRepo.GetByNit(nit)
+	if err != nil {
+		company = &domain.Company{
+			Nit:           nit,
+			BusinessName:  "Supay Seed Company",
+			CodigoSistema: cfg.SIAT.CodigoSistema,
+			Ambiente:      ambiente,
+		}
+		if err := companyRepo.Create(company); err != nil {
+			log.Fatalf("Error creando company: %v", err)
+		}
 	}
 
 	pos := &domain.PointOfSale{

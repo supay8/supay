@@ -1,47 +1,15 @@
 package siat
 
 import (
-	"bytes"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"strings"
 	"time"
 )
 
+// XMLDateTime es una fecha/hora del SIAT que puede serializarse a JSON.
 type XMLDateTime struct {
 	time.Time
-}
-
-func (d *XMLDateTime) UnmarshalText(text []byte) error {
-	raw := strings.TrimSpace(string(text))
-	if raw == "" {
-		d.Time = time.Time{}
-		return nil
-	}
-
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05",
-		"2006-01-02",
-		"02/01/2006 15:04:05",
-	} {
-		if parsed, err := time.Parse(layout, raw); err == nil {
-			d.Time = parsed
-			return nil
-		}
-	}
-
-	return fmt.Errorf("siat: unsupported date format %q", raw)
-}
-
-func (d XMLDateTime) MarshalText() ([]byte, error) {
-	if d.Time.IsZero() {
-		return []byte{}, nil
-	}
-	return []byte(d.Time.Format(time.RFC3339Nano)), nil
 }
 
 func (d XMLDateTime) MarshalJSON() ([]byte, error) {
@@ -51,26 +19,32 @@ func (d XMLDateTime) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.Time.Format(time.RFC3339Nano))
 }
 
-func (d *XMLDateTime) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement) error {
-	var value string
-	if err := decoder.DecodeElement(&value, &start); err != nil {
-		return err
-	}
-	return d.UnmarshalText([]byte(value))
-}
-
 func (d *XMLDateTime) UnmarshalJSON(data []byte) error {
-	trimmed := bytes.TrimSpace(data)
-	if bytes.Equal(trimmed, []byte("null")) || len(trimmed) == 0 {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "null" || trimmed == "" {
 		d.Time = time.Time{}
 		return nil
 	}
 
 	var value string
-	if err := json.Unmarshal(trimmed, &value); err != nil {
+	if err := json.Unmarshal([]byte(trimmed), &value); err != nil {
 		return err
 	}
-	return d.UnmarshalText([]byte(value))
+
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			d.Time = parsed
+			return nil
+		}
+	}
+
+	return fmt.Errorf("siat: formato de fecha no soportado %q", value)
 }
 
 func (d XMLDateTime) String() string {
@@ -80,103 +54,98 @@ func (d XMLDateTime) String() string {
 	return d.Time.Format(time.RFC3339Nano)
 }
 
+// Mensaje es un mensaje de respuesta devuelto por el SIAT.
 type Mensaje struct {
-	Codigo      string `xml:"codigo" json:"codigo"`
-	Descripcion string `xml:"descripcion" json:"descripcion"`
+	Codigo      int    `json:"codigo"`
+	Descripcion string `json:"descripcion"`
 }
 
+// SolicitudCuis son los datos por-solicitud para obtener un CUIS.
 type SolicitudCuis struct {
-	XMLName xml.Name `xml:"SolicitudCuis" json:"-"`
-
-	CodigoAmbiente   int     `xml:"codigoAmbiente" json:"codigoAmbiente"`
-	CodigoSistema    string  `xml:"codigoSistema" json:"codigoSistema"`
-	Nit              string  `xml:"nit" json:"nit"`
-	CodigoSucursal   int     `xml:"codigoSucursal" json:"codigoSucursal"`
-	Cuis             *string `xml:"cuis,omitempty" json:"cuis,omitempty"`
-	CodigoModalidad  int     `xml:"codigoModalidad" json:"codigoModalidad"`
-	CodigoPuntoVenta int     `xml:"codigoPuntoVenta" json:"codigoPuntoVenta"`
+	CodigoAmbiente   int     `json:"codigoAmbiente"`
+	CodigoSistema    string  `json:"codigoSistema"`
+	Nit              string  `json:"nit"`
+	CodigoSucursal   int     `json:"codigoSucursal"`
+	CodigoModalidad  int     `json:"codigoModalidad"`
+	CodigoPuntoVenta int     `json:"codigoPuntoVenta"`
+	Cuis             *string `json:"cuis,omitempty"`
 }
 
+// RespuestaCuis es la respuesta del SIAT para la solicitud de CUIS.
 type RespuestaCuis struct {
-	XMLName        xml.Name    `xml:"RespuestaCuis" json:"-"`
-	Codigo         string      `xml:"codigo" json:"codigo"`
-	FechaVigencia  XMLDateTime `xml:"fechaVigencia" json:"fechaVigencia"`
-	Transaccion    bool        `xml:"transaccion" json:"transaccion"`
-	Mensajes       []Mensaje   `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
-	CodigoEstado   string      `xml:"codigoEstado,omitempty" json:"codigoEstado,omitempty"`
-	CodigoSistema  string      `xml:"codigoSistema,omitempty" json:"codigoSistema,omitempty"`
-	CodigoAmbiente string      `xml:"codigoAmbiente,omitempty" json:"codigoAmbiente,omitempty"`
+	Codigo        string      `json:"codigo"`
+	FechaVigencia XMLDateTime `json:"fechaVigencia"`
+	Transaccion   bool        `json:"transaccion"`
+	Mensajes      []Mensaje   `json:"mensajes,omitempty"`
 }
 
+// SolicitudCufd son los datos por-solicitud para obtener un CUFD.
 type SolicitudCufd struct {
-	XMLName xml.Name `xml:"SolicitudCufd" json:"-"`
-
-	CodigoAmbiente   int    `xml:"codigoAmbiente" json:"codigoAmbiente"`
-	CodigoSistema    string `xml:"codigoSistema" json:"codigoSistema"`
-	Nit              string `xml:"nit" json:"nit"`
-	CodigoSucursal   int    `xml:"codigoSucursal" json:"codigoSucursal"`
-	Cuis             string `xml:"cuis" json:"cuis"`
-	CodigoModalidad  int    `xml:"codigoModalidad" json:"codigoModalidad"`
-	CodigoPuntoVenta int    `xml:"codigoPuntoVenta" json:"codigoPuntoVenta"`
+	CodigoAmbiente   int    `json:"codigoAmbiente"`
+	CodigoSistema    string `json:"codigoSistema"`
+	Nit              string `json:"nit"`
+	CodigoSucursal   int    `json:"codigoSucursal"`
+	CodigoModalidad  int    `json:"codigoModalidad"`
+	CodigoPuntoVenta int    `json:"codigoPuntoVenta"`
+	Cuis             string `json:"cuis"`
 }
 
+// RespuestaCufd es la respuesta del SIAT para la solicitud de CUFD.
+// Nota: el SDK go-siat v2 no expone codigoQR; se mantiene el campo por
+// compatibilidad del modelo de persistencia (queda nil).
 type RespuestaCufd struct {
-	XMLName       xml.Name    `xml:"RespuestaCufd" json:"-"`
-	Codigo        string      `xml:"codigo" json:"codigo"`
-	CodigoControl string      `xml:"codigoControl" json:"codigoControl"`
-	CodigoQR      *string     `xml:"codigoQR,omitempty" json:"codigoQR,omitempty"`
-	Direccion     string      `xml:"direccion" json:"direccion"`
-	FechaVigencia XMLDateTime `xml:"fechaVigencia" json:"fechaVigencia"`
-	Transaccion   bool        `xml:"transaccion" json:"transaccion"`
-	Mensajes      []Mensaje   `xml:"mensajesList,omitempty" json:"mensajes,omitempty"`
+	Codigo        string      `json:"codigo"`
+	CodigoControl string      `json:"codigoControl"`
+	CodigoQR      *string     `json:"codigoQR,omitempty"`
+	Direccion     string      `json:"direccion"`
+	FechaVigencia XMLDateTime `json:"fechaVigencia"`
+	Transaccion   bool        `json:"transaccion"`
+	Mensajes      []Mensaje   `json:"mensajes,omitempty"`
 }
 
 func (s SolicitudCuis) Validate() error {
-	if s.CodigoAmbiente <= 0 {
-		return fmt.Errorf("siat solicitud cuis: codigoAmbiente is required")
+	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+		return fmt.Errorf("siat solicitud cuis: codigoAmbiente inválido")
 	}
 	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat solicitud cuis: codigoSistema is required")
+		return fmt.Errorf("siat solicitud cuis: codigoSistema es obligatorio")
 	}
 	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat solicitud cuis: nit is required")
+		return fmt.Errorf("siat solicitud cuis: nit es obligatorio")
 	}
 	if s.CodigoSucursal < 0 {
-		return fmt.Errorf("siat solicitud cuis: codigoSucursal must be >= 0")
+		return fmt.Errorf("siat solicitud cuis: codigoSucursal debe ser >= 0")
 	}
 	if s.CodigoModalidad <= 0 {
-		return fmt.Errorf("siat solicitud cuis: codigoModalidad is required")
+		return fmt.Errorf("siat solicitud cuis: codigoModalidad es obligatorio")
 	}
 	if s.CodigoPuntoVenta < 0 {
-		return fmt.Errorf("siat solicitud cuis: codigoPuntoVenta must be >= 0")
-	}
-	if s.Cuis != nil && strings.TrimSpace(*s.Cuis) == "" {
-		return fmt.Errorf("siat solicitud cuis: cuis cannot be empty when provided")
+		return fmt.Errorf("siat solicitud cuis: codigoPuntoVenta debe ser >= 0")
 	}
 	return nil
 }
 
 func (s SolicitudCufd) Validate() error {
-	if s.CodigoAmbiente <= 0 {
-		return fmt.Errorf("siat solicitud cufd: codigoAmbiente is required")
+	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+		return fmt.Errorf("siat solicitud cufd: codigoAmbiente inválido")
 	}
 	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat solicitud cufd: codigoSistema is required")
+		return fmt.Errorf("siat solicitud cufd: codigoSistema es obligatorio")
 	}
 	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat solicitud cufd: nit is required")
+		return fmt.Errorf("siat solicitud cufd: nit es obligatorio")
 	}
 	if s.CodigoSucursal < 0 {
-		return fmt.Errorf("siat solicitud cufd: codigoSucursal must be >= 0")
+		return fmt.Errorf("siat solicitud cufd: codigoSucursal debe ser >= 0")
 	}
 	if strings.TrimSpace(s.Cuis) == "" {
-		return fmt.Errorf("siat solicitud cufd: cuis is required")
+		return fmt.Errorf("siat solicitud cufd: cuis es obligatorio")
 	}
 	if s.CodigoModalidad <= 0 {
-		return fmt.Errorf("siat solicitud cufd: codigoModalidad is required")
+		return fmt.Errorf("siat solicitud cufd: codigoModalidad es obligatorio")
 	}
 	if s.CodigoPuntoVenta < 0 {
-		return fmt.Errorf("siat solicitud cufd: codigoPuntoVenta must be >= 0")
+		return fmt.Errorf("siat solicitud cufd: codigoPuntoVenta debe ser >= 0")
 	}
 	return nil
 }

@@ -16,46 +16,36 @@ type Config struct {
 }
 
 func Load() Config {
-	environment := siat.Environment(strings.ToUpper(strings.TrimSpace(getEnv("SIAT_ENVIRONMENT", ""))))
-	if environment != siat.EnvironmentProduccion {
-		environment = siat.EnvironmentPiloto
-	}
-	// SIAT_AMBIENTE (1 = producción, 2 = piloto) tiene prioridad sobre
-	// SIAT_ENVIRONMENT.
-	switch strings.TrimSpace(getEnv("SIAT_AMBIENTE", "2")) {
-	case "1":
-		environment = siat.EnvironmentProduccion
-	case "2":
-		environment = siat.EnvironmentPiloto
+	ambiente := parseInt(getEnv("SIAT_AMBIENTE", "2"), siat.AmbientePruebas)
+	if ambiente != siat.AmbienteProduccion {
+		ambiente = siat.AmbientePruebas
 	}
 
-	siATConfig := siat.DefaultConfig(environment)
-	siATConfig.Timeout = parseDuration(getEnv("SIAT_TIMEOUT", "30s"), 30*time.Second)
-	siATConfig.Headers = map[string]string{}
-
-	if token := strings.TrimSpace(os.Getenv("SIAT_TOKEN_DELEGADO")); token != "" {
-		siATConfig.Headers["apikey"] = "TokenApi " + token
+	baseURL := strings.TrimSpace(os.Getenv("SIAT_BASE_URL"))
+	if baseURL == "" {
+		if ambiente == siat.AmbienteProduccion {
+			baseURL = "https://siat.impuestos.gob.bo/v2"
+		} else {
+			baseURL = "https://pilotosiatservicios.impuestos.gob.bo/v2"
+		}
 	}
 
-	if wsdlURL := strings.TrimSpace(os.Getenv("SIAT_WSDL_URL")); wsdlURL != "" {
-		siATConfig.WSDLURL = wsdlURL
-	}
-	if endpointURL := strings.TrimSpace(os.Getenv("SIAT_ENDPOINT_URL")); endpointURL != "" {
-		siATConfig.EndpointURL = endpointURL
+	siatConfig := siat.Config{
+		Token:          strings.TrimSpace(os.Getenv("SIAT_TOKEN_DELEGADO")),
+		Nit:            parseInt64(getEnv("SIAT_NIT", ""), 0),
+		CodigoSistema:  strings.TrimSpace(os.Getenv("SIAT_CODIGO_SISTEMA")),
+		CodigoAmbiente: ambiente,
+		BaseURL:        baseURL,
+		TraceId:        strings.TrimSpace(os.Getenv("SIAT_TRACE_ID")),
+		UserAgent:      strings.TrimSpace(os.Getenv("SIAT_USER_AGENT")),
+		Timeout:        parseDuration(getEnv("SIAT_TIMEOUT", "45s"), 45*time.Second),
 	}
 
-	// Certificado de firma digital para la modalidad Electrónica en Línea.
-	siATConfig.CertPath = strings.TrimSpace(os.Getenv("SIAT_CERT_PATH"))
-	siATConfig.CertPassword = os.Getenv("SIAT_CERT_PASSWORD")
-	siATConfig.CertPEMCert = strings.TrimSpace(os.Getenv("SIAT_CERT_PEM_CERT"))
-	siATConfig.CertPEMKey = strings.TrimSpace(os.Getenv("SIAT_CERT_PEM_KEY"))
-
-	modalidad := parseInt(getEnv("SIAT_MODALIDAD", "1"), 1)
-	siATConfig.CodigoModalidad = modalidad
+	modalidad := parseInt(getEnv("SIAT_MODALIDAD", "1"), siat.ModalidadElectronica)
 
 	return Config{
 		Port:          getEnv("PORT", "8081"),
-		SIAT:          siATConfig,
+		SIAT:          siatConfig,
 		SiatModalidad: modalidad,
 	}
 }
@@ -80,6 +70,14 @@ func parseDuration(value string, fallback time.Duration) time.Duration {
 
 func parseInt(value string, fallback int) int {
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseInt64(value string, fallback int64) int64 {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil {
 		return fallback
 	}

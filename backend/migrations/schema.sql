@@ -61,6 +61,22 @@ CREATE TABLE IF NOT EXISTS cuis (
 );
 CREATE INDEX IF NOT EXISTS idx_cuis_pos ON cuis (point_of_sale_id);
 
+-- Catálogos sincronizados del SIAT (FacturacionSincronizacion). Cada fila es un
+-- elemento codigo+descripcion de un catálogo; `tipo` identifica la operación de
+-- origen (p.ej. tipoMoneda, tipoMetodoPago, unidadMedida, actividades, ...).
+-- Se reemplazan por completo (delete + insert) en cada sincronización, por lo que
+-- no requieren constraint único.
+CREATE TABLE IF NOT EXISTS catalogs (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id   UUID NOT NULL REFERENCES companies(id),
+    tipo         VARCHAR(50) NOT NULL,
+    codigo       INTEGER NOT NULL,
+    descripcion  TEXT NOT NULL,
+    synced_at    TIMESTAMPTZ NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_catalog_company_tipo ON catalogs (company_id, tipo);
+
 CREATE TABLE IF NOT EXISTS cufds (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     point_of_sale_id UUID NOT NULL REFERENCES point_of_sales(id),

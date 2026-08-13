@@ -2,114 +2,67 @@ package siat
 
 import (
 	"fmt"
-	"net/url"
+	"net/http"
 	"strings"
 	"time"
+
+	goSiat "github.com/ron86i/go-siat/v2"
 )
 
-type Environment string
-
+// Alias de constantes del SDK go-siat para uso del resto de la aplicación.
 const (
-	EnvironmentPiloto     Environment = "PILOTO"
-	EnvironmentProduccion Environment = "PRODUCCION"
+	AmbienteProduccion     = goSiat.AmbienteProduccion
+	AmbientePruebas        = goSiat.AmbientePruebas
+	ModalidadElectronica   = goSiat.ModalidadElectronica
+	ModalidadComputarizada = goSiat.ModalidadComputarizada
 )
 
-// Service identifica los servicios SOAP del SIAT.
-type Service string
-
-const (
-	ServiceCodigos                 Service = "FacturacionCodigos"
-	ServiceOperaciones             Service = "FacturacionOperaciones"
-	ServiceSincronizacion          Service = "FacturacionSincronizacion"
-	ServiceFacturacionCompraVenta  Service = "ServicioFacturacionCompraVenta"
-	ServiceFacturacionElectronica  Service = "ServicioFacturacionElectronica"
-)
-
-func (s Service) String() string { return string(s) }
-
+// Config agrupa la identidad global del contribuyente y la configuración de
+// conexión usada por el adaptador sobre el SDK go-siat.
 type Config struct {
-	Environment Environment
-	WSDLURL     string
-	EndpointURL string
-	Timeout     time.Duration
-	Headers     map[string]string
+	// Token de autenticación proporcionado por el SIAT (obligatorio).
+	Token string
 
-	// CodigoModalidad: 1 = Electrónica en Línea, 2 = Computarizada en Línea.
-	CodigoModalidad int
+	// Nit del contribuyente emisor (obligatorio).
+	Nit int64
 
-	// Certificado de firma digital (modalidad Electrónica en Línea).
-	// Se soporta PKCS#12 (.p12/.pfx) o PEM (cert + key).
-	CertPath     string
-	CertPassword string
-	CertPEMCert  string // ruta al archivo PEM con el certificado X.509
-	CertPEMKey   string // ruta al archivo PEM con la llave privada
-}
+	// CodigoSistema autorizado por el SIN (obligatorio).
+	CodigoSistema string
 
-func DefaultConfig(environment Environment) Config {
-	baseURL := "https://pilotosiatservicios.impuestos.gob.bo/v2"
-	if environment == EnvironmentProduccion {
-		baseURL = "https://siat.impuestos.gob.bo/v2"
-	}
+	// CodigoAmbiente: 1 = producción, 2 = piloto/pruebas.
+	CodigoAmbiente int
 
-	return Config{
-		Environment:     environment,
-		WSDLURL:         baseURL + "/" + ServiceCodigos.String() + "?wsdl",
-		EndpointURL:     baseURL + "/" + ServiceCodigos.String(),
-		Timeout:         30 * time.Second,
-		Headers:         map[string]string{},
-		CodigoModalidad: 1, // Electrónica en Línea
-	}
-}
+	// BaseURL del SIAT (p.ej. https://pilotosiatservicios.impuestos.gob.bo/v2).
+	BaseURL string
 
-// ServiceEndpoint devuelve la URL base (endpoint SOAP) para un servicio del SIAT
-// según el ambiente configurado.
-func (c Config) ServiceEndpoint(service Service) string {
-	if c.Environment == EnvironmentProduccion {
-		return "https://siat.impuestos.gob.bo/v2/" + string(service)
-	}
-	return "https://pilotosiatservicios.impuestos.gob.bo/v2/" + string(service)
+	// TraceId para correlacionar solicitudes (opcional).
+	TraceId string
+
+	// UserAgent personalizado (opcional).
+	UserAgent string
+
+	// HTTPClient personalizado (opcional).
+	HTTPClient *http.Client
+
+	// Timeout usado si no se provee un HTTPClient (opcional, default 45s).
+	Timeout time.Duration
 }
 
 func (c Config) Validate() error {
-	if c.WSDLURL == "" && c.EndpointURL == "" {
-		return fmt.Errorf("siat config: WSDLURL or EndpointURL must be provided")
+	if strings.TrimSpace(c.Token) == "" {
+		return fmt.Errorf("siat config: Token es obligatorio")
 	}
-
-	if c.EndpointURL != "" {
-		if _, err := url.ParseRequestURI(c.EndpointURL); err != nil {
-			return fmt.Errorf("siat config: invalid endpoint URL: %w", err)
-		}
+	if c.Nit <= 0 {
+		return fmt.Errorf("siat config: Nit es obligatorio y debe ser mayor a cero")
 	}
-
-	if c.WSDLURL != "" {
-		if _, err := url.ParseRequestURI(c.WSDLURL); err != nil {
-			return fmt.Errorf("siat config: invalid WSDL URL: %w", err)
-		}
+	if strings.TrimSpace(c.CodigoSistema) == "" {
+		return fmt.Errorf("siat config: CodigoSistema es obligatorio")
 	}
-
-	if c.Timeout <= 0 {
-		return fmt.Errorf("siat config: timeout must be greater than zero")
+	if c.CodigoAmbiente != AmbienteProduccion && c.CodigoAmbiente != AmbientePruebas {
+		return fmt.Errorf("siat config: CodigoAmbiente inválido (%d)", c.CodigoAmbiente)
 	}
-
+	if strings.TrimSpace(c.BaseURL) == "" {
+		return fmt.Errorf("siat config: BaseURL es obligatorio")
+	}
 	return nil
-}
-
-func (c Config) EffectiveEndpoint() string {
-	if strings.TrimSpace(c.EndpointURL) != "" {
-		return c.EndpointURL
-	}
-
-	if strings.HasSuffix(c.WSDLURL, "?wsdl") {
-		return strings.TrimSuffix(c.WSDLURL, "?wsdl")
-	}
-
-	return c.WSDLURL
-}
-
-func (c Config) CloneHeaders() map[string]string {
-	cloned := make(map[string]string, len(c.Headers))
-	for key, value := range c.Headers {
-		cloned[key] = value
-	}
-	return cloned
 }

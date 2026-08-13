@@ -16,9 +16,9 @@ type SiatHandler struct {
 	companyRepo     domain.CompanyRepository
 	pointOfSaleRepo domain.PointOfSaleRepository
 	cufdRepo        domain.CufdRepository
-	cuisService     *siat.CuisService
-	cufdService     *siat.CufdService
-	emissionService *siat.EmissionService
+	tipoPVRepo      domain.TipoPuntoVentaRepository
+	catalogRepo     domain.CatalogRepository
+	siatService     *siat.Service
 	pdfService      *pdf.Service
 	modalidad       int
 }
@@ -27,9 +27,9 @@ func NewSiatHandler(
 	companyRepo domain.CompanyRepository,
 	pointOfSaleRepo domain.PointOfSaleRepository,
 	cufdRepo domain.CufdRepository,
-	cuisService *siat.CuisService,
-	cufdService *siat.CufdService,
-	emissionService *siat.EmissionService,
+	tipoPVRepo domain.TipoPuntoVentaRepository,
+	catalogRepo domain.CatalogRepository,
+	siatService *siat.Service,
 	pdfService *pdf.Service,
 	modalidad int,
 ) *SiatHandler {
@@ -37,9 +37,9 @@ func NewSiatHandler(
 		companyRepo:     companyRepo,
 		pointOfSaleRepo: pointOfSaleRepo,
 		cufdRepo:        cufdRepo,
-		cuisService:     cuisService,
-		cufdService:     cufdService,
-		emissionService: emissionService,
+		tipoPVRepo:      tipoPVRepo,
+		catalogRepo:     catalogRepo,
+		siatService:     siatService,
 		pdfService:      pdfService,
 		modalidad:       modalidad,
 	}
@@ -58,7 +58,7 @@ type siatCufdResponse struct {
 }
 
 func (h *SiatHandler) SolicitarCUIS(w http.ResponseWriter, r *http.Request) {
-	if h.cuisService == nil {
+	if h.siatService == nil {
 		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
 		return
 	}
@@ -90,7 +90,7 @@ func (h *SiatHandler) SolicitarCUIS(w http.ResponseWriter, r *http.Request) {
 		req.Cuis = pointOfSale.Cuis
 	}
 
-	resp, err := h.cuisService.SolicitarCUIS(r.Context(), req)
+	resp, err := h.siatService.SolicitarCUIS(r.Context(), req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -115,7 +115,7 @@ func (h *SiatHandler) SolicitarCUIS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
-	if h.cufdService == nil {
+	if h.siatService == nil {
 		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
 		return
 	}
@@ -150,7 +150,7 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		CodigoPuntoVenta: codigoPuntoVenta,
 	}
 
-	resp, err := h.cufdService.SolicitarCUFD(r.Context(), req)
+	resp, err := h.siatService.SolicitarCUFD(r.Context(), req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -162,7 +162,6 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		Cufd:          resp.Codigo,
 		ControlCode:   resp.CodigoControl,
 		Direccion:     resp.Direccion,
-		CodigoQR:      resp.CodigoQR,
 		ValidFrom:     now,
 		ValidTo:       resp.FechaVigencia.Time,
 		Active:        true,
@@ -181,27 +180,152 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *SiatHandler) EmitInvoice(w http.ResponseWriter, r *http.Request) {
-	if h.emissionService == nil {
-		http.Error(w, "Servicio de emisión no inicializado", http.StatusServiceUnavailable)
+type siatSincronizacionOpResult struct {
+	Operation   string `json:"operation"`
+	Transaccion bool   `json:"transaccion"`
+	Codigos     int    `json:"codigos"`
+	FechaHora   string `json:"fechaHora,omitempty"`
+}
+
+type siatSincronizacionOpError struct {
+	Operation string `json:"operation"`
+	Error     string `json:"error"`
+}
+
+type siatSincronizacionResponse struct {
+	Company     *domain.Company               `json:"company"`
+	PointOfSale *domain.PointOfSale           `json:"point_of_sale"`
+	Operations  []siatSincronizacionOpResult  `json:"operations,omitempty"`
+	Errors      []siatSincronizacionOpError   `json:"errors,omitempty"`
+}
+
+// Sincronizar baja catálogos del SIAT para la empresa y punto de venta indicados.
+// Sin parámetro ?operation= sincroniza todas las operaciones del SDK.
+func (h *SiatHandler) Sincronizar(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
 		return
 	}
 
-	invoiceID := chi.URLParam(r, "invoiceId")
-	if invoiceID == "" {
-		http.Error(w, "invoiceId es obligatorio", http.StatusBadRequest)
-		return
-	}
-
-	inv, err := h.emissionService.Emit(r.Context(), invoiceID)
+	company, pointOfSale, err := h.loadCompanyAndPointOfSale(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		http.Error(w, err.Error(), errToStatus(err))
 		return
 	}
 
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		http.Error(w, "El punto de venta no tiene CUIS activo", http.StatusConflict)
+		return
+	}
+
+	codigoPuntoVenta := pointOfSale.CodigoPuntoVenta
+	if pointOfSale.SiatCode != nil {
+		codigoPuntoVenta = *pointOfSale.SiatCode
+	}
+
+	req := siat.SolicitudSincronizacion{
+		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:    company.CodigoSistema,
+		Nit:              company.Nit,
+		CodigoSucursal:   pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta: codigoPuntoVenta,
+		Cuis:             *pointOfSale.Cuis,
+	}
+
+	opRaw := r.URL.Query().Get("operation")
+	if opRaw != "" {
+		op, ok := siat.ParseSincronizacionOp(opRaw)
+		if !ok {
+			http.Error(w, "Operación de sincronización desconocida: "+opRaw, http.StatusBadRequest)
+			return
+		}
+		result, err := h.siatService.Sincronizar(r.Context(), req, op)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if perr := h.persistSincronizacion(company.ID, op, result); perr != nil {
+			http.Error(w, "No se pudo persistir el catálogo: "+perr.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.respondSincronizacion(w, company, pointOfSale, []siatSincronizacionOpResult{toSincronizacionOpResult(op, result)}, nil)
+		return
+	}
+
+	var results []siatSincronizacionOpResult
+	var errors []siatSincronizacionOpError
+	for _, op := range siat.SincronizacionOperations {
+		result, err := h.siatService.Sincronizar(r.Context(), req, op)
+		if err != nil {
+			errors = append(errors, siatSincronizacionOpError{Operation: string(op), Error: err.Error()})
+			continue
+		}
+		if perr := h.persistSincronizacion(company.ID, op, result); perr != nil {
+			errors = append(errors, siatSincronizacionOpError{Operation: string(op), Error: "persistencia: " + perr.Error()})
+		}
+		results = append(results, toSincronizacionOpResult(op, result))
+	}
+
+	h.respondSincronizacion(w, company, pointOfSale, results, errors)
+}
+
+func toSincronizacionOpResult(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) siatSincronizacionOpResult {
+	out := siatSincronizacionOpResult{
+		Operation:   string(op),
+		Transaccion: res.Transaccion,
+		Codigos:     len(res.Codigos),
+	}
+	if !res.FechaHora.IsZero() {
+		out.FechaHora = res.FechaHora.Format(time.RFC3339Nano)
+	}
+	return out
+}
+
+func (h *SiatHandler) respondSincronizacion(w http.ResponseWriter, company *domain.Company, pointOfSale *domain.PointOfSale, results []siatSincronizacionOpResult, errors []siatSincronizacionOpError) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{"invoice_id": inv.ID, "status": inv.Status, "xml_hash": inv.XmlHash})
+	_ = json.NewEncoder(w).Encode(siatSincronizacionResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Operations:  results,
+		Errors:      errors,
+	})
+}
+
+// persistSincronizacion guarda el catálogo sincronizado: tipos de punto de venta
+// en tipo_punto_ventas y el resto en catalogs. FechaHora y VerificarComunicacion
+// no son catálogos y no se persisten.
+func (h *SiatHandler) persistSincronizacion(companyID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) error {
+	if res == nil || !res.Transaccion {
+		return nil
+	}
+	now := time.Now().UTC()
+
+	if op == siat.OpTipoPuntoVenta {
+		tipos := make([]domain.TipoPuntoVenta, 0, len(res.Codigos))
+		for _, c := range res.Codigos {
+			tipos = append(tipos, domain.TipoPuntoVenta{
+				CodigoClasificador: c.CodigoClasificador,
+				Descripcion:        c.Descripcion,
+			})
+		}
+		return h.tipoPVRepo.Replace(companyID, tipos, now)
+	}
+
+	switch op {
+	case siat.OpFechaHora, siat.OpVerificarComunicacion:
+		return nil
+	}
+
+	items := make([]domain.CatalogItem, 0, len(res.Codigos))
+	for _, c := range res.Codigos {
+		items = append(items, domain.CatalogItem{
+			Codigo:      c.CodigoClasificador,
+			Descripcion: c.Descripcion,
+			Tipo:        string(op),
+		})
+	}
+	return h.catalogRepo.Replace(companyID, string(op), items, now)
 }
 
 // DownloadPDF genera y descarga el PDF de la factura indicada.

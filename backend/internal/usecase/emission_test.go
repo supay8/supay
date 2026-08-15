@@ -121,6 +121,12 @@ func (f *fakeCufdRepo) GetActiveByPos(_ string) (*domain.Cufd, error) {
 	}
 	return f.vigente, nil
 }
+func (f *fakeCufdRepo) GetByPosAndWindow(_ string, _, _ time.Time) (*domain.Cufd, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.vigente, nil
+}
 func (f *fakeCufdRepo) DeactivateExpired() error { return nil }
 
 // ---- Fixture ----

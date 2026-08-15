@@ -184,6 +184,131 @@ func TestEmitirFacturaCompraVentaPayload(t *testing.T) {
 	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}$`).MatchString(m[1]) {
 		t.Fatalf("fechaEnvio debe ser YYYY-MM-DDTHH:mm:ss.SSS sin zona horaria: %q", m[1])
 	}
+
+	assertFacturaXMLSinXsiNil(t, result.Archivo)
+}
+
+func TestEmitirFacturaSectorEducativoPayload(t *testing.T) {
+	var gotBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <recepcionFacturaResponse>
+      <RespuestaServicioFacturacion>
+        <transaccion>true</transaccion>
+        <codigoEstado>908</codigoEstado>
+        <codigoRecepcion>RCV-FSEDU</codigoRecepcion>
+      </RespuestaServicioFacturacion>
+    </recepcionFacturaResponse>
+  </soapenv:Body>
+</soapenv:Envelope>`))
+	}))
+	defer server.Close()
+
+	svc := newTestService(t, server.URL)
+
+	req := SolicitudFactura{
+		CodigoAmbiente:        AmbientePruebas,
+		CodigoSistema:         "SYS-123",
+		Nit:                   "1020304050",
+		Modalidad:             ModalidadComputarizada,
+		NumeroFactura:         200,
+		CodigoSucursal:        0,
+		CodigoPuntoVenta:      0,
+		Cuis:                  "CUIS-TEST-001",
+		Cufd:                  "CUFD-TEST-001",
+		CodigoControl:         "CONTROL-CODE-29-CHARACTERS-02",
+		FechaEmision:          time.Now(),
+		Usuario:               "SUPAY",
+		Leyenda:               "Ley N° 453",
+		RazonSocialEmisor:     "UNIVERSIDAD TEST SRL",
+		Municipio:             "LA PAZ",
+		Direccion:             "AV. MOCK 456",
+		CodigoMetodoPago:      1,
+		CodigoMoneda:          1,
+		TipoCambio:            1,
+		MontoTotal:            150,
+		CodigoDocumentoSector: SectorEducativo,
+		CodigoTipoFactura:     1,
+		NombreEstudiante:      "MARIA TEST",
+		PeriodoFacturado:      "2026-1",
+		Cliente: ClienteFactura{
+			NombreRazonSocial:            "MARIA TEST",
+			CodigoTipoDocumentoIdentidad: 1,
+			NumeroDocumento:              "7654321",
+			CodigoCliente:                "C-002",
+		},
+		Items: []ItemFactura{
+			{
+				ActividadEconomica: "8549100",
+				CodigoProductoSin:  67890,
+				CodigoProducto:     "P-002",
+				Descripcion:        "Matrícula",
+				Cantidad:           1,
+				UnidadMedida:       1,
+				PrecioUnitario:     150,
+				SubTotal:           150,
+			},
+		},
+	}
+
+	result, err := svc.EmitirFactura(t.Context(), req)
+	if err != nil {
+		t.Fatalf("EmitirFactura (sector educativo): %v", err)
+	}
+
+	if !strings.Contains(gotBody, "<codigoDocumentoSector>11</codigoDocumentoSector>") {
+		t.Error("el payload SOAP no declara codigoDocumentoSector=11")
+	}
+	if result.CodigoRecepcion != "RCV-FSEDU" {
+		t.Fatalf("unexpected codigoRecepcion: %q", result.CodigoRecepcion)
+	}
+
+	assertFacturaXMLSinXsiNil(t, result.Archivo)
+}
+
+// assertFacturaXMLSinXsiNil descomprime el archivo gzip+Base64 del SIAT y
+// verifica que ningún campo opcional de la factura viaje con xsi:nil="true":
+// el SIAT rechaza ese atributo (Undeclared namespace prefix 'xsi'). Solo se
+// tolera en numeroSerie/numeroImei del detalle de compraventa, que no tienen
+// builder público en el SDK.
+func assertFacturaXMLSinXsiNil(t *testing.T, archivo string) {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(archivo)
+	if err != nil {
+		t.Fatalf("decodificando base64 del archivo: %v", err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("abriendo gzip del archivo: %v", err)
+	}
+	defer zr.Close()
+	xmlData, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("descomprimiendo el archivo: %v", err)
+	}
+	xmlStr := string(xmlData)
+
+	for _, campo := range []string{
+		"telefono", "complemento", "numeroTarjeta", "montoGiftCard",
+		"descuentoAdicional", "codigoExcepcion", "cafc", "montoDescuento",
+	} {
+		if strings.Contains(xmlStr, "<"+campo+" xsi:nil=\"true\">") {
+			t.Errorf("el campo %q NO debe viajar con xsi:nil en el XML:\n%s", campo, xmlStr)
+		}
+	}
+
+	sinExcepciones := strings.ReplaceAll(xmlStr, "<numeroSerie xsi:nil=\"true\">", "")
+	sinExcepciones = strings.ReplaceAll(sinExcepciones, "<numeroImei xsi:nil=\"true\">", "")
+	if strings.Contains(sinExcepciones, "xsi:nil=\"true\"") {
+		t.Errorf("el XML contiene xsi:nil fuera de numeroSerie/numeroImei:\n%s", xmlStr)
+	}
 }
 
 func TestAnularFacturaPayload(t *testing.T) {

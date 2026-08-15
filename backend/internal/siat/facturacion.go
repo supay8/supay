@@ -20,7 +20,7 @@ import (
 // ClienteFactura son los datos del comprador que requiere la cabecera de la
 // factura (códigos de catálogo SIN ya mapeados).
 type ClienteFactura struct {
-	NombreRazonSocial            string  `json:"nombreRazonSocial"`
+	NombreRazonSocial            string  `json:"razonSocial"`
 	CodigoTipoDocumentoIdentidad int     `json:"codigoTipoDocumentoIdentidad"`
 	NumeroDocumento              string  `json:"numeroDocumento"`
 	Complemento                  *string `json:"complemento,omitempty"`
@@ -255,6 +255,24 @@ func (s *Service) FirmarFacturaXML(ctx context.Context, xml string) (*ResultadoF
 	}, nil
 }
 
+// Valores por defecto seguros para los campos opcionales de la cabecera/detalle:
+// el SIAT rechaza el atributo xsi:nil="true" que el SDK emite cuando un puntero
+// es nil, por lo que siempre se envían estos valores neutros en su lugar.
+var (
+	emptyStr  = ""
+	zeroFloat = 0.0
+	zeroInt   = 0
+	zeroInt64 = int64(0)
+)
+
+// descuentoPtr devuelve un puntero seguro para el MontoDescuento de un ítem.
+func descuentoPtr(v *float64) *float64 {
+	if v == nil {
+		return &zeroFloat
+	}
+	return v
+}
+
 // buildFacturaSDK construye el struct de factura del SDK (compraventa o sector
 // educativo) para una SolicitudFactura, junto con el CUF generado con el mismo
 // timestamp y correlativo de la cabecera. codigoEmision define cómo se compone
@@ -286,9 +304,32 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 	if err != nil {
 		return nil, "", fmt.Errorf("siat emision cuf: %w", err)
 	}
-
 	puntoVenta := req.CodigoPuntoVenta
 	nombreCliente := req.Cliente.NombreRazonSocial
+	getComplementoStr := func(comp *string) string {
+		if comp != nil {
+			return *comp
+		}
+		return ""
+	}
+
+	// Asegurar puntero seguro para el complemento
+	var complementoPtr *string
+	if getComplementoStr(req.Cliente.Complemento) != "" {
+		complementoPtr = req.Cliente.Complemento
+	} else {
+		empty := ""
+		complementoPtr = &empty
+	}
+
+	// Asegurar puntero seguro para el teléfono del emisor (si viene nil)
+	var telefonoPtr *string
+	if req.Telefono != nil && *req.Telefono != "" {
+		telefonoPtr = req.Telefono
+	} else {
+		emptyTel := ""
+		telefonoPtr = &emptyTel
+	}
 
 	if sector == SectorEducativo {
 		// FACTURA SECTORES EDUCATIVOS (documento-sector 11): estructura XSD
@@ -297,7 +338,7 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 			WithNitEmisor(nit).
 			WithRazonSocialEmisor(req.RazonSocialEmisor).
 			WithMunicipio(req.Municipio).
-			WithTelefono(req.Telefono).
+			WithTelefono(telefonoPtr).
 			WithNumeroFactura(req.NumeroFactura).
 			WithCuf(cuf).
 			WithCufd(req.Cufd).
@@ -308,8 +349,13 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 			WithNombreRazonSocial(&nombreCliente).
 			WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
 			WithNumeroDocumento(req.Cliente.NumeroDocumento).
-			WithComplemento(req.Cliente.Complemento).
+			WithComplemento(complementoPtr).
 			WithCodigoCliente(req.Cliente.CodigoCliente).
+			WithNumeroTarjeta(&zeroInt64).
+			WithMontoGiftCard(&zeroFloat).
+			WithDescuentoAdicional(&zeroFloat).
+			WithCodigoExcepcion(&zeroInt).
+			WithCafc(&emptyStr).
 			WithNombreEstudiante(req.NombreEstudiante).
 			WithPeriodoFacturado(req.PeriodoFacturado).
 			WithCodigoMetodoPago(req.CodigoMetodoPago).
@@ -336,7 +382,7 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 				WithCantidad(item.Cantidad).
 				WithUnidadMedida(item.UnidadMedida).
 				WithPrecioUnitario(item.PrecioUnitario).
-				WithMontoDescuento(item.MontoDescuento).
+				WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
 				WithSubTotal(item.SubTotal).
 				Build()
 			facturaBuilder.AddDetalle(detalle)
@@ -349,7 +395,7 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 		WithNitEmisor(nit).
 		WithRazonSocialEmisor(req.RazonSocialEmisor).
 		WithMunicipio(req.Municipio).
-		WithTelefono(req.Telefono).
+		WithTelefono(telefonoPtr).
 		WithNumeroFactura(req.NumeroFactura).
 		WithCuf(cuf).
 		WithCufd(req.Cufd).
@@ -360,8 +406,13 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 		WithNombreRazonSocial(&nombreCliente).
 		WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
 		WithNumeroDocumento(req.Cliente.NumeroDocumento).
-		WithComplemento(req.Cliente.Complemento).
+		WithComplemento(complementoPtr).
 		WithCodigoCliente(req.Cliente.CodigoCliente).
+		WithNumeroTarjeta(&zeroInt64).
+		WithMontoGiftCard(&zeroFloat).
+		WithDescuentoAdicional(&zeroFloat).
+		WithCodigoExcepcion(&zeroInt64).
+		WithCafc(&emptyStr).
 		WithCodigoMetodoPago(req.CodigoMetodoPago).
 		WithMontoTotal(req.MontoTotal).
 		WithMontoTotalSujetoIva(req.MontoTotal).
@@ -386,7 +437,7 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 			WithCantidad(item.Cantidad).
 			WithUnidadMedida(item.UnidadMedida).
 			WithPrecioUnitario(item.PrecioUnitario).
-			WithMontoDescuento(item.MontoDescuento).
+			WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
 			WithSubTotal(item.SubTotal).
 			Build()
 		facturaBuilder.AddDetalle(detalle)

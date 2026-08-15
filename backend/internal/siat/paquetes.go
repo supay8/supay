@@ -88,6 +88,7 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
+
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
 	}
@@ -116,10 +117,17 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 		WithTipoFacturaDocumento(tipoFactura).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
+
 		// El SIAT exige fechaEnvio en UTC extendido sin zona horaria; el SDK
 		// formatea la hora tal cual la recibe (no convierte a UTC).
 		WithFechaEnvio(time.Now().UTC()).
-		WithCodigoEvento(req.CodigoEvento)
+		WithCodigoEvento(req.CodigoEvento).
+
+		// Cafc es Nilable en el SDK y, si queda en nil, emite <cafc xsi:nil="true"/>
+		// con el prefijo xsi sin declarar en el envelope del request, lo que hace
+		// que el SIAT rechace el paquete con "Undeclared namespace prefix". Se
+		// envía vacío para evitar el xsi:nil.
+		WithCafc(&emptyStr)
 
 	if err := paquete.WithFacturas(facturas, s.sdk.Config()); err != nil {
 		return nil, fmt.Errorf("siat paquete: no se pudo empaquetar las facturas: %w", err)

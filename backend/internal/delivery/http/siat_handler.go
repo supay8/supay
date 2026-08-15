@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -275,7 +276,6 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 		FechaHoraInicioEvento: inicio,
 		FechaHoraFinEvento:    fin,
 	}
-
 	result, err := h.siatService.RegistrarEventoSignificativo(r.Context(), req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -370,7 +370,27 @@ func (h *SiatHandler) buildSolicitudPaquete(r *http.Request, body siatPaqueteReq
 	if modalidad <= 0 {
 		modalidad = siat.ModalidadElectronica
 	}
+	var facturasProcesadas []siat.SolicitudFactura
+	loc, _ := time.LoadLocation("America/La_Paz")
+	if loc == nil {
+		loc = time.FixedZone("BOT", -4*60*60)
+	}
+	for _, f := range body.Facturas {
+		f.CodigoAmbiente = company.Ambiente.CodigoAmbiente()
+		f.CodigoSistema = company.CodigoSistema
+		f.Nit = company.Nit
+		f.Modalidad = modalidad
+		f.CodigoSucursal = pointOfSale.CodigoSucursal
+		f.CodigoPuntoVenta = codigoPuntoVenta
+		f.Cuis = *pointOfSale.Cuis
+		f.Cufd = cufd.Cufd
+		f.CodigoControl = cufd.ControlCode
 
+		if f.FechaEmision.IsZero() {
+			f.FechaEmision = time.Now().In(loc)
+		}
+		facturasProcesadas = append(facturasProcesadas, f)
+	}
 	req := &siat.SolicitudPaqueteFactura{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
@@ -386,7 +406,7 @@ func (h *SiatHandler) buildSolicitudPaquete(r *http.Request, body siatPaqueteReq
 		CodigoEmision:         body.CodigoEmision,
 		CodigoEvento:          int64(body.CodigoEvento),
 		Descripcion:           body.Descripcion,
-		Facturas:              body.Facturas,
+		Facturas:              facturasProcesadas,
 	}
 	return req, company, pointOfSale, nil
 }
@@ -413,19 +433,17 @@ func (h *SiatHandler) EnviarPaquete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "codigoEvento es obligatorio (código de recepción del evento significativo registrado)", http.StatusBadRequest)
 		return
 	}
-
 	req, company, pointOfSale, err := h.buildSolicitudPaquete(r, body)
 	if err != nil {
 		http.Error(w, err.Error(), errToStatus(err))
 		return
 	}
-
 	result, err := h.siatService.EnviarPaqueteFactura(r.Context(), *req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-
+	log.Printf("Paquete enviado: codigoRecepcion=%s", result.CodigoRecepcion)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(siatPaqueteResponse{
@@ -726,9 +744,9 @@ func (h *SiatHandler) FirmarFactura(w http.ResponseWriter, r *http.Request) {
 func parseFechaSiat(value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return time.Now().UTC(), nil
+		return time.Now().In(siat.LaPaz), nil
 	}
-	parsed, err := time.Parse("2006-01-02T15:04:05.000", value)
+	parsed, err := time.ParseInLocation("2006-01-02T15:04:05.000", value, siat.LaPaz)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -775,20 +793,14 @@ func (h *SiatHandler) Sincronizar(w http.ResponseWriter, r *http.Request) {
 
 	// El código de punto de venta que usa el CUIS debe ser el mismo en todas
 	// las operaciones (preferir el código registrado ante SIAT).
-	codigoPuntoVenta := pointOfSale.CodigoPuntoVenta
-	if pointOfSale.SiatCode != nil {
-		codigoPuntoVenta = *pointOfSale.SiatCode
-	}
-
 	req := siat.SolicitudSincronizacion{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:    company.CodigoSistema,
 		Nit:              company.Nit,
 		CodigoSucursal:   pointOfSale.CodigoSucursal,
-		CodigoPuntoVenta: codigoPuntoVenta,
+		CodigoPuntoVenta: pointOfSale.CodigoPuntoVenta,
 		Cuis:             *pointOfSale.Cuis,
 	}
-
 	opRaw := r.URL.Query().Get("operation")
 	if opRaw != "" {
 		op, ok := siat.ParseSincronizacionOp(opRaw)

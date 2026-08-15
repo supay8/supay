@@ -59,18 +59,21 @@ func (s *Service) RegistrarEventoSignificativo(ctx context.Context, req Solicitu
 		return nil, fmt.Errorf("siat evento significativo: servicio SIAT no inicializado")
 	}
 
-	// El SIAT exige fechas del evento en UTC; el dominio del SDK serializa
-	// time.Time con su zona (Z/-04:00), así que normalizamos a UTC aquí.
+	// El SIAT interpreta las fechas del evento en hora local de Bolivia (UTC-4).
+	// Enviamos la hora de pared en America/La_Paz (el SDK serializa time.Time con
+	// su zona, -04:00) para que el rango coincida con la vigencia del CUFD.
+	cufd := SanitizeCufd(req.Cufd)
+	cufdEvento := SanitizeCufd(req.CufdEvento)
 	request := models.NewRegistroEventoSignificativoBuilder().
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
 		WithCuis(req.Cuis).
-		WithCufd(req.Cufd).
-		WithCufdEvento(req.CufdEvento).
+		WithCufd(cufd).
+		WithCufdEvento(cufdEvento).
 		WithCodigoMotivoEvento(req.CodigoMotivoEvento).
 		WithDescripcion(req.Descripcion).
-		WithFechaInicio(req.FechaHoraInicioEvento.UTC()).
-		WithFechaFin(req.FechaHoraFinEvento.UTC()).
+		WithFechaInicio(req.FechaHoraInicioEvento.In(LaPaz)).
+		WithFechaFin(req.FechaHoraFinEvento.In(LaPaz)).
 		Build()
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)

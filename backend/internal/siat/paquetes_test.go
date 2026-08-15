@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -178,6 +179,84 @@ func TestEnviarPaqueteFacturaPayload(t *testing.T) {
 	if !strings.Contains(gotBody, "<archivo>"+result.Archivo+"</archivo>") {
 		t.Error("el payload SOAP no contiene el archivo base64 enviado")
 	}
+
+	// Regresión: cafc es Nilable en el SDK y, si queda en nil, emite
+	// <cafc xsi:nil="true"/> con el prefijo xsi sin declarar en el envelope del
+	// request, y el SIAT rechaza el paquete con "Undeclared namespace prefix".
+	if strings.Contains(gotBody, "xsi:nil") {
+		t.Error("el payload SOAP no debe contener atributos xsi:nil (prefijo sin declarar en el envelope)")
+	}
+	if !strings.Contains(gotBody, "<cafc></cafc>") {
+		t.Error("el payload SOAP debe enviar <cafc></cafc> (vacío) en lugar de xsi:nil")
+	}
+}
+
+// TestEnviarPaqueteFacturaFirmadoPreservaXsi envía un paquete en modalidad
+// electrónica (la que firma cada factura con etree/goxmldsig) y verifica que la
+// re-serialización de la firma no pierda la declaración xmlns:xsi de la raíz.
+// Si se perdiera, el SIAT rechazaría el XML de la factura con "Undeclared
+// namespace prefix" pese a que el request fuera válido.
+func TestEnviarPaqueteFacturaFirmadoPreservaXsi(t *testing.T) {
+	var gotBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <recepcionPaqueteFacturaResponse>
+      <RespuestaServicioFacturacion>
+        <transaccion>true</transaccion>
+        <codigoEstado>908</codigoEstado>
+        <codigoRecepcion>RCV-PAQ-FIRMADO</codigoRecepcion>
+      </RespuestaServicioFacturacion>
+    </recepcionPaqueteFacturaResponse>
+  </soapenv:Body>
+</soapenv:Envelope>`))
+	}))
+	defer server.Close()
+
+	svc := newSignedTestService(t, server.URL)
+
+	paquete := paqueteDePrueba()
+	paquete.Modalidad = ModalidadElectronica
+
+	result, err := svc.EnviarPaqueteFactura(t.Context(), paquete)
+	if err != nil {
+		t.Fatalf("EnviarPaqueteFactura (electrónica): %v", err)
+	}
+	if !result.Transaccion {
+		t.Fatal("se esperaba transaccion=true")
+	}
+
+	// El request tampoco puede llevar xsi:nil, independiente de la modalidad.
+	if strings.Contains(gotBody, "xsi:nil") {
+		t.Error("el payload SOAP firmado no debe contener xsi:nil (prefijo sin declarar en el envelope)")
+	}
+
+	facturaXML := facturaXMLDelArchivo(t, result.Archivo, "factura_1.xml")
+
+	if !strings.Contains(facturaXML, "<ds:Signature") {
+		t.Fatalf("la factura no fue firmada (sin <ds:Signature>): %s", facturaXML)
+	}
+	if !strings.Contains(facturaXML, `xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`) {
+		t.Fatalf("el XML firmado perdió la declaración xmlns:xsi:\n%s", facturaXML)
+	}
+
+	// Recorrido completo de tokens: fuerza la validación de namespaces de Go. Un
+	// prefijo xsi usado sin declaración produce un error aquí.
+	dec := xml.NewDecoder(strings.NewReader(facturaXML))
+	for {
+		if _, err := dec.Token(); err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatalf("el XML firmado no es parseable (namespace inválido): %v", err)
+		}
+	}
 }
 
 func TestValidarPaqueteFactura(t *testing.T) {
@@ -322,6 +401,40 @@ func TestEnviarPaqueteFacturaInheritsIdentity(t *testing.T) {
 	} {
 		if !strings.Contains(gotBody, want) {
 			t.Errorf("el payload SOAP no contiene %q (identidad no heredada)", want)
+		}
+	}
+}
+
+// facturaXMLDelArchivo extrae una entrada del TAR.GZ (base64) que contiene el
+// paquete de facturas enviado al SIAT y devuelve su contenido como texto.
+func facturaXMLDelArchivo(t *testing.T, archivo, name string) string {
+	t.Helper()
+
+	compressed, err := base64.StdEncoding.DecodeString(archivo)
+	if err != nil {
+		t.Fatalf("archivo no es base64 válido: %v", err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		t.Fatalf("archivo no es gzip válido: %v", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			t.Fatalf("no se encontró %q en el tar", name)
+		}
+		if err != nil {
+			t.Fatalf("error leyendo tar: %v", err)
+		}
+		if hdr.Name == name {
+			buf := new(bytes.Buffer)
+			if _, err := io.Copy(buf, tr); err != nil {
+				t.Fatalf("error leyendo %q: %v", name, err)
+			}
+			return buf.String()
 		}
 	}
 }

@@ -18,5 +18,6 @@ type Cufd struct {
 type CufdRepository interface {
 	Create(c *Cufd) error
 	GetActiveByPos(pointOfSaleID string) (*Cufd, error)
+	GetByPosAndWindow(pointOfSaleID string, from, to time.Time) (*Cufd, error)
 	DeactivateExpired() error
 }

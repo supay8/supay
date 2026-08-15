@@ -45,6 +45,18 @@ func (r *PostgresCufdRepository) GetActiveByPos(pointOfSaleID string) (*domain.C
 	return toDomainCufd(&m), nil
 }
 
+// GetByPosAndWindow devuelve el CUFD (activo primero, luego histórico) cuya
+// vigencia valid_from/valid_to contiene exactamente la ventana [from, to] del
+// evento reportado.
+func (r *PostgresCufdRepository) GetByPosAndWindow(pointOfSaleID string, from, to time.Time) (*domain.Cufd, error) {
+	var m models.Cufd
+	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ?", pointOfSaleID, from, to).
+		Order("active DESC, created_at DESC").First(&m).Error; err != nil {
+		return nil, err
+	}
+	return toDomainCufd(&m), nil
+}
+
 func (r *PostgresCufdRepository) DeactivateExpired() error {
 	return r.db.Model(&models.Cufd{}).Where("valid_to < ? AND active = true", time.Now()).Update("active", false).Error
 }

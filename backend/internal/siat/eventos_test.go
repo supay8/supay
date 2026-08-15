@@ -74,15 +74,29 @@ func TestRegistrarEventoSignificativo(t *testing.T) {
 		"<codigoPuntoVenta>1</codigoPuntoVenta>",
 		"<codigoSucursal>0</codigoSucursal>",
 		"<cuis>CUIS-TEST-001</cuis>",
-		"<cufd>CUFD-TEST-001</cufd>",
-		"<cufdEvento>CUFD-EVENTO-001</cufdEvento>",
+		// Los CUFD se limpian de caracteres no alfanuméricos antes de enviarse.
+		"<cufd>CUFDTEST001</cufd>",
+		"<cufdEvento>CUFDEVENTO001</cufdEvento>",
 		"<descripcion>Corte del servicio de internet</descripcion>",
 		"<nit>1020304050</nit>",
 		"<codigoSistema>SYS-123</codigoSistema>",
 		"<codigoAmbiente>2</codigoAmbiente>",
+		// Las fechas del evento deben viajar en hora local de Bolivia (UTC-4):
+		// 09:00Z -> 05:00-04:00 y 10:30Z -> 06:30-04:00.
+		"<fechaHoraInicioEvento>2026-08-14T05:00:00-04:00</fechaHoraInicioEvento>",
+		"<fechaHoraFinEvento>2026-08-14T06:30:00-04:00</fechaHoraFinEvento>",
 	} {
 		if !strings.Contains(gotBody, want) {
 			t.Errorf("el payload SOAP no contiene %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"<fechaHoraInicioEvento>2026-08-14T09:00:00Z</fechaHoraInicioEvento>",
+		"<fechaHoraFinEvento>2026-08-14T10:30:00Z</fechaHoraFinEvento>",
+	} {
+		if strings.Contains(gotBody, forbidden) {
+			t.Errorf("el payload SOAP no debe enviar la fecha en UTC: %q", forbidden)
 		}
 	}
 }

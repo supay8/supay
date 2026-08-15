@@ -63,6 +63,13 @@ func NewRouter(h Handlers) http.Handler {
 		r.Post("/cuis/{companyId}/{pointOfSaleId}", h.Siat.SolicitarCUIS)
 		r.Post("/cufd/{companyId}/{pointOfSaleId}", h.Siat.SolicitarCUFD)
 		r.Post("/sincronizar/{companyId}/{pointOfSaleId}", h.Siat.Sincronizar)
+		r.Post("/evento-significativo/{companyId}/{pointOfSaleId}", h.Siat.RegistrarEventoSignificativo)
+		r.Post("/firma/{companyId}/{pointOfSaleId}", h.Siat.FirmarFactura)
+		r.Post("/paquete/{companyId}/{pointOfSaleId}", h.Siat.EnviarPaquete)
+		r.Post("/paquete/{companyId}/{pointOfSaleId}/validar", h.Siat.ValidarPaquete)
+		r.Post("/masiva/{companyId}/{pointOfSaleId}", h.Siat.EnviarMasiva)
+		r.Post("/masiva/{companyId}/{pointOfSaleId}/validar", h.Siat.ValidarMasiva)
+		r.Post("/compras/{companyId}/{pointOfSaleId}", h.Siat.EnviarCompras)
 		r.Get("/invoice/{invoiceId}/pdf", h.Siat.DownloadPDF)
 	})
 

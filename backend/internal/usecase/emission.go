@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -105,8 +106,13 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	if result.CodigoRecepcion != "" {
 		inv.SiatReceptionCode = &result.CodigoRecepcion
 	}
+	if msgs, err := marshalMensajes(result.Mensajes); err == nil {
+		inv.SiatMensajes = &msgs
+	}
 	if result.Transaccion {
-		if result.CodigoEstado == 905 {
+		// Según el catálogo mensajesServicios del SIAT, 904 = RECEPCION OBSERVADA
+		// (no es un caso correcto); solo 908 = RECEPCION VALIDADA.
+		if result.CodigoEstado == 904 {
 			inv.Status = domain.InvoiceObserved
 		} else {
 			inv.Status = domain.InvoiceAccepted
@@ -131,8 +137,8 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 
 // VerifyStatus consulta al SIAT el estado real de un documento emitido
 // (verificacionEstadoFactura) y reconcilia el estado local de la factura con el
-// CodigoEstado devuelto (904 ACCEPTED, 905 OBSERVED, 906 REJECTED, 907
-// CANCELLED). Un error de transporte no modifica el estado local.
+// CodigoEstado devuelto (según el catálogo mensajesServicios). Un error de
+// transporte no modifica el estado local.
 func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
 	if err != nil {
@@ -169,10 +175,11 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 }
 
 // Annul anula ante el SIAT una factura emitida (anulacionFactura) con el motivo
-// del catálogo sincronizado motivoAnulacion. Al ser aceptada (907 CANCELLED) se
-// persiste el estado, el motivo y la fecha de anulación.
+// del catálogo sincronizado motivoAnulacion. Al ser aceptada (905 ANULACION
+// CONFIRMADA) se persiste el estado, el motivo y la fecha de anulación.
 func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
+
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.New("factura no encontrada")
@@ -191,7 +198,6 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	if uc.siatService == nil {
 		return nil, errors.New("el servicio SIAT no está disponible")
 	}
-
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
@@ -225,8 +231,9 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 }
 
 // RevertAnnul revierte una anulación aceptada por el SIAT
-// (reversionAnulacionFactura), devolviendo la factura a ACCEPTED y limpiando el
-// motivo y la fecha de anulación persistidos.
+// (reversionAnulacionFactura; 907 REVERSION DE ANULACION CONFIRMADA),
+// devolviendo la factura a ACCEPTED y limpiando el motivo y la fecha de
+// anulación persistidos.
 func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
 	if err != nil {
@@ -277,15 +284,27 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 }
 
 // buildSolicitudDocumento reúne la identificación del documento ya emitido para
-// las operaciones de verificación, anulación y reversión de anulación.
+// las operaciones de verificación, anulación y reversión de anulación. El CUFD
+// que se envía es el VIGENTE del punto de venta (GetActiveByPos), porque el SIAT
+// rechaza operaciones firmadas con un CUFD vencido (vigencia ~24h); si no hay
+// CUFD vigente registrado se cae al CUFD con el que se emitió la factura.
 func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.SolicitudDocumento, error) {
 	pos := inv.PointOfSale
 	if pos.Cuis == nil || strings.TrimSpace(*pos.Cuis) == "" {
 		return nil, errors.New("el punto de venta no tiene CUIS activo")
 	}
-	cufd := inv.CufdRecord
-	if cufd.ID == "" || strings.TrimSpace(cufd.Cufd) == "" {
-		return nil, errors.New("la factura no tiene CUFD asociado")
+
+	cufd := ""
+	if uc.cufdRepo != nil {
+		if vigente, err := uc.cufdRepo.GetActiveByPos(pos.ID); err == nil && vigente != nil && strings.TrimSpace(vigente.Cufd) != "" {
+			cufd = vigente.Cufd
+		}
+	}
+	if strings.TrimSpace(cufd) == "" {
+		if inv.CufdRecord.ID == "" || strings.TrimSpace(inv.CufdRecord.Cufd) == "" {
+			return nil, errors.New("la factura no tiene CUFD asociado y el punto de venta no tiene CUFD vigente")
+		}
+		cufd = inv.CufdRecord.Cufd
 	}
 
 	codigoPuntoVenta := pos.CodigoPuntoVenta
@@ -299,15 +318,17 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 	}
 
 	return &siat.SolicitudDocumento{
-		CodigoAmbiente:   inv.Company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    inv.Company.CodigoSistema,
-		Nit:              inv.Company.Nit,
-		Modalidad:        modalidad,
-		Cuf:              *inv.Cuf,
-		CodigoSucursal:   pos.CodigoSucursal,
-		CodigoPuntoVenta: codigoPuntoVenta,
-		Cuis:             *pos.Cuis,
-		Cufd:             cufd.Cufd,
+		CodigoAmbiente:        inv.Company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         inv.Company.CodigoSistema,
+		Nit:                   inv.Company.Nit,
+		Modalidad:             modalidad,
+		Cuf:                   *inv.Cuf,
+		CodigoSucursal:        pos.CodigoSucursal,
+		CodigoPuntoVenta:      codigoPuntoVenta,
+		Cuis:                  *pos.Cuis,
+		Cufd:                  cufd,
+		CodigoDocumentoSector: inv.CodigoDocumentoSector,
+		CodigoTipoFactura:     inv.CodigoTipoFactura,
 	}, nil
 }
 
@@ -329,17 +350,19 @@ func (uc *InvoiceUsecase) validateMotivoAnulacion(companyID string, codigoMotivo
 	return fmt.Errorf("motivo de anulación %d no es válido; consulte el catálogo motivoAnulacion", codigoMotivo)
 }
 
-// siatEstadoToDomain mapea el CodigoEstado de una respuesta de facturación del
-// SIAT al estado de dominio local.
+// siatEstadoToDomain mapea el CodigoEstado de una respuesta de verificación del
+// SIAT al estado de dominio local, según el catálogo mensajesServicios:
+// 902 RECEPCION RECHAZADA, 904 RECEPCION OBSERVADA, 905 ANULACION CONFIRMADA,
+// 907 REVERSION DE ANULACION CONFIRMADA, 908 RECEPCION VALIDADA.
 func siatEstadoToDomain(codigoEstado int) (domain.InvoiceStatus, bool) {
 	switch codigoEstado {
-	case 904:
+	case 908, 907:
 		return domain.InvoiceAccepted, true
-	case 905:
+	case 904:
 		return domain.InvoiceObserved, true
-	case 906:
+	case 902, 906, 909:
 		return domain.InvoiceRejected, true
-	case 907:
+	case 905:
 		return domain.InvoiceCancelled, true
 	default:
 		return "", false
@@ -439,28 +462,56 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		})
 	}
 
+	// La dirección del XML debe coincidir con la registrada en padrón ante el
+	// SIAT (la trae el CUFD); si no, la factura se observa (código 1007).
+	direccion := strings.TrimSpace(cufd.Direccion)
+	if direccion == "" {
+		direccion = company.Direccion
+	}
+
+	sector := inv.CodigoDocumentoSector
+	if sector <= 0 {
+		sector = 1
+	}
+	tipoFactura := inv.CodigoTipoFactura
+	if tipoFactura <= 0 {
+		tipoFactura = 1
+	}
+
+	var nombreEstudiante, periodoFacturado string
+	if inv.NombreEstudiante != nil {
+		nombreEstudiante = strings.TrimSpace(*inv.NombreEstudiante)
+	}
+	if inv.PeriodoFacturado != nil {
+		periodoFacturado = strings.TrimSpace(*inv.PeriodoFacturado)
+	}
+
 	return &siat.SolicitudFactura{
-		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    company.CodigoSistema,
-		Nit:              company.Nit,
-		Modalidad:        modalidad,
-		NumeroFactura:    int64(inv.InvoiceNumber),
-		CodigoSucursal:   pos.CodigoSucursal,
-		CodigoPuntoVenta: codigoPuntoVenta,
-		Cuis:             *pos.Cuis,
-		Cufd:             cufd.Cufd,
-		CodigoControl:    cufd.ControlCode,
-		FechaEmision:     inv.IssueDate,
-		Usuario:          "SUPAY",
-		Leyenda:          leyenda,
-		RazonSocialEmisor: company.BusinessName,
-		Municipio:        company.Municipio,
-		Direccion:        company.Direccion,
-		Telefono:         telefonoPtr,
-		CodigoMetodoPago: inv.CodigoMetodoPago,
-		CodigoMoneda:     inv.CodigoMoneda,
-		TipoCambio:       inv.TipoCambio,
-		MontoTotal:       inv.Total,
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             modalidad,
+		NumeroFactura:         int64(inv.InvoiceNumber),
+		CodigoSucursal:        pos.CodigoSucursal,
+		CodigoPuntoVenta:      codigoPuntoVenta,
+		Cuis:                  *pos.Cuis,
+		Cufd:                  cufd.Cufd,
+		CodigoControl:         cufd.ControlCode,
+		FechaEmision:          inv.IssueDate,
+		Usuario:               "SUPAY",
+		Leyenda:               leyenda,
+		RazonSocialEmisor:     company.BusinessName,
+		Municipio:             company.Municipio,
+		Direccion:             direccion,
+		Telefono:              telefonoPtr,
+		CodigoMetodoPago:      inv.CodigoMetodoPago,
+		CodigoMoneda:          inv.CodigoMoneda,
+		TipoCambio:            inv.TipoCambio,
+		MontoTotal:            inv.Total,
+		CodigoDocumentoSector: sector,
+		CodigoTipoFactura:     tipoFactura,
+		NombreEstudiante:      nombreEstudiante,
+		PeriodoFacturado:      periodoFacturado,
 		Cliente: siat.ClienteFactura{
 			NombreRazonSocial:            inv.Customer.Name,
 			CodigoTipoDocumentoIdentidad: codigoDoc,
@@ -507,4 +558,47 @@ func (uc *InvoiceUsecase) resolveLeyenda(companyID, actividad string) (string, e
 		}
 	}
 	return "Ley N° 453: Tienes derecho a recibir información sobre el Sistema de Facturación, Ley N° 453, de 4 de diciembre de 2013.", nil
+}
+
+// marshalMensajes serializa los mensajes de la respuesta SIAT a JSON para
+// persistirlos en la factura (siat_mensajes) y poder diagnosticar observaciones.
+func marshalMensajes(msgs []siat.Mensaje) (string, error) {
+	if len(msgs) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(msgs)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// resolveDocumentoSector determina el documento-sector del SIAT para la
+// actividad económica de la empresa consultando el catálogo sincronizado
+// actividadesDocumentoSector (descripción "actividad|FCV|FSEDU|NCD|NCDDE").
+// Prefiere la factura de compraventa (FCV); si la actividad solo está asociada
+// a sectores educativos (p.ej. 8549100 -> FSEDU), usa ese sector.
+func (uc *InvoiceUsecase) resolveDocumentoSector(companyID, actividad string) int {
+	if uc.catalogRepo != nil {
+		if items, err := uc.catalogRepo.List(companyID, "actividadesDocumentoSector"); err == nil {
+			found := 0
+			for _, item := range items {
+				fields := strings.Split(item.Descripcion, "|")
+				if len(fields) < 2 || strings.TrimSpace(fields[0]) != actividad {
+					continue
+				}
+				tipo := strings.TrimSpace(fields[1])
+				if tipo == "FCV" {
+					return item.Codigo
+				}
+				if tipo == "FSEDU" {
+					found = item.Codigo
+				}
+			}
+			if found > 0 {
+				return found
+			}
+		}
+	}
+	return 1
 }

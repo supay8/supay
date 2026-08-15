@@ -41,6 +41,10 @@ type Invoice struct {
 	CodigoMetodoPago   int            `json:"codigo_metodo_pago"`
 	CodigoMoneda       int            `json:"codigo_moneda"`
 	TipoCambio         float64        `json:"tipo_cambio"`
+	CodigoDocumentoSector int         `json:"codigo_documento_sector"`
+	CodigoTipoFactura  int            `json:"codigo_tipo_factura"`
+	NombreEstudiante   *string        `json:"nombre_estudiante,omitempty"`
+	PeriodoFacturado   *string        `json:"periodo_facturado,omitempty"`
 	IssueDate          time.Time      `json:"issue_date"`
 	Subtotal           float64        `json:"subtotal"`
 	Discount           float64        `json:"discount"`
@@ -48,6 +52,7 @@ type Invoice struct {
 	Xml                *string        `json:"xml,omitempty"`
 	XmlHash            *string        `json:"xml_hash,omitempty"`
 	SiatReceptionCode  *string        `json:"siat_reception_code,omitempty"`
+	SiatMensajes       *string        `json:"siat_mensajes,omitempty"`
 	MotivoAnulacion    *int           `json:"motivo_anulacion,omitempty"`
 	FechaAnulacion     *time.Time     `json:"fecha_anulacion,omitempty"`
 	Status             InvoiceStatus  `json:"status"`

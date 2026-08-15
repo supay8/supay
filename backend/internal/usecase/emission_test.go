@@ -88,6 +88,7 @@ type fakeEmissionService struct {
 	result    *siat.ResultadoEmision
 	docResult *siat.ResultadoDocumento
 	err       error
+	captured  *siat.SolicitudDocumento
 }
 
 func (f *fakeEmissionService) EmitirFactura(context.Context, siat.SolicitudFactura) (*siat.ResultadoEmision, error) {
@@ -98,13 +99,29 @@ func (f *fakeEmissionService) VerificarEstado(context.Context, siat.SolicitudDoc
 	return f.docResult, f.err
 }
 
-func (f *fakeEmissionService) AnularFactura(context.Context, siat.SolicitudDocumento, int) (*siat.ResultadoDocumento, error) {
+func (f *fakeEmissionService) AnularFactura(_ context.Context, req siat.SolicitudDocumento, _ int) (*siat.ResultadoDocumento, error) {
+	f.captured = &req
 	return f.docResult, f.err
 }
 
-func (f *fakeEmissionService) RevertirAnulacion(context.Context, siat.SolicitudDocumento) (*siat.ResultadoDocumento, error) {
+func (f *fakeEmissionService) RevertirAnulacion(_ context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error) {
+	f.captured = &req
 	return f.docResult, f.err
 }
+
+type fakeCufdRepo struct {
+	vigente *domain.Cufd
+	err     error
+}
+
+func (f *fakeCufdRepo) Create(_ *domain.Cufd) error { return nil }
+func (f *fakeCufdRepo) GetActiveByPos(_ string) (*domain.Cufd, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.vigente, nil
+}
+func (f *fakeCufdRepo) DeactivateExpired() error { return nil }
 
 // ---- Fixture ----
 
@@ -180,7 +197,7 @@ func testInvoice() *domain.Invoice {
 }
 
 func newTestUsecase(repo *fakeInvoiceRepo, catalog *fakeCatalogRepo, svc SiatEmissionService) *InvoiceUsecase {
-	return NewInvoiceUsecase(repo, nil, nil, nil, catalog, svc, siat.ModalidadElectronica)
+	return NewInvoiceUsecase(repo, nil, nil, nil, catalog, nil, svc, siat.ModalidadElectronica)
 }
 
 // ---- Tests ----
@@ -356,7 +373,7 @@ func TestEmitAccepted(t *testing.T) {
 	svc := &fakeEmissionService{result: &siat.ResultadoEmision{
 		Cuf:             "CUF-1",
 		Transaccion:     true,
-		CodigoEstado:    904,
+		CodigoEstado:    908,
 		CodigoRecepcion: "RCP-1",
 		Xml:             "<xml/>",
 		XmlHash:         "abc123",
@@ -368,7 +385,7 @@ func TestEmitAccepted(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 	if got.Status != domain.InvoiceAccepted {
-		t.Errorf("status=%s, se esperaba ACCEPTED", got.Status)
+		t.Errorf("status=%s, se esperaba ACCEPTED (908 RECEPCION VALIDADA)", got.Status)
 	}
 	if got.Cuf == nil || *got.Cuf != "CUF-1" {
 		t.Errorf("Cuf no persistido: %v", got.Cuf)
@@ -387,7 +404,8 @@ func TestEmitObserved(t *testing.T) {
 	svc := &fakeEmissionService{result: &siat.ResultadoEmision{
 		Cuf:          "CUF-1",
 		Transaccion:  true,
-		CodigoEstado: 905,
+		CodigoEstado: 904,
+		Mensajes:     []siat.Mensaje{{Codigo: 1007, Descripcion: "DIRECCION NO CORRESPONDE A PADRON"}},
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
@@ -396,7 +414,12 @@ func TestEmitObserved(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 	if got.Status != domain.InvoiceObserved {
-		t.Errorf("status=%s, se esperaba OBSERVED", got.Status)
+		t.Errorf("status=%s, se esperaba OBSERVED (904 RECEPCION OBSERVADA)", got.Status)
+	}
+	if got.SiatMensajes == nil {
+		t.Error("SiatMensajes no persistido")
+	} else if !strings.Contains(*got.SiatMensajes, "1007") {
+		t.Errorf("SiatMensajes=%q, se esperaba el código 1007", *got.SiatMensajes)
 	}
 }
 
@@ -405,7 +428,7 @@ func TestEmitRejected(t *testing.T) {
 	_ = repo.Create(testInvoice())
 	svc := &fakeEmissionService{result: &siat.ResultadoEmision{
 		Transaccion:  false,
-		CodigoEstado: 906,
+		CodigoEstado: 902,
 		Mensajes:     []siat.Mensaje{{Codigo: 123, Descripcion: "descripcion rechazo"}},
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
@@ -517,7 +540,7 @@ func TestVerifyStatusReconciliaEstado(t *testing.T) {
 	_ = repo.Create(emittedInvoice())
 	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
 		Transaccion:  true,
-		CodigoEstado: 907,
+		CodigoEstado: 905,
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
@@ -526,7 +549,7 @@ func TestVerifyStatusReconciliaEstado(t *testing.T) {
 		t.Fatalf("VerifyStatus: %v", err)
 	}
 	if got.Status != domain.InvoiceCancelled {
-		t.Errorf("status=%s, se esperaba CANCELLED (reconciliado)", got.Status)
+		t.Errorf("status=%s, se esperaba CANCELLED (905 ANULACION CONFIRMADA)", got.Status)
 	}
 	if repo.updateCalls != 1 {
 		t.Errorf("updateCalls=%d, se esperaba 1", repo.updateCalls)
@@ -538,7 +561,7 @@ func TestVerifyStatusSinCambioNoActualiza(t *testing.T) {
 	_ = repo.Create(emittedInvoice())
 	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
 		Transaccion:  true,
-		CodigoEstado: 904,
+		CodigoEstado: 908,
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
@@ -574,7 +597,7 @@ func TestAnnulAccepted(t *testing.T) {
 	}}
 	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
 		Transaccion:     true,
-		CodigoEstado:    907,
+		CodigoEstado:    905,
 		CodigoRecepcion: "RCP-ANNUL",
 	}}
 	uc := newTestUsecase(repo, catalog, svc)
@@ -584,7 +607,7 @@ func TestAnnulAccepted(t *testing.T) {
 		t.Fatalf("Annul: %v", err)
 	}
 	if got.Status != domain.InvoiceCancelled {
-		t.Errorf("status=%s, se esperaba CANCELLED", got.Status)
+		t.Errorf("status=%s, se esperaba CANCELLED (905 ANULACION CONFIRMADA)", got.Status)
 	}
 	if got.MotivoAnulacion == nil || *got.MotivoAnulacion != 1 {
 		t.Errorf("MotivoAnulacion=%v, se esperaba 1", got.MotivoAnulacion)
@@ -656,7 +679,7 @@ func TestRevertAnnul(t *testing.T) {
 	_ = repo.Create(inv)
 	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
 		Transaccion:     true,
-		CodigoEstado:    904,
+		CodigoEstado:    907,
 		CodigoRecepcion: "RCP-REVERT",
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
@@ -666,7 +689,7 @@ func TestRevertAnnul(t *testing.T) {
 		t.Fatalf("RevertAnnul: %v", err)
 	}
 	if got.Status != domain.InvoiceAccepted {
-		t.Errorf("status=%s, se esperaba ACCEPTED", got.Status)
+		t.Errorf("status=%s, se esperaba ACCEPTED (907 REVERSION CONFIRMADA)", got.Status)
 	}
 	if got.MotivoAnulacion != nil || got.FechaAnulacion != nil {
 		t.Error("MotivoAnulacion/FechaAnulacion debieron limpiarse")
@@ -686,16 +709,71 @@ func TestRevertAnnulNoCancelled(t *testing.T) {
 	}
 }
 
+func TestAnnulUsaCufdVigente(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	_ = repo.Create(emittedInvoice())
+	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
+		"motivoAnulacion": {{Codigo: 1, Descripcion: "Motivo válido", Tipo: "motivoAnulacion"}},
+	}}
+	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 905}}
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE"}}, svc, siat.ModalidadElectronica)
+
+	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
+		t.Fatalf("Annul: %v", err)
+	}
+	if svc.captured == nil || svc.captured.Cufd != "CUFD-VIGENTE" {
+		t.Fatalf("anulacion debió enviar el CUFD vigente, se obtuvo: %+v", svc.captured)
+	}
+}
+
+func TestAnnulCaeAlCufdDeEmisionSinVigente(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	_ = repo.Create(emittedInvoice())
+	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
+		"motivoAnulacion": {{Codigo: 1, Descripcion: "Motivo válido", Tipo: "motivoAnulacion"}},
+	}}
+	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 905}}
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{}, svc, siat.ModalidadElectronica)
+
+	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
+		t.Fatalf("Annul: %v", err)
+	}
+	if svc.captured == nil || svc.captured.Cufd != "CUFD-XYZ" {
+		t.Fatalf("sin CUFD vigente debió usar el CUFD de emisión (CUFD-XYZ), se obtuvo: %+v", svc.captured)
+	}
+}
+
+func TestRevertAnnulUsaCufdVigente(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	inv := emittedInvoice()
+	motivo := 1
+	inv.Status = domain.InvoiceCancelled
+	inv.MotivoAnulacion = &motivo
+	_ = repo.Create(inv)
+	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 907}}
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE"}}, svc, siat.ModalidadElectronica)
+
+	if _, err := uc.RevertAnnul(context.Background(), "inv-1"); err != nil {
+		t.Fatalf("RevertAnnul: %v", err)
+	}
+	if svc.captured == nil || svc.captured.Cufd != "CUFD-VIGENTE" {
+		t.Fatalf("reversion debió enviar el CUFD vigente, se obtuvo: %+v", svc.captured)
+	}
+}
+
 func TestSiatEstadoToDomain(t *testing.T) {
 	cases := []struct {
 		in      int
 		want    domain.InvoiceStatus
 		matches bool
 	}{
-		{904, domain.InvoiceAccepted, true},
-		{905, domain.InvoiceObserved, true},
+		{908, domain.InvoiceAccepted, true},
+		{907, domain.InvoiceAccepted, true},
+		{904, domain.InvoiceObserved, true},
+		{902, domain.InvoiceRejected, true},
 		{906, domain.InvoiceRejected, true},
-		{907, domain.InvoiceCancelled, true},
+		{909, domain.InvoiceRejected, true},
+		{905, domain.InvoiceCancelled, true},
 		{0, "", false},
 		{999, "", false},
 	}
@@ -704,5 +782,68 @@ func TestSiatEstadoToDomain(t *testing.T) {
 		if ok != c.matches || (ok && got != c.want) {
 			t.Errorf("siatEstadoToDomain(%d)=%s/%v, se esperaba %s/%v", c.in, got, ok, c.want, c.matches)
 		}
+	}
+}
+
+func TestResolveDocumentoSector(t *testing.T) {
+	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
+		"actividadesDocumentoSector": {
+			{Codigo: 1, Descripcion: "8549910|FCV", Tipo: "actividadesDocumentoSector"},
+			{Codigo: 1, Descripcion: "8550100|FCV", Tipo: "actividadesDocumentoSector"},
+			{Codigo: 11, Descripcion: "8549100|FSEDU", Tipo: "actividadesDocumentoSector"},
+			{Codigo: 24, Descripcion: "8549100|NCD", Tipo: "actividadesDocumentoSector"},
+			{Codigo: 47, Descripcion: "8549100|NCDDE", Tipo: "actividadesDocumentoSector"},
+		},
+	}}
+	uc := newTestUsecase(newFakeInvoiceRepo(), catalog, nil)
+
+	if got := uc.resolveDocumentoSector("comp-1", "8549100"); got != 11 {
+		t.Errorf("resolveDocumentoSector(8549100)=%d, se esperaba 11 (FSEDU)", got)
+	}
+	if got := uc.resolveDocumentoSector("comp-1", "8549910"); got != 1 {
+		t.Errorf("resolveDocumentoSector(8549910)=%d, se esperaba 1 (FCV)", got)
+	}
+	// Actividad sin asociación: cae a compraventa.
+	if got := uc.resolveDocumentoSector("comp-1", "9999999"); got != 1 {
+		t.Errorf("resolveDocumentoSector(9999999)=%d, se esperaba 1", got)
+	}
+}
+
+func TestBuildSolicitudFacturaFSEDU(t *testing.T) {
+	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
+	inv := testInvoice()
+	inv.CodigoDocumentoSector = 11
+	inv.CodigoTipoFactura = 1
+	nombre := "María Fernanda Quispe"
+	periodo := "GESTION 1/2026"
+	inv.NombreEstudiante = &nombre
+	inv.PeriodoFacturado = &periodo
+
+	req, err := uc.buildSolicitudFactura(inv)
+	if err != nil {
+		t.Fatalf("buildSolicitudFactura FSEDU: %v", err)
+	}
+	if req.CodigoDocumentoSector != 11 {
+		t.Errorf("CodigoDocumentoSector=%d, se esperaba 11", req.CodigoDocumentoSector)
+	}
+	if req.NombreEstudiante != nombre {
+		t.Errorf("NombreEstudiante=%q", req.NombreEstudiante)
+	}
+	if req.PeriodoFacturado != periodo {
+		t.Errorf("PeriodoFacturado=%q", req.PeriodoFacturado)
+	}
+}
+
+func TestBuildSolicitudFacturaDireccionPadron(t *testing.T) {
+	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
+	inv := testInvoice()
+	inv.CufdRecord.Direccion = "URBANIZACION: LA FLORIDA, AVENIDA: AROMA, NRO.: 364"
+
+	req, err := uc.buildSolicitudFactura(inv)
+	if err != nil {
+		t.Fatalf("buildSolicitudFactura: %v", err)
+	}
+	if req.Direccion != inv.CufdRecord.Direccion {
+		t.Errorf("Direccion=%q, se esperaba la del padrón (CUFD)", req.Direccion)
 	}
 }

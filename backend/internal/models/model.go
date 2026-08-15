@@ -220,6 +220,10 @@ type Invoice struct {
 	CodigoMetodoPago   int           `gorm:"default:1;not null"`
 	CodigoMoneda       int           `gorm:"default:1;not null"`
 	TipoCambio         float64       `gorm:"type:decimal(18,5);default:1;not null"`
+	CodigoDocumentoSector int        `gorm:"default:1;not null"`
+	CodigoTipoFactura  int           `gorm:"default:1;not null"`
+	NombreEstudiante   *string       `gorm:"type:varchar(150)"`
+	PeriodoFacturado   *string       `gorm:"type:varchar(30)"`
 	IssueDate          time.Time     `gorm:"index;not null"`
 	Subtotal           float64       `gorm:"type:decimal(18,2);not null"`
 	Discount           float64       `gorm:"type:decimal(18,2);default:0;not null"`
@@ -227,6 +231,7 @@ type Invoice struct {
 	Xml                *string       `gorm:"type:text"`
 	XmlHash            *string       `gorm:"type:varchar(100)"`
 	SiatReceptionCode  *string       `gorm:"type:varchar(100)"`
+	SiatMensajes       *string       `gorm:"type:text"`
 	Status             InvoiceStatus `gorm:"type:varchar(30);default:'PENDING';index;not null"`
 	MotivoAnulacion    *int
 	FechaAnulacion     *time.Time

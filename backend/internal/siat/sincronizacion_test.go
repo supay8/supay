@@ -19,6 +19,15 @@ func TestServiceSincronizarTipoPuntoVenta(t *testing.T) {
 		if !strings.Contains(payload, ">CUIS-TEST-001<") {
 			t.Fatalf("expected CUIS in payload, got: %s", payload)
 		}
+		if !strings.Contains(payload, ">SYS-123<") {
+			t.Fatalf("expected codigoSistema dinámico en payload, got: %s", payload)
+		}
+		if !strings.Contains(payload, ">1020304050<") {
+			t.Fatalf("expected nit dinámico en payload, got: %s", payload)
+		}
+		if !strings.Contains(payload, ">2<") {
+			t.Fatalf("expected codigoAmbiente dinámico en payload, got: %s", payload)
+		}
 
 		w.Header().Set("Content-Type", "application/xml")
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>

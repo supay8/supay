@@ -16,17 +16,19 @@ type InvoiceUsecase struct {
 	companyRepo  domain.CompanyRepository
 	posRepo      domain.PointOfSaleRepository
 	catalogRepo  domain.CatalogRepository
+	cufdRepo     domain.CufdRepository
 	siatService  SiatEmissionService
 	modalidad    int
 }
 
-func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository, catalogRepo domain.CatalogRepository, siatService SiatEmissionService, modalidad int) *InvoiceUsecase {
+func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository, catalogRepo domain.CatalogRepository, cufdRepo domain.CufdRepository, siatService SiatEmissionService, modalidad int) *InvoiceUsecase {
 	return &InvoiceUsecase{
 		invoiceRepo:  invoiceRepo,
 		customerRepo: customerRepo,
 		companyRepo:  companyRepo,
 		posRepo:      posRepo,
 		catalogRepo:  catalogRepo,
+		cufdRepo:     cufdRepo,
 		siatService:  siatService,
 		modalidad:    modalidad,
 	}
@@ -44,14 +46,20 @@ type CreateInvoiceItemRequest struct {
 }
 
 type CreateInvoiceRequest struct {
-	CompanyId        string                     `json:"company_id"`
-	PointOfSaleId    string                     `json:"point_of_sale_id"`
-	CustomerId       string                     `json:"customer_id"`
-	CodigoMetodoPago int                        `json:"codigo_metodo_pago,omitempty"`
-	CodigoMoneda     int                        `json:"codigo_moneda,omitempty"`
-	TipoCambio       float64                    `json:"tipo_cambio,omitempty"`
-	IssueDate        *time.Time                 `json:"issue_date,omitempty"`
-	Items            []CreateInvoiceItemRequest `json:"items"`
+	CompanyId        string  `json:"company_id"`
+	PointOfSaleId    string  `json:"point_of_sale_id"`
+	CustomerId       string  `json:"customer_id"`
+	CodigoMetodoPago int     `json:"codigo_metodo_pago,omitempty"`
+	CodigoMoneda     int     `json:"codigo_moneda,omitempty"`
+	TipoCambio       float64 `json:"tipo_cambio,omitempty"`
+	// CodigoDocumentoSector: 1 = compraventa, 11 = sector educativo. Si se omite
+	// se resuelve desde la actividad económica de la empresa.
+	CodigoDocumentoSector int                        `json:"codigo_documento_sector,omitempty"`
+	CodigoTipoFactura     int                        `json:"codigo_tipo_factura,omitempty"`
+	NombreEstudiante      *string                    `json:"nombre_estudiante,omitempty"`
+	PeriodoFacturado      *string                    `json:"periodo_facturado,omitempty"`
+	IssueDate             *time.Time                 `json:"issue_date,omitempty"`
+	Items                 []CreateInvoiceItemRequest `json:"items"`
 }
 
 func round2(v float64) float64 {
@@ -72,7 +80,8 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		return nil, errors.New("la factura debe tener al menos un ítem")
 	}
 
-	if _, err := uc.companyRepo.GetByID(req.CompanyId); err != nil {
+	company, err := uc.companyRepo.GetByID(req.CompanyId)
+	if err != nil {
 		return nil, errors.New("empresa no encontrada")
 	}
 
@@ -121,22 +130,51 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 	if tipoCambio <= 0 {
 		tipoCambio = 1
 	}
+
+	// Documento-sector: explícito o resuelto desde la actividad económica de la
+	// empresa (catálogo actividadesDocumentoSector). Las actividades de
+	// enseñanza (p.ej. 8549100) requieren el sector 11 FSEDU.
+	sector := req.CodigoDocumentoSector
+	if sector <= 0 {
+		actividad := ""
+		if company.CodigoActividad != nil {
+			actividad = strings.TrimSpace(*company.CodigoActividad)
+		}
+		sector = uc.resolveDocumentoSector(req.CompanyId, actividad)
+	}
+	tipoFactura := req.CodigoTipoFactura
+	if tipoFactura <= 0 {
+		tipoFactura = 1
+	}
+	if sector == 11 {
+		if req.NombreEstudiante == nil || strings.TrimSpace(*req.NombreEstudiante) == "" {
+			return nil, errors.New("el documento-sector educativo (11) requiere nombre_estudiante")
+		}
+		if req.PeriodoFacturado == nil || strings.TrimSpace(*req.PeriodoFacturado) == "" {
+			return nil, errors.New("el documento-sector educativo (11) requiere periodo_facturado")
+		}
+	}
+
 	issueDate := now.UTC()
 	if req.IssueDate != nil {
 		issueDate = req.IssueDate.UTC()
 	}
 
 	inv := &domain.Invoice{
-		CompanyId:        req.CompanyId,
-		CustomerId:       req.CustomerId,
-		PointOfSaleId:    req.PointOfSaleId,
-		CufdId:           activeCufd.ID,
-		EmissionType:     "EN_LINEA",
-		CodigoMetodoPago: metodoPago,
-		CodigoMoneda:     moneda,
-		TipoCambio:       tipoCambio,
-		IssueDate:        issueDate,
-		Status:           domain.InvoicePending,
+		CompanyId:             req.CompanyId,
+		CustomerId:            req.CustomerId,
+		PointOfSaleId:         req.PointOfSaleId,
+		CufdId:                activeCufd.ID,
+		EmissionType:          "EN_LINEA",
+		CodigoMetodoPago:      metodoPago,
+		CodigoMoneda:          moneda,
+		TipoCambio:            tipoCambio,
+		CodigoDocumentoSector: sector,
+		CodigoTipoFactura:     tipoFactura,
+		NombreEstudiante:      req.NombreEstudiante,
+		PeriodoFacturado:      req.PeriodoFacturado,
+		IssueDate:             issueDate,
+		Status:                domain.InvoicePending,
 	}
 
 	var subtotal float64

@@ -113,10 +113,10 @@ type ParametricaDto struct {
 
 // RespuestaSincronizacion es la respuesta normalizada de una sincronización.
 type RespuestaSincronizacion struct {
-	Transaccion bool            `json:"transaccion"`
-	FechaHora   time.Time       `json:"fechaHora,omitempty"`
+	Transaccion bool             `json:"transaccion"`
+	FechaHora   time.Time        `json:"fechaHora,omitempty"`
 	Codigos     []ParametricaDto `json:"codigos,omitempty"`
-	Mensajes    []Mensaje       `json:"mensajes,omitempty"`
+	Mensajes    []Mensaje        `json:"mensajes,omitempty"`
 }
 
 // Sincronizar ejecuta la operación de sincronización indicada contra el SIAT
@@ -160,6 +160,8 @@ func (s *Service) sincronizarParametrica(ctx context.Context, req SolicitudSincr
 		resp any
 		err  error
 	)
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
 	switch op {
 	case OpTipoPuntoVenta:

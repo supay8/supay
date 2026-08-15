@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -55,6 +56,20 @@ type siatCufdResponse struct {
 	Company     *domain.Company     `json:"company"`
 	PointOfSale *domain.PointOfSale `json:"point_of_sale"`
 	Response    *siat.RespuestaCufd `json:"response"`
+}
+
+type siatEventoSignificativoRequest struct {
+	CodigoMotivoEvento    int    `json:"codigoMotivoEvento"`
+	Descripcion           string `json:"descripcion"`
+	CufdEvento            string `json:"cufdEvento"`
+	FechaHoraInicioEvento string `json:"fechaHoraInicioEvento"`
+	FechaHoraFinEvento    string `json:"fechaHoraFinEvento"`
+}
+
+type siatEventoSignificativoResponse struct {
+	Company     *domain.Company                    `json:"company"`
+	PointOfSale *domain.PointOfSale                `json:"point_of_sale"`
+	Response    *siat.ResultadoEventoSignificativo `json:"response"`
 }
 
 func (h *SiatHandler) SolicitarCUIS(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +195,546 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// RegistrarEventoSignificativo registra una contingencia (p.ej. corte de
+// internet, codigoMotivoEvento=1) ante el SIAT (registroEventoSignificativo)
+// para la empresa y punto de venta indicados. El CUFD vigente se usa como
+// cufdEvento salvo que el body lo sobrescriba (p.ej. el CUFD vencido durante la
+// contingencia).
+func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	company, pointOfSale, err := h.loadCompanyAndPointOfSale(r)
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		http.Error(w, "El punto de venta no tiene CUIS activo", http.StatusConflict)
+		return
+	}
+
+	cufd, err := h.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		http.Error(w, "El punto de venta no tiene CUFD vigente", http.StatusConflict)
+		return
+	}
+
+	var body siatEventoSignificativoRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	codigoMotivo := body.CodigoMotivoEvento
+	if codigoMotivo <= 0 {
+		codigoMotivo = siat.MotivoCorteInternet
+	}
+	descripcion := strings.TrimSpace(body.Descripcion)
+	if descripcion == "" {
+		descripcion = "Corte del servicio de internet"
+	}
+	cufdEvento := strings.TrimSpace(body.CufdEvento)
+	if cufdEvento == "" {
+		cufdEvento = cufd.Cufd
+	}
+
+	inicio, err := parseFechaSiat(body.FechaHoraInicioEvento)
+	if err != nil {
+		http.Error(w, "fechaHoraInicioEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)", http.StatusBadRequest)
+		return
+	}
+	fin, err := parseFechaSiat(body.FechaHoraFinEvento)
+	if err != nil {
+		http.Error(w, "fechaHoraFinEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)", http.StatusBadRequest)
+		return
+	}
+
+	codigoPuntoVenta := pointOfSale.CodigoPuntoVenta
+	if pointOfSale.SiatCode != nil {
+		codigoPuntoVenta = *pointOfSale.SiatCode
+	}
+	modalidad := h.modalidad
+	if modalidad <= 0 {
+		modalidad = 1
+	}
+
+	req := siat.SolicitudEventoSignificativo{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      codigoPuntoVenta,
+		Cuis:                  *pointOfSale.Cuis,
+		Cufd:                  cufd.Cufd,
+		CufdEvento:            cufdEvento,
+		CodigoMotivoEvento:    codigoMotivo,
+		Descripcion:           descripcion,
+		FechaHoraInicioEvento: inicio,
+		FechaHoraFinEvento:    fin,
+	}
+
+	result, err := h.siatService.RegistrarEventoSignificativo(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(siatEventoSignificativoResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
+}
+
+type siatPaqueteRequest struct {
+	CodigoEvento  int                     `json:"codigoEvento"`
+	Descripcion   string                  `json:"descripcion"`
+	CodigoEmision int                     `json:"codigoEmision"`
+	Facturas      []siat.SolicitudFactura `json:"facturas"`
+}
+
+type siatMasivaRequest struct {
+	CodigoEmision int                     `json:"codigoEmision"`
+	Facturas      []siat.SolicitudFactura `json:"facturas"`
+}
+
+type siatComprasRequest struct {
+	Descripcion      string    `json:"descripcion"`
+	TipoCompra       int       `json:"tipoCompra"`
+	Archivo          string    `json:"archivo"`
+	HashArchivo      string    `json:"hashArchivo"`
+	CantidadFacturas int       `json:"cantidadFacturas"`
+	Gestion          int       `json:"gestion"`
+	Periodo          int       `json:"periodo"`
+	FechaEnvio       time.Time `json:"fechaEnvio"`
+}
+
+type siatPaqueteValidacionRequest struct {
+	CodigoRecepcion string `json:"codigoRecepcion"`
+	CodigoEmision   int    `json:"codigoEmision"`
+	CodigoDocSector int    `json:"codigoDocumentoSector"`
+	CodigoTipoFact  int    `json:"codigoTipoFactura"`
+}
+
+type siatFirmaRequest struct {
+	Xml string `json:"xml"`
+}
+
+type siatFirmaResponse struct {
+	Company     *domain.Company      `json:"company"`
+	PointOfSale *domain.PointOfSale  `json:"point_of_sale"`
+	Response    *siat.ResultadoFirma `json:"response"`
+}
+
+type siatPaqueteResponse struct {
+	Company     *domain.Company        `json:"company"`
+	PointOfSale *domain.PointOfSale    `json:"point_of_sale"`
+	Response    *siat.ResultadoPaquete `json:"response"`
+}
+
+type siatComprasResponse struct {
+	Company     *domain.Company        `json:"company"`
+	PointOfSale *domain.PointOfSale    `json:"point_of_sale"`
+	Response    *siat.ResultadoCompras `json:"response"`
+}
+
+// buildSolicitudPaquete reúne la identidad del contribuyente (empresa + punto
+// de venta + CUIS/CUFD vigente) y la mezcla con los datos específicos del
+// paquete enviados en el body (codigoEvento, descripcion, codigoEmision y
+// facturas).
+func (h *SiatHandler) buildSolicitudPaquete(r *http.Request, body siatPaqueteRequest) (*siat.SolicitudPaqueteFactura, *domain.Company, *domain.PointOfSale, error) {
+	company, pointOfSale, err := h.loadCompanyAndPointOfSale(r)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, nil, nil, &conflictError{message: "El punto de venta no tiene CUIS activo"}
+	}
+
+	cufd, err := h.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		return nil, nil, nil, &conflictError{message: "El punto de venta no tiene CUFD vigente"}
+	}
+
+	codigoPuntoVenta := pointOfSale.CodigoPuntoVenta
+	if pointOfSale.SiatCode != nil {
+		codigoPuntoVenta = *pointOfSale.SiatCode
+	}
+	modalidad := h.modalidad
+	if modalidad <= 0 {
+		modalidad = siat.ModalidadElectronica
+	}
+
+	req := &siat.SolicitudPaqueteFactura{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             modalidad,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      codigoPuntoVenta,
+		Cuis:                  *pointOfSale.Cuis,
+		Cufd:                  cufd.Cufd,
+		CodigoControl:         cufd.ControlCode,
+		CodigoDocumentoSector: 1,
+		CodigoTipoFactura:     1,
+		CodigoEmision:         body.CodigoEmision,
+		CodigoEvento:          int64(body.CodigoEvento),
+		Descripcion:           body.Descripcion,
+		Facturas:              body.Facturas,
+	}
+	return req, company, pointOfSale, nil
+}
+
+// EnviarPaquete envía al SIAT un paquete de facturas (recepcionPaqueteFactura)
+// para la empresa y punto de venta indicados, en el contexto de un evento
+// significativo registrado (codigoEvento), p.ej. una contingencia por corte del
+// servicio de internet.
+func (h *SiatHandler) EnviarPaquete(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	var body siatPaqueteRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if len(body.Facturas) == 0 {
+		http.Error(w, "El paquete debe contener al menos una factura en el campo facturas", http.StatusBadRequest)
+		return
+	}
+	if body.CodigoEvento <= 0 {
+		http.Error(w, "codigoEvento es obligatorio (código de recepción del evento significativo registrado)", http.StatusBadRequest)
+		return
+	}
+
+	req, company, pointOfSale, err := h.buildSolicitudPaquete(r, body)
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+
+	result, err := h.siatService.EnviarPaqueteFactura(r.Context(), *req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(siatPaqueteResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
+}
+
+// ValidarPaquete consulta al SIAT la validación de un paquete ya enviado
+// (validacionRecepcionPaqueteFactura) usando el codigoRecepcion devuelto por
+// el envío.
+func (h *SiatHandler) ValidarPaquete(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	var body siatPaqueteValidacionRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if strings.TrimSpace(body.CodigoRecepcion) == "" {
+		http.Error(w, "codigoRecepcion es obligatorio (código devuelto por el envío del paquete)", http.StatusBadRequest)
+		return
+	}
+
+	req, company, pointOfSale, err := h.buildSolicitudPaquete(r, siatPaqueteRequest{
+		CodigoEmision: body.CodigoEmision,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+	if body.CodigoDocSector > 0 {
+		req.CodigoDocumentoSector = body.CodigoDocSector
+	}
+	if body.CodigoTipoFact > 0 {
+		req.CodigoTipoFactura = body.CodigoTipoFact
+	}
+
+	result, err := h.siatService.ValidarPaqueteFactura(r.Context(), *req, body.CodigoRecepcion)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(siatPaqueteResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
+}
+
+// buildSolicitudMasiva reúne la identidad del contribuyente (empresa + punto de
+// venta + CUIS/CUFD vigente) y la mezcla con los datos específicos del lote
+// enviados en el body (codigoEmision y facturas).
+func (h *SiatHandler) buildSolicitudMasiva(r *http.Request, body siatMasivaRequest) (*siat.SolicitudMasivaFactura, *domain.Company, *domain.PointOfSale, error) {
+	company, pointOfSale, err := h.loadCompanyAndPointOfSale(r)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, nil, nil, &conflictError{message: "El punto de venta no tiene CUIS activo"}
+	}
+
+	cufd, err := h.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		return nil, nil, nil, &conflictError{message: "El punto de venta no tiene CUFD vigente"}
+	}
+
+	codigoPuntoVenta := pointOfSale.CodigoPuntoVenta
+	if pointOfSale.SiatCode != nil {
+		codigoPuntoVenta = *pointOfSale.SiatCode
+	}
+	modalidad := h.modalidad
+	if modalidad <= 0 {
+		modalidad = siat.ModalidadElectronica
+	}
+
+	req := &siat.SolicitudMasivaFactura{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             modalidad,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      codigoPuntoVenta,
+		Cuis:                  *pointOfSale.Cuis,
+		Cufd:                  cufd.Cufd,
+		CodigoControl:         cufd.ControlCode,
+		CodigoDocumentoSector: 1,
+		CodigoTipoFactura:     1,
+		CodigoEmision:         body.CodigoEmision,
+		Facturas:              body.Facturas,
+	}
+	return req, company, pointOfSale, nil
+}
+
+// EnviarMasiva envía al SIAT un lote de facturas por emisión masiva
+// (recepcionMasivaFactura, codigoEmision = 3) para la empresa y punto de venta
+// indicados.
+func (h *SiatHandler) EnviarMasiva(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	var body siatMasivaRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if len(body.Facturas) == 0 {
+		http.Error(w, "El lote debe contener al menos una factura en el campo facturas", http.StatusBadRequest)
+		return
+	}
+
+	req, company, pointOfSale, err := h.buildSolicitudMasiva(r, body)
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+
+	result, err := h.siatService.EnviarMasivaFacturas(r.Context(), *req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(siatPaqueteResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
+}
+
+// ValidarMasiva consulta al SIAT la validación de un lote ya enviado
+// (validacionRecepcionMasivaFactura) usando el codigoRecepcion devuelto por el
+// envío.
+func (h *SiatHandler) ValidarMasiva(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	var body siatPaqueteValidacionRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if strings.TrimSpace(body.CodigoRecepcion) == "" {
+		http.Error(w, "codigoRecepcion es obligatorio (código devuelto por el envío del lote)", http.StatusBadRequest)
+		return
+	}
+
+	req, company, pointOfSale, err := h.buildSolicitudMasiva(r, siatMasivaRequest{
+		CodigoEmision: body.CodigoEmision,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+	if body.CodigoDocSector > 0 {
+		req.CodigoDocumentoSector = body.CodigoDocSector
+	}
+	if body.CodigoTipoFact > 0 {
+		req.CodigoTipoFactura = body.CodigoTipoFact
+	}
+
+	result, err := h.siatService.ValidarMasivaFacturas(r.Context(), *req, body.CodigoRecepcion)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(siatPaqueteResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
+}
+
+// EnviarCompras registra en el SIAT un paquete de facturas de compras
+// (recepcionPaqueteCompras, Etapa XI). codigoPuntoVenta no aplica en el servicio
+// de compras; codigoSucursal se toma del punto de venta y la identidad
+// (ambiente, sistema, NIT) de la empresa.
+func (h *SiatHandler) EnviarCompras(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	var body siatComprasRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if strings.TrimSpace(body.Archivo) == "" || strings.TrimSpace(body.HashArchivo) == "" {
+		http.Error(w, "archivo y hashArchivo son obligatorios (Base64 del TAR.GZ y su SHA-256)", http.StatusBadRequest)
+		return
+	}
+
+	company, pointOfSale, err := h.loadCompanyAndPointOfSale(r)
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		http.Error(w, "El punto de venta no tiene CUIS activo", http.StatusConflict)
+		return
+	}
+
+	cufd, err := h.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		http.Error(w, "El punto de venta no tiene CUFD vigente", http.StatusConflict)
+		return
+	}
+
+	req := siat.SolicitudCompras{
+		Descripcion:      body.Descripcion,
+		TipoCompra:       body.TipoCompra,
+		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:    company.CodigoSistema,
+		Nit:              company.Nit,
+		CodigoSucursal:   pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta: 0,
+		Cuis:             *pointOfSale.Cuis,
+		Cufd:             cufd.Cufd,
+		Archivo:          body.Archivo,
+		HashArchivo:      body.HashArchivo,
+		CantidadFacturas: body.CantidadFacturas,
+		Gestion:          body.Gestion,
+		Periodo:          body.Periodo,
+		FechaEnvio:       body.FechaEnvio,
+	}
+
+	result, err := h.siatService.EnviarCompras(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(siatComprasResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
+}
+
+// FirmarFactura firma digitalmente el XML de una factura con el certificado de
+// la empresa (P12 o PEM) usando el SDK go-siat (Etapa VIII - Firma Digital) y
+// devuelve el XML firmado junto con el archivo gzip+Base64 y su hash SHA-256.
+func (h *SiatHandler) FirmarFactura(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	var body siatFirmaRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if strings.TrimSpace(body.Xml) == "" {
+		http.Error(w, "xml es obligatorio (la cadena del XML de la factura a firmar)", http.StatusBadRequest)
+		return
+	}
+
+	company, pointOfSale, err := h.loadCompanyAndPointOfSale(r)
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+
+	result, err := h.siatService.FirmarFacturaXML(r.Context(), body.Xml)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(siatFirmaResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
+}
+
+// parseFechaSiat parsea una fecha/hora del SIAT en formato UTC extendido sin
+// zona horaria (YYYY-MM-DDTHH:mm:ss.SSS). Si el valor está vacío usa la fecha
+// y hora actual en UTC.
+func parseFechaSiat(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Now().UTC(), nil
+	}
+	parsed, err := time.Parse("2006-01-02T15:04:05.000", value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed, nil
+}
+
 type siatSincronizacionOpResult struct {
 	Operation   string `json:"operation"`
 	Transaccion bool   `json:"transaccion"`
@@ -193,10 +748,10 @@ type siatSincronizacionOpError struct {
 }
 
 type siatSincronizacionResponse struct {
-	Company     *domain.Company               `json:"company"`
-	PointOfSale *domain.PointOfSale           `json:"point_of_sale"`
-	Operations  []siatSincronizacionOpResult  `json:"operations,omitempty"`
-	Errors      []siatSincronizacionOpError   `json:"errors,omitempty"`
+	Company     *domain.Company              `json:"company"`
+	PointOfSale *domain.PointOfSale          `json:"point_of_sale"`
+	Operations  []siatSincronizacionOpResult `json:"operations,omitempty"`
+	Errors      []siatSincronizacionOpError  `json:"errors,omitempty"`
 }
 
 // Sincronizar baja catálogos del SIAT para la empresa y punto de venta indicados.
@@ -218,6 +773,8 @@ func (h *SiatHandler) Sincronizar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// El código de punto de venta que usa el CUIS debe ser el mismo en todas
+	// las operaciones (preferir el código registrado ante SIAT).
 	codigoPuntoVenta := pointOfSale.CodigoPuntoVenta
 	if pointOfSale.SiatCode != nil {
 		codigoPuntoVenta = *pointOfSale.SiatCode
@@ -388,12 +945,20 @@ type notFoundError struct {
 
 func (e *notFoundError) Error() string { return e.message }
 
+type conflictError struct {
+	message string
+}
+
+func (e *conflictError) Error() string { return e.message }
+
 func errToStatus(err error) int {
 	switch err.(type) {
 	case *badRequestError:
 		return http.StatusBadRequest
 	case *notFoundError:
 		return http.StatusNotFound
+	case *conflictError:
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}

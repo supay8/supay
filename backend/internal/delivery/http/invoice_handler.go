@@ -144,3 +144,18 @@ func (h *InvoiceHandler) RevertAnnul(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(inv)
 }
+
+func (h *InvoiceHandler) verificationStatus(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		return
+	}
+	inv, err := h.uc.VerifyStatus(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inv)
+}

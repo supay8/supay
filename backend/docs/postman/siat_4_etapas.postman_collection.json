@@ -1,0 +1,435 @@
+{
+  "info": {
+    "name": "SIAT - 4 etapas de impuestos",
+    "_postman_id": "8f7a2d89-4d8b-4c5d-a9f0-7e1c5e9d7a41",
+    "description": "Colección para probar las 4 etapas de impuestos del backend Supay.\n\nVariables esperadas:\n- baseUrl: por ejemplo http://localhost:8080\n- companyId: UUID de la empresa\n- pointOfSaleId: UUID del punto de venta\n- invoiceId: UUID de la factura creada para emisión individual\n\nNota:\n- Las etapas I, II, III, IV y V no requieren body JSON en este backend.\n- La etapa II puede ejecutarse completa con /siat/sincronizar/{companyId}/{pointOfSaleId}.\n- Si quieres una sola operación puntual, agrega ?operation=tipoPuntoVenta o cualquier otra operación soportada.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Etapa I - Obtención de CUIS",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/siat/cuis/{{companyId}}/{{pointOfSaleId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "siat",
+            "cuis",
+            "{{companyId}}",
+            "{{pointOfSaleId}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        }
+      }
+    },
+    {
+      "name": "Etapa II - Sincronización de Catálogos",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/siat/sincronizar/{{companyId}}/{{pointOfSaleId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "siat",
+            "sincronizar",
+            "{{companyId}}",
+            "{{pointOfSaleId}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        }
+      }
+    },
+    {
+      "name": "Etapa III - Obtención CUFD",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/siat/cufd/{{companyId}}/{{pointOfSaleId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "siat",
+            "cufd",
+            "{{companyId}}",
+            "{{pointOfSaleId}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        }
+      }
+    },
+    {
+      "name": "Etapa IV - Consumo de métodos de emisión individual",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/invoices/{{invoiceId}}/emit",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "invoices",
+            "{{invoiceId}}",
+            "emit"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        }
+      }
+    },
+    {
+      "name": "Etapa V - Registro de Eventos Significativos",
+      "event": [],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/siat/evento-significativo/{{companyId}}/{{pointOfSaleId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "siat",
+            "evento-significativo",
+            "{{companyId}}",
+            "{{pointOfSaleId}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"codigoMotivoEvento\": 1,\n  \"descripcion\": \"Corte del servicio de internet\",\n  \"cufdEvento\": \"CUFD con el que se generó o debió generarse el evento\",\n  \"fechaHoraInicioEvento\": \"2026-08-14T09:00:00.000\",\n  \"fechaHoraFinEvento\": \"2026-08-14T10:30:00.000\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Etapa IV - Emisión de paquetes (contingencia)",
+      "item": [
+        {
+          "name": "Enviar paquete de facturas (recepcionPaqueteFactura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/siat/paquete/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "siat",
+                "paquete",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigoEvento\": 123456,\n  \"descripcion\": \"CORTE DEL SERVICIO DE INTERNET\",\n  \"codigoEmision\": 2,\n  \"facturas\": [\n    {\n      \"numeroFactura\": 1,\n      \"fechaEmision\": \"2026-08-14T09:15:00.000\",\n      \"usuario\": \"SUPAY\",\n      \"leyenda\": \"Ley N° 453\",\n      \"razonSocialEmisor\": \"EMPRESA TEST SRL\",\n      \"municipio\": \"LA PAZ\",\n      \"direccion\": \"AV. TEST 123\",\n      \"codigoMetodoPago\": 1,\n      \"codigoMoneda\": 1,\n      \"tipoCambio\": 1,\n      \"montoTotal\": 100,\n      \"codigoDocumentoSector\": 1,\n      \"codigoTipoFactura\": 1,\n      \"cliente\": {\n        \"codigoCliente\": \"C-001\",\n        \"numeroDocumento\": \"1234567\",\n        \"razonSocial\": \"CLIENTE TEST SRL\",\n        \"codigoTipoDocumento\": 5,\n        \"codigoComplemento\": \"\"\n      }\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Validar paquete de facturas (validacionRecepcionPaqueteFactura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/siat/paquete/{{companyId}}/{{pointOfSaleId}}/validar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "siat",
+                "paquete",
+                "{{companyId}}",
+                "{{pointOfSaleId}}",
+                "validar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigoRecepcion\": \"789-123456789-0\",\n  \"codigoEmision\": 2,\n  \"codigoDocumentoSector\": 1,\n  \"codigoTipoFactura\": 1\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Etapa VII - Anulación de facturas",
+      "item": [
+        {
+          "name": "Anular factura (anulacionFactura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invoices/{{invoiceId}}/annul",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invoices",
+                "{{invoiceId}}",
+                "annul"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo_motivo\": 1\n}"
+            },
+            "description": "Anula ante el SIAT la factura emitida. codigo_motivo 1 = FACTURA MAL EMITIDA (catálogo motivoAnulacion). La solicitud envía: codigoAmbiente, codigoEmision=1, codigoSistema, codigoSucursal=0, codigoMotivo, codigoModalidad, cuis, codigoPuntoVenta, cuf, tipoFacturaDocumento=1, nit, codigoDocumentoSector, cufd."
+          }
+        },
+        {
+          "name": "Revertir anulación (reversionAnulacionFactura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invoices/{{invoiceId}}/annul/revert",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invoices",
+                "{{invoiceId}}",
+                "annul",
+                "revert"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Etapa VIII - Firma Digital",
+      "item": [
+        {
+          "name": "Firmar XML de factura (XAdES-BES)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/siat/firma/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "siat",
+                "firma",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xml\": \"<factura xmlns=\\\"https://siat.impuestos.gob.bo/\\\"><nitEmisor>1020304050</nitEmisor><cufd>CUFD</cufd></factura>\"\n}"
+            },
+            "description": "Firma digitalmente el XML de la factura con el certificado (P12/PEM) configurado en el backend. Devuelve xmlFirmado (XAdES-BES), archivo (gzip+Base64) y hashArchivo (SHA-256), el par que se envía en recepcionFactura (codigoModalidad=1)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Etapa IX - Emisión masiva",
+      "item": [
+        {
+          "name": "Enviar lote de facturas (recepcionMasivaFactura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/siat/masiva/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "siat",
+                "masiva",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigoEmision\": 3,\n  \"facturas\": [\n    {\n      \"numeroFactura\": 1,\n      \"fechaEmision\": \"2026-08-14T10:30:00\",\n      \"usuario\": \"SUPAY\",\n      \"leyenda\": \"Ley N° 453\",\n      \"razonSocialEmisor\": \"EMPRESA TEST SRL\",\n      \"municipio\": \"LA PAZ\",\n      \"direccion\": \"AV. MOCK 123\",\n      \"codigoMetodoPago\": 1,\n      \"codigoMoneda\": 1,\n      \"tipoCambio\": 1,\n      \"montoTotal\": 100,\n      \"cliente\": {\n        \"nombreRazonSocial\": \"CLIENTE TEST\",\n        \"codigoTipoDocumentoIdentidad\": 1,\n        \"numeroDocumento\": \"1234567\",\n        \"codigoCliente\": \"C-001\"\n      },\n      \"items\": [\n        {\n          \"actividadEconomica\": \"473000\",\n          \"codigoProductoSin\": 12345,\n          \"codigoProducto\": \"P-001\",\n          \"descripcion\": \"Producto de prueba\",\n          \"cantidad\": 1,\n          \"unidadMedida\": 1,\n          \"precioUnitario\": 100,\n          \"subTotal\": 100\n        }\n      ]\n    }\n  ]\n}"
+            },
+            "description": "Envío de lote por emisión masiva (codigoEmision=3). El backend compone el CUF con codigoEmision=3, empaqueta cada factura (firmada si codigoModalidad=1), genera el TAR.GZ con hash SHA-256 y llama a recepcionMasivaFactura con cantidadFacturas = n. La identidad (cuis, cufd, nit, codigoSistema, codigoModalidad, codigoAmbiente, codigoSucursal, codigoPuntoVenta, codigoDocumentoSector=1, tipoFacturaDocumento=1) se toma de la empresa/punto de venta. Respuesta: transaccion, codigoEstado, codigoRecepcion (guardar para validar)."
+          }
+        },
+        {
+          "name": "Validar lote enviado (validacionRecepcionMasivaFactura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/siat/masiva/{{companyId}}/{{pointOfSaleId}}/validar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "siat",
+                "masiva",
+                "{{companyId}}",
+                "{{pointOfSaleId}}",
+                "validar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigoRecepcion\": \"RCV-ETAPA-IX\",\n  \"codigoEmision\": 3\n}"
+            },
+            "description": "Consulta la validación del lote (validacionRecepcionMasivaFactura). codigoRecepcion es el devuelto por el envío. La identidad del contribuyente se toma de la empresa/punto de venta, igual que en el envío."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Etapa X - Reversión",
+      "item": [
+        {
+          "name": "Revertir anulación (reversionAnulacionFactura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invoices/{{invoiceId}}/annul/revert",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invoices",
+                "{{invoiceId}}",
+                "annul",
+                "revert"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "description": "Revoca una anulación ya aceptada por el SIAT, devolviendo la factura a su estado anterior. La solicitud (reversionAnulacionFactura) envía la identidad del contribuyente (codigoAmbiente=2, codigoEmision=1, codigoSistema, codigoSucursal=0, codigoModalidad, cuis, codigoPuntoVenta, cuf de la factura, tipoFacturaDocumento=1, nit, codigoDocumentoSector, cufd) tomada de la empresa, punto de venta y factura anulada. El servicio de reversión del SIAT no acepta codigoMotivo (la motivación FACTURA MAL EMITIDA ya quedó registrada en la anulación); respuesta esperada: 907 REVERSION DE ANULACION CONFIRMADA."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Etapa XI - Recepción de compras",
+      "item": [
+        {
+          "name": "Enviar paquete de compras (recepcionPaqueteCompras)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/siat/compras/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "siat",
+                "compras",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"descripcion\": \"RECEPCIÓN - INTERNO/ACTIVIDADES GRAVADAS\",\n  \"tipoCompra\": 1,\n  \"archivo\": \"<base64 del TAR.GZ con los registros de compra>\",\n  \"hashArchivo\": \"<SHA-256 del archivo>\",\n  \"cantidadFacturas\": 2,\n  \"gestion\": 2026,\n  \"periodo\": 8,\n  \"fechaEnvio\": \"2026-08-14T10:30:00\"\n}"
+            },
+            "description": "Registra un paquete de facturas de compras (recepcionPaqueteCompras). La solicitud envía: codigoAmbiente=2, archivo, periodo, codigoSistema, hashArchivo, codigoSucursal=0 (no aplica punto de venta), cantidadFacturas (menor a 10), gestion, cuis, fechaEnvio, codigoPuntoVenta=0 (no aplica), nit, cufd. La identidad del contribuyente se toma de la empresa/punto de venta; descripcion y tipoCompra quedan documentados en el lote (el SIAT los recibe dentro de los registros del archivo, no en la solicitud SOAP)."
+          }
+        }
+      ]
+    }
+  ]
+}

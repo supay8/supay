@@ -64,7 +64,7 @@ func main() {
 	if siatService != nil {
 		emissionService = siatService
 	}
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, emissionService, appCfg.SiatModalidad)
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
 	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, siatService, pdf.NewService(database.DB), appCfg.SiatModalidad)

@@ -1,0 +1,375 @@
+package siat
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"strings"
+	"time"
+
+	goSiat "github.com/ron86i/go-siat/v2"
+	"github.com/ron86i/go-siat/v2/pkg/models"
+)
+
+// EmisionPaqueteOffline es el codigoEmision que exige el SIAT para el envío de
+// paquetes: emisión fuera de línea (contingencia).
+const EmisionPaqueteOffline = goSiat.EmisionOffline
+
+// MaxFacturasPorPaquete es el límite de facturas por paquete definido por el SIN.
+const MaxFacturasPorPaquete = 500
+
+// SolicitudPaqueteFactura agrupa los prerrequisitos para enviar un paquete de
+// facturas al SIAT (recepcionPaqueteFactura), usado en emisión por lotes o en
+// contingencia (codigoEmision = EmisionOffline). Todas las facturas del paquete
+// deben pertenecer al mismo documento-sector y compartir el mismo CUIS/CUFD.
+type SolicitudPaqueteFactura struct {
+	CodigoAmbiente   int    `json:"codigoAmbiente"`
+	CodigoSistema    string `json:"codigoSistema"`
+	Nit              string `json:"nit"`
+	Modalidad        int    `json:"modalidad"`
+	CodigoSucursal   int    `json:"codigoSucursal"`
+	CodigoPuntoVenta int    `json:"codigoPuntoVenta"`
+	Cuis             string `json:"cuis"`
+	Cufd             string `json:"cufd"`
+	CodigoControl    string `json:"codigoControl"`
+
+	// CodigoDocumentoSector es el diseño de factura del paquete (1 = compraventa,
+	// 11 = sector educativo). Todas las facturas deben ser del mismo sector.
+	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
+	// CodigoTipoFactura es el tipo de documento factura (1 = factura).
+	CodigoTipoFactura int `json:"codigoTipoFactura"`
+	// CodigoEmision es el tipo de emisión (1 = en línea, 2 = fuera de línea /
+	// contingencia). Para paquetes el SIAT exige 2 (EmisionPaqueteOffline).
+	CodigoEmision int `json:"codigoEmision"`
+	// CodigoEvento es el código de recepción del evento significativo registrado
+	// (respuesta de registroEventoSignificativo) que motiva el envío del paquete.
+	CodigoEvento int64 `json:"codigoEvento"`
+	// Descripcion describe la contingencia que originó el paquete (p.ej. "CORTE
+	// DEL SERVICIO DE INTERNET"). Es solo para trazabilidad: el SIAT no recibe
+	// este campo en recepcionPaqueteFactura, la descripción ya quedó registrada
+	// con el evento significativo.
+	Descripcion string `json:"descripcion,omitempty"`
+
+	// Facturas son las facturas del paquete (máximo 500). Cada una conserva los
+	// datos de cliente/ítems mapeados a catálogos SIN; la identidad del paquete
+	// (ambiente, sistema, NIT, modalidad, sucursal, punto de venta, CUIS/CUFD y
+	// código de control) se hereda a las facturas que no la traigan.
+	Facturas []SolicitudFactura `json:"facturas"`
+}
+
+// ResultadoPaquete es la respuesta procesada de recepcionPaqueteFactura y de
+// validacionRecepcionPaqueteFactura.
+type ResultadoPaquete struct {
+	Transaccion     bool      `json:"transaccion"`
+	CodigoEstado    int       `json:"codigoEstado"`
+	CodigoRecepcion string    `json:"codigoRecepcion,omitempty"`
+	Mensajes        []Mensaje `json:"mensajes,omitempty"`
+
+	// Archivo es la cadena Base64 del TAR.GZ del paquete tal como se envió
+	// (auditoría).
+	Archivo string `json:"archivo,omitempty"`
+	// HashArchivo es el hash SHA-256 del archivo comprimido del paquete.
+	HashArchivo string `json:"hashArchivo,omitempty"`
+	// CantidadFacturas es el número de facturas empaquetadas y enviadas.
+	CantidadFacturas int `json:"cantidadFacturas"`
+	// Cufs contiene el CUF de cada factura del paquete, para poder consultar o
+	// anular individualmente cada documento después del envío.
+	Cufs []string `json:"cufs,omitempty"`
+}
+
+// EnviarPaqueteFactura envía un paquete de facturas al SIAT
+// (recepcionPaqueteFactura). Cada factura se construye con su propio CUF usando
+// el codigoEmision del paquete (por defecto EmisionOffline); el SDK las firma
+// (modalidad electrónica), las empaqueta en TAR.GZ comprimido y calcula el hash
+// SHA-256 automáticamente (WithFacturas). El CodigoRecepcion devuelto se usa
+// luego en ValidarPaqueteFactura.
+func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaqueteFactura) (*ResultadoPaquete, error) {
+	req = req.normalized()
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
+	}
+
+	sector := req.sector()
+	tipoFactura := req.tipoFactura()
+	codigoEmision := req.codigoEmision()
+
+	facturas := make([]any, 0, len(req.Facturas))
+	cufs := make([]string, 0, len(req.Facturas))
+	for i := range req.Facturas {
+		factura, cuf, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
+		if err != nil {
+			return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
+		}
+		facturas = append(facturas, factura)
+		cufs = append(cufs, cuf)
+	}
+
+	paquete := models.NewRecepcionPaqueteFacturaBuilder().
+		WithCodigoModalidad(req.Modalidad).
+		WithCodigoSucursal(req.CodigoSucursal).
+		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+		WithCodigoDocumentoSector(sector).
+		WithCodigoEmision(codigoEmision).
+		WithTipoFacturaDocumento(tipoFactura).
+		WithCuis(req.Cuis).
+		WithCufd(req.Cufd).
+		// El SIAT exige fechaEnvio en UTC extendido sin zona horaria; el SDK
+		// formatea la hora tal cual la recibe (no convierte a UTC).
+		WithFechaEnvio(time.Now().UTC()).
+		WithCodigoEvento(req.CodigoEvento)
+
+	if err := paquete.WithFacturas(facturas, s.sdk.Config()); err != nil {
+		return nil, fmt.Errorf("siat paquete: no se pudo empaquetar las facturas: %w", err)
+	}
+
+	built := paquete.Build()
+	archivo, hash, cantidad := extraerArchivoPaquete(built)
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	resp, err := s.recepcionPaqueteEnvio(ctx, sector, req.Modalidad, built)
+	if err != nil {
+		return nil, fmt.Errorf("siat paquete: %w", err)
+	}
+
+	// Nota: RespuestaRecepcion no implementa common.Result, por lo que
+	// goSiat.Verify no aplica; la verificación es manual (Transaccion/CodigoEstado).
+	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
+	if err != nil {
+		return nil, fmt.Errorf("siat paquete: %w", err)
+	}
+
+	return &ResultadoPaquete{
+		Transaccion:      transaccion,
+		CodigoEstado:     codigoEstado,
+		CodigoRecepcion:  codigoRecepcion,
+		Mensajes:         mensajes,
+		Archivo:          archivo,
+		HashArchivo:      hash,
+		CantidadFacturas: cantidad,
+		Cufs:             cufs,
+	}, nil
+}
+
+// ValidarPaqueteFactura consulta al SIAT la validación de un paquete ya enviado
+// (validacionRecepcionPaqueteFactura) usando el CodigoRecepcion devuelto por
+// EnviarPaqueteFactura.
+func (s *Service) ValidarPaqueteFactura(ctx context.Context, req SolicitudPaqueteFactura, codigoRecepcion string) (*ResultadoPaquete, error) {
+	if err := req.validateBase(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(codigoRecepcion) == "" {
+		return nil, fmt.Errorf("siat paquete: codigoRecepcion es obligatorio para validar el paquete")
+	}
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
+	}
+
+	request := models.NewValidacionRecepcionPaqueteFacturaBuilder().
+		WithCodigoSucursal(req.CodigoSucursal).
+		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+		WithCodigoDocumentoSector(req.sector()).
+		WithCodigoEmision(req.codigoEmision()).
+		WithTipoFacturaDocumento(req.tipoFactura()).
+		WithCuis(req.Cuis).
+		WithCufd(req.Cufd).
+		WithCodigoRecepcion(codigoRecepcion).
+		WithCodigoModalidad(req.Modalidad).
+		Build()
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	resp, err := s.validacionPaqueteEnvio(ctx, req.sector(), req.Modalidad, request)
+	if err != nil {
+		return nil, fmt.Errorf("siat paquete: %w", err)
+	}
+
+	transaccion, codigoEstado, codigoRecepcionResp, mensajes, err := extraerResultadoFacturacion(resp)
+	if err != nil {
+		return nil, fmt.Errorf("siat paquete: %w", err)
+	}
+
+	return &ResultadoPaquete{
+		Transaccion:     transaccion,
+		CodigoEstado:    codigoEstado,
+		CodigoRecepcion: codigoRecepcionResp,
+		Mensajes:        mensajes,
+	}, nil
+}
+
+// recepcionPaqueteEnvio ejecuta recepcionPaqueteFactura en el servicio del SDK
+// adecuado para el documento-sector y la modalidad: CompraVenta() atiende los
+// sectores 1, 35 y 41; el resto (p.ej. sector 11 educativo) se enruta por
+// modalidad a Electronica() o Computarizada().
+func (s *Service) recepcionPaqueteEnvio(ctx context.Context, sector, modalidad int, req models.RecepcionPaqueteFactura) (any, error) {
+	switch sector {
+	case SectorCompraVenta, 35, 41:
+		return s.sdk.CompraVenta().RecepcionPaqueteFactura(ctx, req)
+	}
+	envio := s.sdk.Electronica()
+	if modalidad == ModalidadComputarizada {
+		envio = s.sdk.Computarizada()
+	}
+	return envio.RecepcionPaqueteFactura(ctx, req)
+}
+
+func (s *Service) validacionPaqueteEnvio(ctx context.Context, sector, modalidad int, req models.ValidacionRecepcionPaqueteFactura) (any, error) {
+	switch sector {
+	case SectorCompraVenta, 35, 41:
+		return s.sdk.CompraVenta().ValidacionRecepcionPaqueteFactura(ctx, req)
+	}
+	envio := s.sdk.Electronica()
+	if modalidad == ModalidadComputarizada {
+		envio = s.sdk.Computarizada()
+	}
+	return envio.ValidacionRecepcionPaqueteFactura(ctx, req)
+}
+
+// normalized devuelve una copia de la solicitud en la que cada factura hereda
+// la identidad común del paquete (ambiente, sistema, NIT, modalidad, sucursal,
+// punto de venta, CUIS, CUFD, código de control y documento-sector) cuando no
+// la trae propia.
+func (s SolicitudPaqueteFactura) normalized() SolicitudPaqueteFactura {
+	out := s
+	out.Facturas = make([]SolicitudFactura, len(s.Facturas))
+	copy(out.Facturas, s.Facturas)
+	for i := range out.Facturas {
+		f := &out.Facturas[i]
+		if f.CodigoAmbiente == 0 {
+			f.CodigoAmbiente = s.CodigoAmbiente
+		}
+		if strings.TrimSpace(f.CodigoSistema) == "" {
+			f.CodigoSistema = s.CodigoSistema
+		}
+		if strings.TrimSpace(f.Nit) == "" {
+			f.Nit = s.Nit
+		}
+		if f.Modalidad == 0 {
+			f.Modalidad = s.Modalidad
+		}
+		if f.CodigoSucursal == 0 {
+			f.CodigoSucursal = s.CodigoSucursal
+		}
+		if f.CodigoPuntoVenta == 0 {
+			f.CodigoPuntoVenta = s.CodigoPuntoVenta
+		}
+		if strings.TrimSpace(f.Cuis) == "" {
+			f.Cuis = s.Cuis
+		}
+		if strings.TrimSpace(f.Cufd) == "" {
+			f.Cufd = s.Cufd
+		}
+		if strings.TrimSpace(f.CodigoControl) == "" {
+			f.CodigoControl = s.CodigoControl
+		}
+		if f.CodigoDocumentoSector == 0 {
+			f.CodigoDocumentoSector = s.CodigoDocumentoSector
+		}
+		if f.CodigoTipoFactura == 0 {
+			f.CodigoTipoFactura = s.CodigoTipoFactura
+		}
+	}
+	return out
+}
+
+// extraerArchivoPaquete lee archivo, hashArchivo y cantidadFacturas del request
+// interno del SDK ya construido, para auditoría. El campo request del wrapper es
+// no exportado, por lo que se lee con reflexión (String()/Int()).
+func extraerArchivoPaquete(paquete models.RecepcionPaqueteFactura) (archivo, hash string, cantidad int) {
+	v := reflect.ValueOf(paquete)
+	wrapper := v.FieldByName("RequestWrapper")
+	if !wrapper.IsValid() {
+		return "", "", 0
+	}
+	request := wrapper.FieldByName("request")
+	if !request.IsValid() || request.Kind() != reflect.Pointer {
+		return "", "", 0
+	}
+	solicitud := request.Elem().FieldByName("SolicitudServicioRecepcionPaquete")
+	if !solicitud.IsValid() {
+		return "", "", 0
+	}
+	recep := solicitud.FieldByName("SolicitudRecepcionFactura")
+	if !recep.IsValid() {
+		return "", "", 0
+	}
+	if f := recep.FieldByName("Archivo"); f.IsValid() && f.Kind() == reflect.String {
+		archivo = f.String()
+	}
+	if f := recep.FieldByName("HashArchivo"); f.IsValid() && f.Kind() == reflect.String {
+		hash = f.String()
+	}
+	if f := solicitud.FieldByName("CantidadFacturas"); f.IsValid() && f.Kind() == reflect.Int {
+		cantidad = int(f.Int())
+	}
+	return archivo, hash, cantidad
+}
+
+func (s SolicitudPaqueteFactura) sector() int {
+	if s.CodigoDocumentoSector <= 0 {
+		return SectorCompraVenta
+	}
+	return s.CodigoDocumentoSector
+}
+
+func (s SolicitudPaqueteFactura) tipoFactura() int {
+	if s.CodigoTipoFactura <= 0 {
+		return 1
+	}
+	return s.CodigoTipoFactura
+}
+
+func (s SolicitudPaqueteFactura) codigoEmision() int {
+	if s.CodigoEmision <= 0 {
+		return EmisionPaqueteOffline
+	}
+	return s.CodigoEmision
+}
+
+// validateBase valida la identidad común del contribuyente que exigen tanto
+// recepcionPaqueteFactura como validacionRecepcionPaqueteFactura.
+func (s SolicitudPaqueteFactura) validateBase() error {
+	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+		return fmt.Errorf("siat paquete: codigoAmbiente inválido")
+	}
+	if strings.TrimSpace(s.CodigoSistema) == "" {
+		return fmt.Errorf("siat paquete: codigoSistema es obligatorio")
+	}
+	if strings.TrimSpace(s.Nit) == "" {
+		return fmt.Errorf("siat paquete: nit es obligatorio")
+	}
+	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
+		return fmt.Errorf("siat paquete: modalidad inválida (%d)", s.Modalidad)
+	}
+	if s.CodigoSucursal < 0 || s.CodigoPuntoVenta < 0 {
+		return fmt.Errorf("siat paquete: codigoSucursal y codigoPuntoVenta deben ser >= 0")
+	}
+	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" || strings.TrimSpace(s.CodigoControl) == "" {
+		return fmt.Errorf("siat paquete: cuis, cufd y codigoControl son obligatorios")
+	}
+	return nil
+}
+
+func (s SolicitudPaqueteFactura) validate() error {
+	if err := s.validateBase(); err != nil {
+		return err
+	}
+	if s.CodigoEvento <= 0 {
+		return fmt.Errorf("siat paquete: codigoEvento es obligatorio (registre primero un evento significativo)")
+	}
+	if len(s.Facturas) == 0 {
+		return fmt.Errorf("siat paquete: el paquete debe contener al menos una factura")
+	}
+	if len(s.Facturas) > MaxFacturasPorPaquete {
+		return fmt.Errorf("siat paquete: el paquete supera el límite de %d facturas del SIN", MaxFacturasPorPaquete)
+	}
+	for i := range s.Facturas {
+		if err := s.Facturas[i].validate(); err != nil {
+			return fmt.Errorf("siat paquete factura %d: %w", i+1, err)
+		}
+	}
+	return nil
+}

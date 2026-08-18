@@ -34,6 +34,7 @@ func main() {
 	posHandler := deliveryHttp.NewPosHandler(posUsecase)
 
 	cufdRepo := postgres.NewPostgresCufdRepository(database.DB)
+	contingencyRepo := postgres.NewPostgresContingencyEventRepository(database.DB)
 	tipoPVRepo := postgres.NewPostgresTipoPuntoVentaRepository(database.DB)
 	catalogRepo := postgres.NewPostgresCatalogRepository(database.DB)
 	branchRepo := postgres.NewPostgresBranchRepository(database.DB)
@@ -67,7 +68,7 @@ func main() {
 	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
-	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, siatService, pdf.NewService(database.DB), appCfg.SiatModalidad)
+	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, siatService, pdf.NewService(database.DB), appCfg.SiatModalidad)
 
 	// 4. Router
 	router := deliveryHttp.NewRouter(deliveryHttp.Handlers{

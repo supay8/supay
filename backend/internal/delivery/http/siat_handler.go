@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/siat"
 	"github.com/go-chi/chi/v5"
@@ -20,6 +22,7 @@ type SiatHandler struct {
 	cufdRepo        domain.CufdRepository
 	tipoPVRepo      domain.TipoPuntoVentaRepository
 	catalogRepo     domain.CatalogRepository
+	contingencyRepo domain.ContingencyEventRepository
 	siatService     *siat.Service
 	pdfService      *pdf.Service
 	modalidad       int
@@ -31,6 +34,7 @@ func NewSiatHandler(
 	cufdRepo domain.CufdRepository,
 	tipoPVRepo domain.TipoPuntoVentaRepository,
 	catalogRepo domain.CatalogRepository,
+	contingencyRepo domain.ContingencyEventRepository,
 	siatService *siat.Service,
 	pdfService *pdf.Service,
 	modalidad int,
@@ -41,6 +45,7 @@ func NewSiatHandler(
 		cufdRepo:        cufdRepo,
 		tipoPVRepo:      tipoPVRepo,
 		catalogRepo:     catalogRepo,
+		contingencyRepo: contingencyRepo,
 		siatService:     siatService,
 		pdfService:      pdfService,
 		modalidad:       modalidad,
@@ -112,7 +117,7 @@ func (h *SiatHandler) SolicitarCUIS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(siat.LaPaz)
 	updatedCuis := resp.Codigo
 	pointOfSale.Cuis = &updatedCuis
 	pointOfSale.CuisCreatedAt = &now
@@ -172,7 +177,7 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(siat.LaPaz)
 	cufd := &domain.Cufd{
 		PointOfSaleID: pointOfSale.ID,
 		Cufd:          resp.Codigo,
@@ -182,11 +187,12 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		ValidTo:       resp.FechaVigencia.Time,
 		Active:        true,
 	}
+	log.Println("cufd armado por domain")
+	log.Println(cufd)
 	if err := h.cufdRepo.Create(cufd); err != nil {
 		http.Error(w, "No se pudo persistir el CUFD", http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(siatCufdResponse{
@@ -282,6 +288,23 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Se persiste el evento registrado (con su codigoRecepcion del SIAT) para
+	// que el envío de paquetes pueda resolver automáticamente el codigoEvento.
+	if h.contingencyRepo != nil && result != nil && result.Transaccion && result.CodigoRecepcion != "" {
+		ev := &domain.ContingencyEvent{
+			PointOfSaleID: pointOfSale.ID,
+			Reason:        motivoEventoAReason(codigoMotivo),
+			Description:   &descripcion,
+			StartDate:     inicio,
+			EndDate:       &fin,
+			SiatEventCode: &result.CodigoRecepcion,
+			IsSynced:      true,
+		}
+		if err := h.contingencyRepo.Create(ev); err != nil {
+			log.Printf("siat evento significativo: no se pudo persistir el evento: %v", err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(siatEventoSignificativoResponse{
@@ -289,6 +312,15 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 		PointOfSale: pointOfSale,
 		Response:    result,
 	})
+}
+
+// motivoEventoAReason traduce el codigoMotivoEvento del catálogo del SIAT a la
+// razón de contingencia local (enum de models.ContingencyReason).
+func motivoEventoAReason(motivo int) string {
+	if motivo == siat.MotivoCorteInternet {
+		return string(models.ReasonFallaInternet)
+	}
+	return string(models.ReasonOtro)
 }
 
 type siatPaqueteRequest struct {
@@ -429,15 +461,28 @@ func (h *SiatHandler) EnviarPaquete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "El paquete debe contener al menos una factura en el campo facturas", http.StatusBadRequest)
 		return
 	}
-	if body.CodigoEvento <= 0 {
-		http.Error(w, "codigoEvento es obligatorio (código de recepción del evento significativo registrado)", http.StatusBadRequest)
-		return
-	}
 	req, company, pointOfSale, err := h.buildSolicitudPaquete(r, body)
 	if err != nil {
 		http.Error(w, err.Error(), errToStatus(err))
 		return
 	}
+
+	// codigoEvento debe ser el codigoRecepcion del último evento significativo
+	// registrado en el SIAT (registroEventoSignificativo); si no se envía, se
+	// resuelve automáticamente desde el último evento persistido del punto de
+	// venta. Un código inventado hace que el SIAT lo rechace (código 942).
+	if req.CodigoEvento <= 0 && h.contingencyRepo != nil {
+		if ev, evErr := h.contingencyRepo.GetLatestByPointOfSale(pointOfSale.ID); evErr == nil && ev.SiatEventCode != nil {
+			if code, cErr := strconv.ParseInt(*ev.SiatEventCode, 10, 64); cErr == nil && code > 0 {
+				req.CodigoEvento = code
+			}
+		}
+	}
+	if req.CodigoEvento <= 0 {
+		http.Error(w, "codigoEvento es obligatorio: registre primero un evento significativo (POST /evento-significativo/{companyId}/{pointOfSaleId}) y use el codigoRecepcion de la respuesta, o envíelo vacío para tomar el último evento registrado", http.StatusBadRequest)
+		return
+	}
+
 	result, err := h.siatService.EnviarPaqueteFactura(r.Context(), *req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -868,7 +913,7 @@ func (h *SiatHandler) persistSincronizacion(companyID string, op siat.Sincroniza
 	if res == nil || !res.Transaccion {
 		return nil
 	}
-	now := time.Now().UTC()
+	now := time.Now().In(siat.LaPaz)
 
 	if op == siat.OpTipoPuntoVenta {
 		tipos := make([]domain.TipoPuntoVenta, 0, len(res.Codigos))

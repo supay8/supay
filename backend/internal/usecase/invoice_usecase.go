@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/siat"
 	"gorm.io/gorm"
 )
 
@@ -155,9 +156,12 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		}
 	}
 
-	issueDate := now.UTC()
+	// La fecha de emisión debe expresarse en hora local de Bolivia (UTC-4): el
+	// SIAT serializa la hora de pared sin zona y la interpreta como hora local.
+	// Se usa el mismo instante que time.Now(), solo cambia la representación.
+	issueDate := now.In(siat.LaPaz)
 	if req.IssueDate != nil {
-		issueDate = req.IssueDate.UTC()
+		issueDate = req.IssueDate.In(siat.LaPaz)
 	}
 
 	inv := &domain.Invoice{

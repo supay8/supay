@@ -722,7 +722,7 @@ func TestAnnulUsaCufdVigente(t *testing.T) {
 		"motivoAnulacion": {{Codigo: 1, Descripcion: "Motivo válido", Tipo: "motivoAnulacion"}},
 	}}
 	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 905}}
-	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE"}}, svc, siat.ModalidadElectronica)
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica)
 
 	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
 		t.Fatalf("Annul: %v", err)
@@ -757,7 +757,7 @@ func TestRevertAnnulUsaCufdVigente(t *testing.T) {
 	inv.MotivoAnulacion = &motivo
 	_ = repo.Create(inv)
 	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 907}}
-	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE"}}, svc, siat.ModalidadElectronica)
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica)
 
 	if _, err := uc.RevertAnnul(context.Background(), "inv-1"); err != nil {
 		t.Fatalf("RevertAnnul: %v", err)
@@ -851,5 +851,52 @@ func TestBuildSolicitudFacturaDireccionPadron(t *testing.T) {
 	}
 	if req.Direccion != inv.CufdRecord.Direccion {
 		t.Errorf("Direccion=%q, se esperaba la del padrón (CUFD)", req.Direccion)
+	}
+}
+
+func TestBuildSolicitudFacturaUsaCufdMasReciente(t *testing.T) {
+	inv := testInvoice()
+	inv.CufdRecord.Cufd = "CUFD-VIEJO"
+	inv.CufdRecord.ControlCode = "CC-VIEJO"
+
+	cufdRepo := &fakeCufdRepo{vigente: &domain.Cufd{
+		ID:          "cufd-nuevo",
+		Cufd:        "CUFD-NUEVO",
+		ControlCode: "CC-NUEVO",
+		ValidFrom:   time.Now().Add(-time.Hour),
+		ValidTo:     time.Now().Add(time.Hour),
+		Active:      true,
+	}}
+	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica)
+
+	req, err := uc.buildSolicitudFactura(inv)
+	if err != nil {
+		t.Fatalf("buildSolicitudFactura: %v", err)
+	}
+	if req.Cufd != "CUFD-NUEVO" || req.CodigoControl != "CC-NUEVO" {
+		t.Errorf("debío usar el CUFD más reciente, se obtuvo Cufd=%q CodigoControl=%q", req.Cufd, req.CodigoControl)
+	}
+}
+
+func TestBuildSolicitudFacturaCufdVencidoConVigente(t *testing.T) {
+	inv := testInvoice()
+	inv.CufdRecord.ValidTo = time.Now().Add(-time.Hour)
+
+	cufdRepo := &fakeCufdRepo{vigente: &domain.Cufd{
+		ID:          "cufd-nuevo",
+		Cufd:        "CUFD-NUEVO",
+		ControlCode: "CC-NUEVO",
+		ValidFrom:   time.Now().Add(-time.Hour),
+		ValidTo:     time.Now().Add(time.Hour),
+		Active:      true,
+	}}
+	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica)
+
+	req, err := uc.buildSolicitudFactura(inv)
+	if err != nil {
+		t.Fatalf("buildSolicitudFactura con CUFD de factura vencido pero CUFD nuevo vigente: %v", err)
+	}
+	if req.Cufd != "CUFD-NUEVO" {
+		t.Errorf("Cufd=%q, se esperaba CUFD-NUEVO", req.Cufd)
 	}
 }

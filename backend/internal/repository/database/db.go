@@ -39,6 +39,12 @@ func ConnectDB() {
 		log.Fatalf("Error of connection to PostgreSQL: %v", err)
 	}
 
+	// Configurar la zona horaria de la sesión PostgreSQL a America/La_Paz para
+	// que las consultas y visualizaciones de timestamps muestren la hora de Bolivia.
+	if err := DB.Exec("SET TIME ZONE 'America/La_Paz'").Error; err != nil {
+		log.Printf("⚠️ No se pudo configurar Timezone La Paz en PostgreSQL: %v (se usa UTC por defecto)", err)
+	}
+
 	fmt.Println("Connection stablished with PostgreSQL database successfully!")
 	// log.Println("🗑️ Borrando tablas viejas por conflicto de tipos...")
 	// DB.Migrator().DropTable(

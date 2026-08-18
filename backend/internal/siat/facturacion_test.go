@@ -59,8 +59,8 @@ func TestEmpaquetaArchivo(t *testing.T) {
 func TestFormatFechaSiat(t *testing.T) {
 	in := time.Date(2026, 8, 14, 15, 4, 5, 123000000, time.FixedZone("", -4*3600))
 	got := formatFechaSiat(in)
-	if want := "2026-08-14T19:04:05.123"; got != want {
-		t.Fatalf("formatFechaSiat = %q, want %q (debe ser UTC sin zona horaria)", got, want)
+	if want := "2026-08-14T15:04:05.123"; got != want {
+		t.Fatalf("formatFechaSiat = %q, want %q (debe ser hora de pared La Paz sin zona horaria)", got, want)
 	}
 	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}$`).MatchString(got) {
 		t.Fatalf("formato no coincide con YYYY-MM-DDTHH:mm:ss.SSS: %q", got)
@@ -176,14 +176,7 @@ func TestEmitirFacturaCompraVentaPayload(t *testing.T) {
 		}
 	}
 
-	fechaEnvioRe := regexp.MustCompile(`<fechaEnvio>(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})</fechaEnvio>`)
-	m := fechaEnvioRe.FindStringSubmatch(gotBody)
-	if m == nil {
-		t.Fatal("fechaEnvio no encontrado o con formato incorrecto en el payload")
-	}
-	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}$`).MatchString(m[1]) {
-		t.Fatalf("fechaEnvio debe ser YYYY-MM-DDTHH:mm:ss.SSS sin zona horaria: %q", m[1])
-	}
+	assertFechaEnvioEnLaPaz(t, gotBody)
 
 	assertFacturaXMLSinXsiNil(t, result.Archivo)
 }

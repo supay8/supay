@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +190,8 @@ func TestEnviarPaqueteFacturaPayload(t *testing.T) {
 	if !strings.Contains(gotBody, "<cafc></cafc>") {
 		t.Error("el payload SOAP debe enviar <cafc></cafc> (vacío) en lugar de xsi:nil")
 	}
+
+	assertFechaEnvioEnLaPaz(t, gotBody)
 }
 
 // TestEnviarPaqueteFacturaFirmadoPreservaXsi envía un paquete en modalidad
@@ -402,6 +405,26 @@ func TestEnviarPaqueteFacturaInheritsIdentity(t *testing.T) {
 		if !strings.Contains(gotBody, want) {
 			t.Errorf("el payload SOAP no contiene %q (identidad no heredada)", want)
 		}
+	}
+}
+
+// assertFechaEnvioEnLaPaz verifica que el payload SOAP transporte fechaEnvio con
+// la hora de pared de Bolivia (UTC-4). El SIAT interpreta esa cadena sin zona
+// como hora local; si se enviara hora UTC la diferencia sería de ~4 horas y el
+// SIAT rechazaría con "EL PARAMETRO FECHA DE ENVIO ES INVALIDO".
+func assertFechaEnvioEnLaPaz(t *testing.T, body string) {
+	t.Helper()
+	re := regexp.MustCompile(`<fechaEnvio>(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})</fechaEnvio>`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("fechaEnvio no encontrado o con formato incorrecto en el payload")
+	}
+	sent, err := time.ParseInLocation("2006-01-02T15:04:05.000", m[1], LaPaz)
+	if err != nil {
+		t.Fatalf("fechaEnvio no parseable: %v", err)
+	}
+	if d := time.Since(sent); d < -5*time.Minute || d > 5*time.Minute {
+		t.Fatalf("fechaEnvio no corresponde a la hora local de La Paz (UTC-4): %q (diferencia %s)", m[1], d.Round(time.Second))
 	}
 }
 

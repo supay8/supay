@@ -118,6 +118,7 @@ func (h *InvoiceHandler) Annul(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
+
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
 	}

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -153,10 +152,7 @@ func TestEnviarMasivaFacturasPayload(t *testing.T) {
 		}
 	}
 
-	fechaEnvioRe := regexp.MustCompile(`<fechaEnvio>(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})</fechaEnvio>`)
-	if m := fechaEnvioRe.FindStringSubmatch(gotBody); m == nil {
-		t.Fatal("fechaEnvio no encontrado o con formato incorrecto en el payload")
-	}
+	assertFechaEnvioEnLaPaz(t, gotBody)
 
 	// El archivo enviado debe ser un TAR.GZ válido con una entrada por factura,
 	// y el XML de cada factura debe estar firmado (modalidad electrónica).

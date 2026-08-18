@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -94,10 +93,7 @@ func TestEnviarComprasPayload(t *testing.T) {
 		}
 	}
 
-	fechaEnvioRe := regexp.MustCompile(`<fechaEnvio>(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})</fechaEnvio>`)
-	if m := fechaEnvioRe.FindStringSubmatch(gotBody); m == nil {
-		t.Fatal("fechaEnvio no encontrado o con formato incorrecto en el payload")
-	}
+	assertFechaEnvioEnLaPaz(t, gotBody)
 
 	// descripcion y tipoCompra son informativos del lote: la solicitud SOAP no
 	// los transporta (viven dentro de los registros del archivo).

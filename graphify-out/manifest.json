@@ -1,0 +1,374 @@
+{
+  "backend/cmd/seed/main.go": {
+    "mtime": 1786653881.957831,
+    "seen": 1786736640.2846408,
+    "ast_hash": "cadbe062e4950a62882409bee9d8f0dc",
+    "semantic_hash": "cadbe062e4950a62882409bee9d8f0dc"
+  },
+  "backend/cmd/server/main.go": {
+    "mtime": 1786656227.3460212,
+    "seen": 1786736640.2846456,
+    "ast_hash": "cda48f6d15fe5fc1ca18be7c8a7727c5",
+    "semantic_hash": "cda48f6d15fe5fc1ca18be7c8a7727c5"
+  },
+  "backend/go.mod": {
+    "mtime": 1786653723.9198709,
+    "seen": 1786736640.2846482,
+    "ast_hash": "70615938f4846e3f1d199f33b35a19d7",
+    "semantic_hash": "70615938f4846e3f1d199f33b35a19d7"
+  },
+  "backend/internal/config/config.go": {
+    "mtime": 1786655977.6209688,
+    "seen": 1786736640.2846503,
+    "ast_hash": "9c2feda12ddd3864e4219047e6423bb9",
+    "semantic_hash": "9c2feda12ddd3864e4219047e6423bb9"
+  },
+  "backend/internal/delivery/http/branch_handler.go": {
+    "mtime": 1785897425.680446,
+    "seen": 1786736640.284653,
+    "ast_hash": "24fdad10f8dbfeb3a0c74ea0a76cd4fc",
+    "semantic_hash": "24fdad10f8dbfeb3a0c74ea0a76cd4fc"
+  },
+  "backend/internal/delivery/http/company_handler.go": {
+    "mtime": 1785886815.1724901,
+    "seen": 1786736640.284655,
+    "ast_hash": "05ef4e0ac7e9023caab96e369a04a136",
+    "semantic_hash": "05ef4e0ac7e9023caab96e369a04a136"
+  },
+  "backend/internal/delivery/http/customer_handler.go": {
+    "mtime": 1785967639.9924157,
+    "seen": 1786736640.284657,
+    "ast_hash": "b8fc6cdaa1bf69435a4b246d142bc035",
+    "semantic_hash": "b8fc6cdaa1bf69435a4b246d142bc035"
+  },
+  "backend/internal/delivery/http/invoice_handler.go": {
+    "mtime": 1786663561.3893728,
+    "seen": 1786736640.284659,
+    "ast_hash": "484a70ebd75f53a0a4461b91e4211239",
+    "semantic_hash": "484a70ebd75f53a0a4461b91e4211239"
+  },
+  "backend/internal/delivery/http/pos_handler.go": {
+    "mtime": 1785886819.9644897,
+    "seen": 1786736640.2846608,
+    "ast_hash": "ecc2e293edf4719ad760b6244835231a",
+    "semantic_hash": "ecc2e293edf4719ad760b6244835231a"
+  },
+  "backend/internal/delivery/http/router.go": {
+    "mtime": 1786735863.112429,
+    "seen": 1786736640.2846627,
+    "ast_hash": "30d3d4a37df206a96bef8495bf7685e6",
+    "semantic_hash": "30d3d4a37df206a96bef8495bf7685e6"
+  },
+  "backend/internal/delivery/http/siat_handler.go": {
+    "mtime": 1786735888.2396245,
+    "seen": 1786736640.2846646,
+    "ast_hash": "0fd71844e8b3681e80bc7b34cced92c2",
+    "semantic_hash": "0fd71844e8b3681e80bc7b34cced92c2"
+  },
+  "backend/internal/domain/branch.go": {
+    "mtime": 1785897191.2587748,
+    "seen": 1786736640.2846665,
+    "ast_hash": "1cf64ac5dc5b0730aad92270a9df2fd0",
+    "semantic_hash": "1cf64ac5dc5b0730aad92270a9df2fd0"
+  },
+  "backend/internal/domain/catalog.go": {
+    "mtime": 1786655078.3691535,
+    "seen": 1786736640.2846687,
+    "ast_hash": "703b7df58cbccbc18f9200532ceb4699",
+    "semantic_hash": "703b7df58cbccbc18f9200532ceb4699"
+  },
+  "backend/internal/domain/company.go": {
+    "mtime": 1785967135.4604883,
+    "seen": 1786736640.2846708,
+    "ast_hash": "a24e99e441149717f38357615a008002",
+    "semantic_hash": "a24e99e441149717f38357615a008002"
+  },
+  "backend/internal/domain/cufd.go": {
+    "mtime": 1785967140.0685623,
+    "seen": 1786736640.2846727,
+    "ast_hash": "e5770fa23e0dbd3b45ef7004dd5d2387",
+    "semantic_hash": "e5770fa23e0dbd3b45ef7004dd5d2387"
+  },
+  "backend/internal/domain/cuis.go": {
+    "mtime": 1785890995.6194463,
+    "seen": 1786736640.284675,
+    "ast_hash": "f0a97821e25a00129c5ed9af96a04d76",
+    "semantic_hash": "f0a97821e25a00129c5ed9af96a04d76"
+  },
+  "backend/internal/domain/customer.go": {
+    "mtime": 1785967595.1284869,
+    "seen": 1786736640.2846766,
+    "ast_hash": "ca471c3034e76d8d7755b441475f9711",
+    "semantic_hash": "ca471c3034e76d8d7755b441475f9711"
+  },
+  "backend/internal/domain/invoice.go": {
+    "mtime": 1786658595.3959768,
+    "seen": 1786736640.2846787,
+    "ast_hash": "11fb41f0f2cf1f2ac95de96961d9136d",
+    "semantic_hash": "11fb41f0f2cf1f2ac95de96961d9136d"
+  },
+  "backend/internal/domain/point_of_sale.go": {
+    "mtime": 1785897196.3147192,
+    "seen": 1786736640.2846804,
+    "ast_hash": "a77e34c970d3ddd33516a247afeaff4d",
+    "semantic_hash": "a77e34c970d3ddd33516a247afeaff4d"
+  },
+  "backend/internal/domain/tipo_punto_venta.go": {
+    "mtime": 1785896372.8065035,
+    "seen": 1786736640.2846825,
+    "ast_hash": "db61305983f3ef9b42d26547bd2509d8",
+    "semantic_hash": "db61305983f3ef9b42d26547bd2509d8"
+  },
+  "backend/internal/models/model.go": {
+    "mtime": 1786658589.5520003,
+    "seen": 1786736640.2846847,
+    "ast_hash": "901de7a4ebc617467249eb1a41dfa49d",
+    "semantic_hash": "901de7a4ebc617467249eb1a41dfa49d"
+  },
+  "backend/internal/pdf/fonts.go": {
+    "mtime": 1785969080.1384265,
+    "seen": 1786736640.2846863,
+    "ast_hash": "649c78a28751ed8134f513c7004eb1d1",
+    "semantic_hash": "649c78a28751ed8134f513c7004eb1d1"
+  },
+  "backend/internal/pdf/invoice_pdf.go": {
+    "mtime": 1785969093.2906122,
+    "seen": 1786736640.2846882,
+    "ast_hash": "f41d8dbcb71f96797b8025ced6434523",
+    "semantic_hash": "f41d8dbcb71f96797b8025ced6434523"
+  },
+  "backend/internal/pdf/invoice_pdf_test.go": {
+    "mtime": 1785969017.3775463,
+    "seen": 1786736640.2846901,
+    "ast_hash": "ec7f6485f550781720c091e22e10b053",
+    "semantic_hash": "ec7f6485f550781720c091e22e10b053"
+  },
+  "backend/internal/pdf/service.go": {
+    "mtime": 1785968906.432011,
+    "seen": 1786736640.2846923,
+    "ast_hash": "f1af658cecc3550e7e4e1ca35531a1e5",
+    "semantic_hash": "f1af658cecc3550e7e4e1ca35531a1e5"
+  },
+  "backend/internal/repository/database/db.go": {
+    "mtime": 1786655097.1449707,
+    "seen": 1786736640.284694,
+    "ast_hash": "f0acb8db1066f1639f9ce3ecaf9168af",
+    "semantic_hash": "f0acb8db1066f1639f9ce3ecaf9168af"
+  },
+  "backend/internal/repository/postgres/branch_repo.go": {
+    "mtime": 1785897222.5264351,
+    "seen": 1786736640.284696,
+    "ast_hash": "0f1ea7bf2fa12513cc224bab40553b69",
+    "semantic_hash": "0f1ea7bf2fa12513cc224bab40553b69"
+  },
+  "backend/internal/repository/postgres/catalog_repo.go": {
+    "mtime": 1786655084.8450904,
+    "seen": 1786736640.284698,
+    "ast_hash": "4f8520a86172af4e8cb4e29c9d6df684",
+    "semantic_hash": "4f8520a86172af4e8cb4e29c9d6df684"
+  },
+  "backend/internal/repository/postgres/company_repo.go": {
+    "mtime": 1786656271.294098,
+    "seen": 1786736640.2847,
+    "ast_hash": "8d2f14dab982885e064cf83199403c4e",
+    "semantic_hash": "8d2f14dab982885e064cf83199403c4e"
+  },
+  "backend/internal/repository/postgres/cufd_repo.go": {
+    "mtime": 1785967499.1728766,
+    "seen": 1786736640.2847016,
+    "ast_hash": "50e8f049eb85ad29c8a9fbc8360dc8d0",
+    "semantic_hash": "50e8f049eb85ad29c8a9fbc8360dc8d0"
+  },
+  "backend/internal/repository/postgres/cuis_repo.go": {
+    "mtime": 1785897239.7222524,
+    "seen": 1786736640.2847037,
+    "ast_hash": "b6ba53d1d105c2d7f8c1069a2fa596e0",
+    "semantic_hash": "b6ba53d1d105c2d7f8c1069a2fa596e0"
+  },
+  "backend/internal/repository/postgres/customer_repo.go": {
+    "mtime": 1785967454.4291832,
+    "seen": 1786736640.2847059,
+    "ast_hash": "aef5ec217e1fbfa5b1b61772215076df",
+    "semantic_hash": "aef5ec217e1fbfa5b1b61772215076df"
+  },
+  "backend/internal/repository/postgres/invoice_repo.go": {
+    "mtime": 1786658604.999938,
+    "seen": 1786736640.2847078,
+    "ast_hash": "8c2ecf9b131fcd61218be61813a6dc5d",
+    "semantic_hash": "8c2ecf9b131fcd61218be61813a6dc5d"
+  },
+  "backend/internal/repository/postgres/point_of_sale_repo.go": {
+    "mtime": 1785897234.2263105,
+    "seen": 1786736640.2847102,
+    "ast_hash": "45e91a8a1b73ff674ca04c559e941421",
+    "semantic_hash": "45e91a8a1b73ff674ca04c559e941421"
+  },
+  "backend/internal/repository/postgres/tipo_punto_venta_repo.go": {
+    "mtime": 1785896396.2657433,
+    "seen": 1786736640.2847118,
+    "ast_hash": "1f72168ef52d0af5536498bb9469fe53",
+    "semantic_hash": "1f72168ef52d0af5536498bb9469fe53"
+  },
+  "backend/internal/siat/config.go": {
+    "mtime": 1786655967.4448988,
+    "seen": 1786736640.2847137,
+    "ast_hash": "1222715cca33777a03e491d86ed654f3",
+    "semantic_hash": "1222715cca33777a03e491d86ed654f3"
+  },
+  "backend/internal/siat/eventos.go": {
+    "mtime": 1786735888.2316248,
+    "seen": 1786736640.284716,
+    "ast_hash": "697e56fd8e00c8a71e31d3f85a480c5c",
+    "semantic_hash": "697e56fd8e00c8a71e31d3f85a480c5c"
+  },
+  "backend/internal/siat/eventos_test.go": {
+    "mtime": 1786735957.4976294,
+    "seen": 1786736640.2847178,
+    "ast_hash": "f40a1561a896dd8156b71d5d36880dd7",
+    "semantic_hash": "f40a1561a896dd8156b71d5d36880dd7"
+  },
+  "backend/internal/siat/facturacion.go": {
+    "mtime": 1786735888.2316248,
+    "seen": 1786736640.2847197,
+    "ast_hash": "5a36de3d3cfddd53f0ef2077693fd7f7",
+    "semantic_hash": "5a36de3d3cfddd53f0ef2077693fd7f7"
+  },
+  "backend/internal/siat/facturacion_test.go": {
+    "mtime": 1786735972.00925,
+    "seen": 1786736640.2847216,
+    "ast_hash": "0d3fe7a865297576c0a0200600415faa",
+    "semantic_hash": "0d3fe7a865297576c0a0200600415faa"
+  },
+  "backend/internal/siat/models.go": {
+    "mtime": 1786653575.017972,
+    "seen": 1786736640.2847235,
+    "ast_hash": "6e8ac29de519158d80ad379208a601af",
+    "semantic_hash": "6e8ac29de519158d80ad379208a601af"
+  },
+  "backend/internal/siat/service.go": {
+    "mtime": 1786655973.37294,
+    "seen": 1786736640.2847257,
+    "ast_hash": "aba0f110a5f25fd8b2cc186213501736",
+    "semantic_hash": "aba0f110a5f25fd8b2cc186213501736"
+  },
+  "backend/internal/siat/service_test.go": {
+    "mtime": 1786653843.6823099,
+    "seen": 1786736640.2847278,
+    "ast_hash": "2b957510fc3c5e4f62408e1deff202d1",
+    "semantic_hash": "2b957510fc3c5e4f62408e1deff202d1"
+  },
+  "backend/internal/siat/sincronizacion.go": {
+    "mtime": 1786655061.29332,
+    "seen": 1786736640.28473,
+    "ast_hash": "bf6f128a0bbd8888c109fac7f156ade6",
+    "semantic_hash": "bf6f128a0bbd8888c109fac7f156ade6"
+  },
+  "backend/internal/siat/sincronizacion_test.go": {
+    "mtime": 1786655212.1398547,
+    "seen": 1786736640.2847316,
+    "ast_hash": "390aa00964942bd014ef731b8ade27ff",
+    "semantic_hash": "390aa00964942bd014ef731b8ade27ff"
+  },
+  "backend/internal/usecase/branch_usecase.go": {
+    "mtime": 1785897204.0626345,
+    "seen": 1786736640.2847335,
+    "ast_hash": "348654eae7b0ba1c4a3abc615ec36730",
+    "semantic_hash": "348654eae7b0ba1c4a3abc615ec36730"
+  },
+  "backend/internal/usecase/company_usecase.go": {
+    "mtime": 1785886423.2324448,
+    "seen": 1786736640.2847352,
+    "ast_hash": "e93a583acf7767c8f942abca411e70fe",
+    "semantic_hash": "e93a583acf7767c8f942abca411e70fe"
+  },
+  "backend/internal/usecase/customer_usecase.go": {
+    "mtime": 1785967600.5964746,
+    "seen": 1786736640.2847373,
+    "ast_hash": "b594ce1f86028877056e9fc19dccb298",
+    "semantic_hash": "b594ce1f86028877056e9fc19dccb298"
+  },
+  "backend/internal/usecase/emission.go": {
+    "mtime": 1786670718.9285493,
+    "seen": 1786736640.284739,
+    "ast_hash": "f92dcb37d232df5cddb1a8ec1672903b",
+    "semantic_hash": "f92dcb37d232df5cddb1a8ec1672903b"
+  },
+  "backend/internal/usecase/emission_test.go": {
+    "mtime": 1786658799.187132,
+    "seen": 1786736640.2847412,
+    "ast_hash": "8f28ed6a34e583490e29e8be69e17831",
+    "semantic_hash": "8f28ed6a34e583490e29e8be69e17831"
+  },
+  "backend/internal/usecase/invoice_usecase.go": {
+    "mtime": 1786663498.21761,
+    "seen": 1786736640.284743,
+    "ast_hash": "e2fe8c2960c099b150a4c0255c671a3b",
+    "semantic_hash": "e2fe8c2960c099b150a4c0255c671a3b"
+  },
+  "backend/internal/usecase/point_of_sale_usecase.go": {
+    "mtime": 1785886526.3164732,
+    "seen": 1786736640.284745,
+    "ast_hash": "0d87fd07bb1aff481ba0c3ce90e9c94f",
+    "semantic_hash": "0d87fd07bb1aff481ba0c3ce90e9c94f"
+  },
+  "frontend/.oxlintrc.json": {
+    "mtime": 1785898848.540174,
+    "seen": 1786736640.2847493,
+    "ast_hash": "029f4905006c1fffd96bc863e2d98d3e",
+    "semantic_hash": "029f4905006c1fffd96bc863e2d98d3e"
+  },
+  "frontend/package.json": {
+    "mtime": 1785898848.544174,
+    "seen": 1786736640.2847514,
+    "ast_hash": "6d69a7e89272e3427377b7f68e74257d",
+    "semantic_hash": "6d69a7e89272e3427377b7f68e74257d"
+  },
+  "frontend/src/App.tsx": {
+    "mtime": 1785898848.540174,
+    "seen": 1786736640.284753,
+    "ast_hash": "c5e44a49ac2a44373fba5d1a7fe35be4",
+    "semantic_hash": "c5e44a49ac2a44373fba5d1a7fe35be4"
+  },
+  "frontend/src/main.tsx": {
+    "mtime": 1785898848.544174,
+    "seen": 1786736640.2847555,
+    "ast_hash": "787e5a07efeb2bf6209d5937195f2f68",
+    "semantic_hash": "787e5a07efeb2bf6209d5937195f2f68"
+  },
+  "frontend/tsconfig.app.json": {
+    "mtime": 1785898848.544174,
+    "seen": 1786736640.2847576,
+    "ast_hash": "5f2dafd737dea8a4ddcbb10f5113ac5a",
+    "semantic_hash": "5f2dafd737dea8a4ddcbb10f5113ac5a"
+  },
+  "frontend/tsconfig.json": {
+    "mtime": 1785898848.544174,
+    "seen": 1786736640.2847595,
+    "ast_hash": "a3d39fa780ebff65444de257f291ce6c",
+    "semantic_hash": "a3d39fa780ebff65444de257f291ce6c"
+  },
+  "frontend/tsconfig.node.json": {
+    "mtime": 1785898848.544174,
+    "seen": 1786736640.2847614,
+    "ast_hash": "f9cb81ddcea69ffdab672fc8c48dca66",
+    "semantic_hash": "f9cb81ddcea69ffdab672fc8c48dca66"
+  },
+  "frontend/vite.config.ts": {
+    "mtime": 1785898848.544174,
+    "seen": 1786736640.2847636,
+    "ast_hash": "88439104b3c207f17d33ef3160e3b080",
+    "semantic_hash": "88439104b3c207f17d33ef3160e3b080"
+  },
+  "package.json": {
+    "mtime": 1785898267.9103842,
+    "seen": 1786736640.2847657,
+    "ast_hash": "cd1aaec04d4c3ece6f1b0139beaee24c",
+    "semantic_hash": "cd1aaec04d4c3ece6f1b0139beaee24c"
+  },
+  "backend/migrations/schema.sql": {
+    "mtime": 1786655103.0249133,
+    "seen": 1786736640.2847471,
+    "ast_hash": "40c35c354aab28f0b32fc1dd1e77deb6",
+    "semantic_hash": "40c35c354aab28f0b32fc1dd1e77deb6"
+  }
+}

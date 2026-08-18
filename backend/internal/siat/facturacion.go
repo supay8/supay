@@ -171,9 +171,10 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		WithTipoFacturaDocumento(tipoFactura).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
-		// El SIAT exige fechaEnvio en UTC extendido sin zona horaria; el SDK
-		// formatea la hora tal cual la recibe (no convierte a UTC).
-		WithFechaEnvio(time.Now().UTC())
+		// El SIAT interpreta la hora de pared sin zona de fechaEnvio como hora
+		// local de Bolivia (UTC-4); el SDK formatea la hora tal cual la recibe
+		// (no convierte), por lo que se envía la hora de pared de La Paz.
+		WithFechaEnvio(time.Now().In(LaPaz))
 
 	// La modalidad debe configurarse ANTES de WithFactura: es la que decide si
 	// el XML se firma digitalmente.
@@ -412,7 +413,6 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 		WithMontoGiftCard(&zeroFloat).
 		WithDescuentoAdicional(&zeroFloat).
 		WithCodigoExcepcion(&zeroInt64).
-		WithCafc(&emptyStr).
 		WithCodigoMetodoPago(req.CodigoMetodoPago).
 		WithMontoTotal(req.MontoTotal).
 		WithMontoTotalSujetoIva(req.MontoTotal).
@@ -465,6 +465,7 @@ func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
 		WithCodigoModalidad(req.Modalidad).
+		WithNit(parseNit(req.Nit)).
 		Build()
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
@@ -507,6 +508,9 @@ func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, cod
 		WithCufd(req.Cufd).
 		WithCodigoMotivo(codigoMotivo).
 		WithCodigoModalidad(req.Modalidad).
+		WithCodigoAmbiente(req.CodigoAmbiente).
+		WithCodigoSistema(req.CodigoSistema).
+		WithNit(parseNit(req.Nit)).
 		Build()
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
@@ -548,6 +552,9 @@ func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento)
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
 		WithCodigoModalidad(req.Modalidad).
+		WithCodigoAmbiente(req.CodigoAmbiente).
+		WithCodigoSistema(req.CodigoSistema).
+		WithNit(parseNit(req.Nit)).
 		Build()
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
@@ -696,7 +703,7 @@ func empaquetaArchivo(data []byte) (archivo, hash string, err error) {
 // formatFechaSiat formatea una fecha/hora en el formato UTC extendido sin zona
 // horaria que exige el SIAT: YYYY-MM-DDTHH:mm:ss.SSS.
 func formatFechaSiat(t time.Time) string {
-	return t.UTC().Format("2006-01-02T15:04:05.000")
+	return t.In(LaPaz).Format("2006-01-02T15:04:05.000")
 }
 
 func (s SolicitudDocumento) sector() int {

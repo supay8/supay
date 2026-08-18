@@ -118,9 +118,10 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
 
-		// El SIAT exige fechaEnvio en UTC extendido sin zona horaria; el SDK
-		// formatea la hora tal cual la recibe (no convierte a UTC).
-		WithFechaEnvio(time.Now().UTC()).
+		// El SIAT interpreta la hora de pared sin zona de fechaEnvio como hora
+		// local de Bolivia (UTC-4); el SDK formatea la hora tal cual la recibe
+		// (no convierte), por lo que se envía la hora de pared de La Paz.
+		WithFechaEnvio(time.Now().In(LaPaz)).
 		WithCodigoEvento(req.CodigoEvento).
 
 		// Cafc es Nilable en el SDK y, si queda en nil, emite <cafc xsi:nil="true"/>

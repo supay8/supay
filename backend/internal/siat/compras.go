@@ -77,8 +77,9 @@ func (s *Service) EnviarCompras(ctx context.Context, req SolicitudCompras) (*Res
 		WithGestion(req.Gestion).
 		WithHashArchivo(req.HashArchivo).
 		WithPeriodo(req.Periodo).
-		// El SIAT exige fechaEnvio en UTC extendido sin zona horaria.
-		WithFechaEnvio(fechaEnvio.UTC()).
+		// El SIAT interpreta la hora de pared sin zona de fechaEnvio como hora
+		// local de Bolivia (UTC-4), por lo que se envía la hora de pared de La Paz.
+		WithFechaEnvio(fechaEnvio.In(LaPaz)).
 		Build()
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)

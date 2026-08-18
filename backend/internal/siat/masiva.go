@@ -89,9 +89,10 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 		WithTipoFacturaDocumento(tipoFactura).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
-		// El SIAT exige fechaEnvio en UTC extendido sin zona horaria; el SDK
-		// formatea la hora tal cual la recibe (no convierte a UTC).
-		WithFechaEnvio(time.Now().UTC())
+		// El SIAT interpreta la hora de pared sin zona de fechaEnvio como hora
+		// local de Bolivia (UTC-4); el SDK formatea la hora tal cual la recibe
+		// (no convierte), por lo que se envía la hora de pared de La Paz.
+		WithFechaEnvio(time.Now().In(LaPaz))
 
 	if err := lote.WithFacturas(facturas, s.sdk.Config()); err != nil {
 		return nil, fmt.Errorf("siat masiva: no se pudo empaquetar las facturas: %w", err)

@@ -11,7 +11,7 @@ import (
 var LaPaz = func() *time.Location {
 	loc, err := time.LoadLocation("America/La_Paz")
 	if err != nil {
-		loc = time.FixedZone("COT", -4*3600)
+		loc = time.FixedZone("BOT", -4*3600)
 	}
 	return loc
 }()
@@ -37,4 +37,14 @@ func SanitizeCufd(s string) string {
 // sin este ajuste el valid_to almacenado queda 4 horas antes del instante real.
 func SIATWallClockToInstant(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), LaPaz)
+}
+
+// FormatDisplayLaPaz convierte un timestamp a formato legible en zona horaria
+// de Bolivia (UTC-4) para logs y respuestas HTTP. Si el timestamp es cero,
+// retorna una cadena vacía.
+func FormatDisplayLaPaz(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(LaPaz).Format("2006-01-02 15:04:05")
 }

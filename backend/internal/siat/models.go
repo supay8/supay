@@ -38,7 +38,7 @@ func (d *XMLDateTime) UnmarshalJSON(data []byte) error {
 		"2006-01-02 15:04:05",
 		"2006-01-02",
 	} {
-		if parsed, err := time.Parse(layout, value); err == nil {
+		if parsed, err := time.ParseInLocation(layout, value, LaPaz); err == nil {
 			d.Time = parsed
 			return nil
 		}

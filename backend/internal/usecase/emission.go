@@ -179,25 +179,28 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 // CONFIRMADA) se persiste el estado, el motivo y la fecha de anulación.
 func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
-
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.New("factura no encontrada")
 		}
 		return nil, err
 	}
+
 	if inv.Status != domain.InvoiceAccepted {
 		return nil, errors.New("solo se pueden anular facturas en estado ACCEPTED")
 	}
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
 		return nil, errors.New("la factura no tiene CUF asignado")
 	}
+
 	if err := uc.validateMotivoAnulacion(inv.CompanyId, codigoMotivo); err != nil {
 		return nil, err
 	}
+
 	if uc.siatService == nil {
 		return nil, errors.New("el servicio SIAT no está disponible")
 	}
+
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
@@ -207,7 +210,6 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	if err != nil {
 		return nil, fmt.Errorf("error de anulación: %w", err)
 	}
-
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
 			CodigoEstado:    result.CodigoEstado,
@@ -294,17 +296,28 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		return nil, errors.New("el punto de venta no tiene CUIS activo")
 	}
 
-	cufd := ""
+	// Obtener CUFD vigente del punto de venta, o caer al registrado con la factura.
+	var cufd *domain.Cufd
 	if uc.cufdRepo != nil {
-		if vigente, err := uc.cufdRepo.GetActiveByPos(pos.ID); err == nil && vigente != nil && strings.TrimSpace(vigente.Cufd) != "" {
-			cufd = vigente.Cufd
+		if active, err := uc.cufdRepo.GetActiveByPos(inv.PointOfSaleId); err == nil && active != nil {
+			cufd = active
 		}
 	}
-	if strings.TrimSpace(cufd) == "" {
-		if inv.CufdRecord.ID == "" || strings.TrimSpace(inv.CufdRecord.Cufd) == "" {
-			return nil, errors.New("la factura no tiene CUFD asociado y el punto de venta no tiene CUFD vigente")
+	if cufd == nil {
+		if inv.CufdRecord.ID != "" && strings.TrimSpace(inv.CufdRecord.Cufd) != "" {
+			cufd = &inv.CufdRecord
 		}
-		cufd = inv.CufdRecord.Cufd
+	}
+	if cufd == nil || strings.TrimSpace(cufd.Cufd) == "" {
+		return nil, errors.New("la factura no tiene CUFD asociado y el punto de venta no tiene CUFD vigente; solicite uno nuevo (POST /siat/cufd/...)")
+	}
+
+	// Validar vigencia del CUFD: el SIAT rechaza operaciones con CUFD vencido.
+	now := time.Now().In(siat.LaPaz)
+	if now.Before(cufd.ValidFrom) || now.After(cufd.ValidTo) {
+		return nil, fmt.Errorf("el CUFD está vencido (válido desde %s hasta %s); solicite uno nuevo (POST /siat/cufd/...)",
+			cufd.ValidFrom.In(siat.LaPaz).Format("2006-01-02 15:04"),
+			cufd.ValidTo.In(siat.LaPaz).Format("2006-01-02 15:04"))
 	}
 
 	codigoPuntoVenta := pos.CodigoPuntoVenta
@@ -326,7 +339,7 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		CodigoSucursal:        pos.CodigoSucursal,
 		CodigoPuntoVenta:      codigoPuntoVenta,
 		Cuis:                  *pos.Cuis,
-		Cufd:                  cufd,
+		Cufd:                  cufd.Cufd,
 		CodigoDocumentoSector: inv.CodigoDocumentoSector,
 		CodigoTipoFactura:     inv.CodigoTipoFactura,
 	}, nil
@@ -379,11 +392,18 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		return nil, errors.New("el punto de venta no tiene CUIS activo; solicítelo primero (POST /siat/cuis/{companyId}/{pointOfSaleId})")
 	}
 
+	// Intentar usar el CUFD más reciente del punto de venta; si no hay,
+	// caer al CUFD registrado con la factura.
 	cufd := inv.CufdRecord
+	if uc.cufdRepo != nil {
+		if active, err := uc.cufdRepo.GetActiveByPos(inv.PointOfSaleId); err == nil && active != nil {
+			cufd = *active
+		}
+	}
 	if cufd.ID == "" || !cufd.Active {
 		return nil, errors.New("la factura no tiene un CUFD vigente asociado; solicítelo primero (POST /siat/cufd/{companyId}/{pointOfSaleId})")
 	}
-	now := time.Now()
+	now := time.Now().In(siat.LaPaz)
 	if now.Before(cufd.ValidFrom) || now.After(cufd.ValidTo) {
 		return nil, errors.New("el CUFD asociado a la factura está vencido; solicite uno nuevo")
 	}

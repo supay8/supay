@@ -90,7 +90,7 @@ func (s *Service) SolicitarCUIS(ctx context.Context, req SolicitudCuis) (*Respue
 	result := resp.Body.Content.RespuestaCuis
 	return &RespuestaCuis{
 		Codigo:        result.Codigo,
-		FechaVigencia: XMLDateTime{Time: result.FechaVigencia},
+		FechaVigencia: XMLDateTime{Time: SIATWallClockToInstant(result.FechaVigencia)},
 		Transaccion:   result.Transaccion,
 		Mensajes:      toMensajes(result.MensajesList),
 	}, nil
@@ -124,7 +124,7 @@ func (s *Service) SolicitarCUFD(ctx context.Context, req SolicitudCufd) (*Respue
 		Codigo:        result.Codigo,
 		CodigoControl: result.CodigoControl,
 		Direccion:     result.Direccion,
-		FechaVigencia: XMLDateTime{Time: result.FechaVigencia},
+		FechaVigencia: XMLDateTime{Time: SIATWallClockToInstant(result.FechaVigencia)},
 		Transaccion:   result.Transaccion,
 		Mensajes:      toMensajes(result.MensajesList),
 	}, nil

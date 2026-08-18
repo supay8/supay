@@ -1,10 +1,12 @@
 package postgres
 
 import (
+	"log"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/siat"
 	"gorm.io/gorm"
 )
 
@@ -30,6 +32,8 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 	if err := r.db.Create(&model).Error; err != nil {
 		return err
 	}
+	log.Println("cufd guardado en la base de datos")
+	log.Println(model)
 	c.ID = model.ID
 	c.CreatedAt = model.CreatedAt
 	return nil
@@ -37,7 +41,7 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 
 func (r *PostgresCufdRepository) GetActiveByPos(pointOfSaleID string) (*domain.Cufd, error) {
 	var m models.Cufd
-	now := time.Now()
+	now := time.Now().In(siat.LaPaz)
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ? AND active = true", pointOfSaleID, now, now).
 		Order("created_at DESC").First(&m).Error; err != nil {
 		return nil, err
@@ -58,5 +62,5 @@ func (r *PostgresCufdRepository) GetByPosAndWindow(pointOfSaleID string, from, t
 }
 
 func (r *PostgresCufdRepository) DeactivateExpired() error {
-	return r.db.Model(&models.Cufd{}).Where("valid_to < ? AND active = true", time.Now()).Update("active", false).Error
+	return r.db.Model(&models.Cufd{}).Where("valid_to < ? AND active = true", time.Now().In(siat.LaPaz)).Update("active", false).Error
 }

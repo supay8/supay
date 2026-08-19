@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"log"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -32,8 +31,6 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 	if err := r.db.Create(&model).Error; err != nil {
 		return err
 	}
-	log.Println("cufd guardado en la base de datos")
-	log.Println(model)
 	c.ID = model.ID
 	c.CreatedAt = model.CreatedAt
 	return nil

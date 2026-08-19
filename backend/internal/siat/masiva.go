@@ -140,7 +140,6 @@ func (s *Service) ValidarMasivaFacturas(ctx context.Context, req SolicitudMasiva
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
 	}
-
 	request := models.NewValidacionRecepcionMasivaFacturaBuilder().
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).

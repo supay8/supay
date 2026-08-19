@@ -17,7 +17,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -53,17 +52,6 @@ func TestEmpaquetaArchivo(t *testing.T) {
 	sum := sha256.Sum256(compressed)
 	if want := hex.EncodeToString(sum[:]); hash != want {
 		t.Fatalf("hash SHA256 no coincide: got %q want %q", hash, want)
-	}
-}
-
-func TestFormatFechaSiat(t *testing.T) {
-	in := time.Date(2026, 8, 14, 15, 4, 5, 123000000, time.FixedZone("", -4*3600))
-	got := formatFechaSiat(in)
-	if want := "2026-08-14T15:04:05.123"; got != want {
-		t.Fatalf("formatFechaSiat = %q, want %q (debe ser hora de pared La Paz sin zona horaria)", got, want)
-	}
-	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}$`).MatchString(got) {
-		t.Fatalf("formato no coincide con YYYY-MM-DDTHH:mm:ss.SSS: %q", got)
 	}
 }
 

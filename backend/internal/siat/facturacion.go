@@ -700,12 +700,6 @@ func empaquetaArchivo(data []byte) (archivo, hash string, err error) {
 	return base64.StdEncoding.EncodeToString(compressed), fmt.Sprintf("%x", sum), nil
 }
 
-// formatFechaSiat formatea una fecha/hora en el formato UTC extendido sin zona
-// horaria que exige el SIAT: YYYY-MM-DDTHH:mm:ss.SSS.
-func formatFechaSiat(t time.Time) string {
-	return t.In(LaPaz).Format("2006-01-02T15:04:05.000")
-}
-
 func (s SolicitudDocumento) sector() int {
 	if s.CodigoDocumentoSector <= 0 {
 		return 1

@@ -2,8 +2,8 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -187,8 +187,6 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		ValidTo:       resp.FechaVigencia.Time,
 		Active:        true,
 	}
-	log.Println("cufd armado por domain")
-	log.Println(cufd)
 	if err := h.cufdRepo.Create(cufd); err != nil {
 		http.Error(w, "No se pudo persistir el CUFD", http.StatusInternalServerError)
 		return
@@ -301,7 +299,7 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 			IsSynced:      true,
 		}
 		if err := h.contingencyRepo.Create(ev); err != nil {
-			log.Printf("siat evento significativo: no se pudo persistir el evento: %v", err)
+			_ = err
 		}
 	}
 
@@ -488,7 +486,6 @@ func (h *SiatHandler) EnviarPaquete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	log.Printf("Paquete enviado: codigoRecepcion=%s", result.CodigoRecepcion)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(siatPaqueteResponse{
@@ -587,6 +584,7 @@ func (h *SiatHandler) buildSolicitudMasiva(r *http.Request, body siatMasivaReque
 		CodigoEmision:         body.CodigoEmision,
 		Facturas:              body.Facturas,
 	}
+
 	return req, company, pointOfSale, nil
 }
 
@@ -613,7 +611,6 @@ func (h *SiatHandler) EnviarMasiva(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), errToStatus(err))
 		return
 	}
-
 	result, err := h.siatService.EnviarMasivaFacturas(r.Context(), *req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -1009,12 +1006,15 @@ type conflictError struct {
 func (e *conflictError) Error() string { return e.message }
 
 func errToStatus(err error) int {
-	switch err.(type) {
-	case *badRequestError:
+	var br *badRequestError
+	var nf *notFoundError
+	var cf *conflictError
+	switch {
+	case errors.As(err, &br):
 		return http.StatusBadRequest
-	case *notFoundError:
+	case errors.As(err, &nf):
 		return http.StatusNotFound
-	case *conflictError:
+	case errors.As(err, &cf):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

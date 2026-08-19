@@ -46,6 +46,13 @@ func Load() Config {
 	}
 
 	modalidad := parseInt(getEnv("SIAT_MODALIDAD", "1"), siat.ModalidadElectronica)
+	if modalidad != siat.ModalidadElectronica && modalidad != siat.ModalidadComputarizada {
+		modalidad = siat.ModalidadElectronica
+	}
+
+	if err := siatConfig.Validate(); err != nil {
+		panic("configuración SIAT inválida: " + err.Error())
+	}
 
 	return Config{
 		Port:          getEnv("PORT", "8081"),

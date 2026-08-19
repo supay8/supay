@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/datatypes" // Útil para el tipo Json de GORM
@@ -103,7 +104,7 @@ type PointOfSale struct {
 	TipoPuntoVenta   *int `gorm:"type:int"`
 	SiatTransaccion  bool `gorm:"default:false;not null"`
 	SiatRegisteredAt *time.Time
-	SiatResponse     *datatypes.JSON `gorm:"type:jsonb"`
+	SiatResponse     json.RawMessage `gorm:"type:jsonb"`
 	SiatError        *string         `gorm:"type:text"`
 
 	Company           Company            `gorm:"foreignKey:CompanyId"`

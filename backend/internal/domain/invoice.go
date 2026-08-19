@@ -35,6 +35,7 @@ type Invoice struct {
 	CustomerId         string         `json:"customer_id"`
 	PointOfSaleId      string         `json:"point_of_sale_id"`
 	CufdId             string         `json:"cufd_id"`
+	ContingencyEventId *string        `json:"contingency_event_id,omitempty"`
 	InvoiceNumber      int            `json:"invoice_number"`
 	Cuf                *string        `json:"cuf,omitempty"`
 	EmissionType       string         `json:"emission_type"`

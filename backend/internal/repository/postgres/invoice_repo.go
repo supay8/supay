@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"errors"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -97,33 +96,34 @@ func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID s
 
 func toModelInvoice(inv *domain.Invoice) models.Invoice {
 	m := models.Invoice{
-		ID:                inv.ID,
-		CompanyId:         inv.CompanyId,
-		CustomerId:        inv.CustomerId,
-		PointOfSaleId:     inv.PointOfSaleId,
-		CufdId:            inv.CufdId,
-		InvoiceNumber:     inv.InvoiceNumber,
-		Cuf:               inv.Cuf,
-		EmissionType:      models.EmissionType(inv.EmissionType),
-		CodigoMetodoPago:  inv.CodigoMetodoPago,
-		CodigoMoneda:      inv.CodigoMoneda,
-		TipoCambio:        inv.TipoCambio,
+		ID:                    inv.ID,
+		CompanyId:             inv.CompanyId,
+		CustomerId:            inv.CustomerId,
+		PointOfSaleId:         inv.PointOfSaleId,
+		CufdId:                inv.CufdId,
+		ContingencyEventId:    inv.ContingencyEventId,
+		InvoiceNumber:         inv.InvoiceNumber,
+		Cuf:                   inv.Cuf,
+		EmissionType:          models.EmissionType(inv.EmissionType),
+		CodigoMetodoPago:      inv.CodigoMetodoPago,
+		CodigoMoneda:          inv.CodigoMoneda,
+		TipoCambio:            inv.TipoCambio,
 		CodigoDocumentoSector: inv.CodigoDocumentoSector,
-		CodigoTipoFactura: inv.CodigoTipoFactura,
-		NombreEstudiante:  inv.NombreEstudiante,
-		PeriodoFacturado:  inv.PeriodoFacturado,
-		IssueDate:         inv.IssueDate,
-		Subtotal:          inv.Subtotal,
-		Discount:          inv.Discount,
-		Total:             inv.Total,
-		Xml:               inv.Xml,
-		XmlHash:           inv.XmlHash,
-		SiatReceptionCode: inv.SiatReceptionCode,
-		SiatMensajes:      inv.SiatMensajes,
-		MotivoAnulacion:   inv.MotivoAnulacion,
-		FechaAnulacion:    inv.FechaAnulacion,
-		Status:            models.InvoiceStatus(inv.Status),
-		CreatedAt:         inv.CreatedAt,
+		CodigoTipoFactura:     inv.CodigoTipoFactura,
+		NombreEstudiante:      inv.NombreEstudiante,
+		PeriodoFacturado:      inv.PeriodoFacturado,
+		IssueDate:             inv.IssueDate,
+		Subtotal:              inv.Subtotal,
+		Discount:              inv.Discount,
+		Total:                 inv.Total,
+		Xml:                   inv.Xml,
+		XmlHash:               inv.XmlHash,
+		SiatReceptionCode:     inv.SiatReceptionCode,
+		SiatMensajes:          inv.SiatMensajes,
+		MotivoAnulacion:       inv.MotivoAnulacion,
+		FechaAnulacion:        inv.FechaAnulacion,
+		Status:                models.InvoiceStatus(inv.Status),
+		CreatedAt:             inv.CreatedAt,
 	}
 	if m.ID == "" {
 		m.ID = uuid.NewString()
@@ -153,33 +153,34 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 
 func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 	inv := &domain.Invoice{
-		ID:                m.ID,
-		CompanyId:         m.CompanyId,
-		CustomerId:        m.CustomerId,
-		PointOfSaleId:     m.PointOfSaleId,
-		CufdId:            m.CufdId,
-		InvoiceNumber:     m.InvoiceNumber,
-		Cuf:               m.Cuf,
-		EmissionType:      string(m.EmissionType),
-		CodigoMetodoPago:  m.CodigoMetodoPago,
-		CodigoMoneda:      m.CodigoMoneda,
-		TipoCambio:        m.TipoCambio,
+		ID:                   m.ID,
+		CompanyId:            m.CompanyId,
+		CustomerId:           m.CustomerId,
+		PointOfSaleId:        m.PointOfSaleId,
+		CufdId:               m.CufdId,
+		ContingencyEventId:   m.ContingencyEventId,
+		InvoiceNumber:        m.InvoiceNumber,
+		Cuf:                  m.Cuf,
+		EmissionType:         string(m.EmissionType),
+		CodigoMetodoPago:     m.CodigoMetodoPago,
+		CodigoMoneda:         m.CodigoMoneda,
+		TipoCambio:           m.TipoCambio,
 		CodigoDocumentoSector: m.CodigoDocumentoSector,
-		CodigoTipoFactura: m.CodigoTipoFactura,
-		NombreEstudiante:  m.NombreEstudiante,
-		PeriodoFacturado:  m.PeriodoFacturado,
-		IssueDate:         m.IssueDate,
-		Subtotal:          m.Subtotal,
-		Discount:          m.Discount,
-		Total:             m.Total,
-		Xml:               m.Xml,
-		XmlHash:           m.XmlHash,
-		SiatReceptionCode: m.SiatReceptionCode,
-		SiatMensajes:      m.SiatMensajes,
-		MotivoAnulacion:   m.MotivoAnulacion,
-		FechaAnulacion:    m.FechaAnulacion,
-		Status:            domain.InvoiceStatus(m.Status),
-		CreatedAt:         m.CreatedAt,
+		CodigoTipoFactura:    m.CodigoTipoFactura,
+		NombreEstudiante:     m.NombreEstudiante,
+		PeriodoFacturado:     m.PeriodoFacturado,
+		IssueDate:            m.IssueDate,
+		Subtotal:             m.Subtotal,
+		Discount:             m.Discount,
+		Total:                m.Total,
+		Xml:                  m.Xml,
+		XmlHash:              m.XmlHash,
+		SiatReceptionCode:    m.SiatReceptionCode,
+		SiatMensajes:         m.SiatMensajes,
+		MotivoAnulacion:      m.MotivoAnulacion,
+		FechaAnulacion:       m.FechaAnulacion,
+		Status:               domain.InvoiceStatus(m.Status),
+		CreatedAt:            m.CreatedAt,
 	}
 	inv.Company = *toDomainCompany(&m.Company)
 	inv.Customer = *toDomainCustomer(&m.Customer)
@@ -220,6 +221,4 @@ func toDomainCufd(m *models.Cufd) *domain.Cufd {
 	}
 }
 
-func isNotFound(err error) bool {
-	return err != nil && errors.Is(err, gorm.ErrRecordNotFound)
-}
+

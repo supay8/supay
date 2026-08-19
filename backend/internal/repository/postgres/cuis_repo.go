@@ -5,6 +5,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/siat"
 	"gorm.io/gorm"
 )
 
@@ -34,7 +35,7 @@ func (r *PostgresCuisRepository) Create(c *domain.Cuis) error {
 
 func (r *PostgresCuisRepository) GetActiveByPos(pointOfSaleID string) (*domain.Cuis, error) {
 	var m models.Cuis
-	now := time.Now()
+	now := time.Now().In(siat.LaPaz)
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ? AND active = true", pointOfSaleID, now, now).
 		Order("created_at DESC").First(&m).Error; err != nil {
 		return nil, err
@@ -52,5 +53,5 @@ func (r *PostgresCuisRepository) GetActiveByPos(pointOfSaleID string) (*domain.C
 
 func (r *PostgresCuisRepository) DeactivateExpired() error {
 	// mark old cuis inactive
-	return r.db.Model(&models.Cuis{}).Where("valid_to < ? AND active = true", time.Now()).Update("active", false).Error
+	return r.db.Model(&models.Cuis{}).Where("valid_to < ? AND active = true", time.Now().In(siat.LaPaz)).Update("active", false).Error
 }

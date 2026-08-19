@@ -230,7 +230,10 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 
 	var body siatEventoSignificativoRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
 	}
 
 	codigoMotivo := body.CodigoMotivoEvento
@@ -453,7 +456,10 @@ func (h *SiatHandler) EnviarPaquete(w http.ResponseWriter, r *http.Request) {
 
 	var body siatPaqueteRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
 	}
 	if len(body.Facturas) == 0 {
 		http.Error(w, "El paquete debe contener al menos una factura en el campo facturas", http.StatusBadRequest)
@@ -506,7 +512,10 @@ func (h *SiatHandler) ValidarPaquete(w http.ResponseWriter, r *http.Request) {
 
 	var body siatPaqueteValidacionRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
 	}
 	if strings.TrimSpace(body.CodigoRecepcion) == "" {
 		http.Error(w, "codigoRecepcion es obligatorio (código devuelto por el envío del paquete)", http.StatusBadRequest)
@@ -599,7 +608,10 @@ func (h *SiatHandler) EnviarMasiva(w http.ResponseWriter, r *http.Request) {
 
 	var body siatMasivaRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
 	}
 	if len(body.Facturas) == 0 {
 		http.Error(w, "El lote debe contener al menos una factura en el campo facturas", http.StatusBadRequest)
@@ -637,7 +649,10 @@ func (h *SiatHandler) ValidarMasiva(w http.ResponseWriter, r *http.Request) {
 
 	var body siatPaqueteValidacionRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
 	}
 	if strings.TrimSpace(body.CodigoRecepcion) == "" {
 		http.Error(w, "codigoRecepcion es obligatorio (código devuelto por el envío del lote)", http.StatusBadRequest)
@@ -685,7 +700,10 @@ func (h *SiatHandler) EnviarCompras(w http.ResponseWriter, r *http.Request) {
 
 	var body siatComprasRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
 	}
 	if strings.TrimSpace(body.Archivo) == "" || strings.TrimSpace(body.HashArchivo) == "" {
 		http.Error(w, "archivo y hashArchivo son obligatorios (Base64 del TAR.GZ y su SHA-256)", http.StatusBadRequest)
@@ -753,7 +771,10 @@ func (h *SiatHandler) FirmarFactura(w http.ResponseWriter, r *http.Request) {
 
 	var body siatFirmaRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
 	}
 	if strings.TrimSpace(body.Xml) == "" {
 		http.Error(w, "xml es obligatorio (la cadena del XML de la factura a firmar)", http.StatusBadRequest)

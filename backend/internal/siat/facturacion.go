@@ -171,22 +171,28 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		WithTipoFacturaDocumento(tipoFactura).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
-		// El SIAT interpreta la hora de pared sin zona de fechaEnvio como hora
-		// local de Bolivia (UTC-4); el SDK formatea la hora tal cual la recibe
-		// (no convierte), por lo que se envía la hora de pared de La Paz.
 		WithFechaEnvio(time.Now().In(LaPaz))
 
-	// La modalidad debe configurarse ANTES de WithFactura: es la que decide si
-	// el XML se firma digitalmente.
-	if err := rcpBuilder.WithFactura(factura, s.sdk.Config()); err != nil {
-		return nil, fmt.Errorf("siat emision: no se pudo empaquetar la factura: %w", err)
+	// Firma única: serializamos, firmamos (si modalidad electrónica) y
+	// empaquetamos una sola vez. El mismo XML firmado se usa tanto para el
+	// envío al SIAT como para persistencia en base de datos (auditoría).
+	xmlData, err := xml.Marshal(factura)
+	if err != nil {
+		return nil, fmt.Errorf("siat emision: no se pudo serializar la factura: %w", err)
 	}
-
-	// XML firmado (o no) y hash tal como se envían, para persistencia/auditoría.
-	xmlToSend, hash, archivo, err := signedXMLAndHash(factura, s.sdk.Config(), req.Modalidad)
+	xmlToSend := xmlData
+	if req.Modalidad == ModalidadElectronica {
+		xmlToSend, err = s.sdk.Config().SignXML(xmlData)
+		if err != nil {
+			return nil, fmt.Errorf("siat emision: no se pudo firmar el XML: %w", err)
+		}
+	}
+	archivo, hash, err := empaquetaArchivo(xmlToSend)
 	if err != nil {
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
+
+	rcpBuilder.WithArchivo(archivo).WithHashArchivo(hash)
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
@@ -207,7 +213,7 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		CodigoEstado:    codigoEstado,
 		CodigoRecepcion: codigoRecepcion,
 		Mensajes:        mensajes,
-		Xml:             xmlToSend,
+		Xml:             string(xmlToSend),
 		XmlHash:         hash,
 		Archivo:         archivo,
 	}, nil
@@ -662,30 +668,6 @@ func extraerResultadoFacturacion(resp any) (transaccion bool, codigoEstado int, 
 		mensajes = toMensajes(f.Interface())
 	}
 	return transaccion, codigoEstado, codigoRecepcion, mensajes, nil
-}
-
-// signedXMLAndHash serializa la factura, la firma si la modalidad lo exige y
-// calcula el hash SHA-256 (hex) y el Base64 del XML gzipeado, replicando
-// exactamente lo que el SDK envía en Archivo/HashArchivo.
-func signedXMLAndHash(factura any, signer models.XMLSigner, modalidad int) (string, string, string, error) {
-	xmlData, err := xml.Marshal(factura)
-	if err != nil {
-		return "", "", "", fmt.Errorf("no se pudo serializar el XML: %w", err)
-	}
-
-	xmlToSend := xmlData
-	if modalidad == ModalidadElectronica && signer != nil {
-		xmlToSend, err = signer.SignXML(xmlData)
-		if err != nil {
-			return "", "", "", fmt.Errorf("no se pudo firmar el XML: %w", err)
-		}
-	}
-
-	archivo, hash, err := empaquetaArchivo(xmlToSend)
-	if err != nil {
-		return "", "", "", fmt.Errorf("no se pudo empaquetar el XML: %w", err)
-	}
-	return string(xmlToSend), hash, archivo, nil
 }
 
 // empaquetaArchivo comprime los datos en GZip, los codifica en Base64 y calcula

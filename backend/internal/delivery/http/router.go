@@ -55,10 +55,6 @@ func NewRouter(h Handlers) http.Handler {
 		r.Delete("/{id}", h.Branch.Delete)
 	})
 
-	r.Route("/points-of-sale", func(r chi.Router) {
-		r.Get("/{id}", h.Pos.GetByID)
-	})
-
 	r.Route("/siat", func(r chi.Router) {
 		r.Post("/cuis/{companyId}/{pointOfSaleId}", h.Siat.SolicitarCUIS)
 		r.Post("/cufd/{companyId}/{pointOfSaleId}", h.Siat.SolicitarCUFD)

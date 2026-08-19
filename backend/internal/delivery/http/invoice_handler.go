@@ -20,7 +20,7 @@ func NewInvoiceHandler(uc *usecase.InvoiceUsecase) *InvoiceHandler {
 func (h *InvoiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req usecase.CreateInvoiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
 		return
 	}
 	inv, err := h.uc.Create(req)
@@ -36,12 +36,12 @@ func (h *InvoiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *InvoiceHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	inv, err := h.uc.GetByID(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -51,12 +51,12 @@ func (h *InvoiceHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 func (h *InvoiceHandler) ListByPointOfSale(w http.ResponseWriter, r *http.Request) {
 	pointOfSaleID := r.URL.Query().Get("pointOfSaleId")
 	if pointOfSaleID == "" {
-		http.Error(w, "pointOfSaleId es obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "pointOfSaleId es obligatorio")
 		return
 	}
 	list, err := h.uc.ListByPointOfSale(pointOfSaleID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -66,7 +66,7 @@ func (h *InvoiceHandler) ListByPointOfSale(w http.ResponseWriter, r *http.Reques
 func (h *InvoiceHandler) Emit(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	inv, err := h.uc.Emit(r.Context(), id)
@@ -86,7 +86,7 @@ func (h *InvoiceHandler) Emit(w http.ResponseWriter, r *http.Request) {
 func (h *InvoiceHandler) SiatStatus(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	inv, err := h.uc.VerifyStatus(r.Context(), id)
@@ -101,14 +101,14 @@ func (h *InvoiceHandler) SiatStatus(w http.ResponseWriter, r *http.Request) {
 func (h *InvoiceHandler) Annul(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	var req struct {
 		CodigoMotivo int `json:"codigo_motivo"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
 		return
 	}
 	inv, err := h.uc.Annul(r.Context(), id, req.CodigoMotivo)
@@ -118,7 +118,6 @@ func (h *InvoiceHandler) Annul(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -129,7 +128,7 @@ func (h *InvoiceHandler) Annul(w http.ResponseWriter, r *http.Request) {
 func (h *InvoiceHandler) RevertAnnul(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	inv, err := h.uc.RevertAnnul(r.Context(), id)
@@ -139,21 +138,6 @@ func (h *InvoiceHandler) RevertAnnul(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		writeJSONError(w, http.StatusConflict, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(inv)
-}
-
-func (h *InvoiceHandler) verificationStatus(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
-		return
-	}
-	inv, err := h.uc.VerifyStatus(r.Context(), id)
-	if err != nil {
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
 	}

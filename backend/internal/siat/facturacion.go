@@ -2,8 +2,6 @@ package siat
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"reflect"
@@ -672,14 +670,13 @@ func extraerResultadoFacturacion(resp any) (transaccion bool, codigoEstado int, 
 
 // empaquetaArchivo comprime los datos en GZip, los codifica en Base64 y calcula
 // el hash SHA-256 (hex) del archivo comprimido: el par archivo/hashArchivo que
-// exige recepcionFactura del SIAT.
+// exige recepcionFactura del SIAT. Delega a utils.CompressAndHash del SDK.
 func empaquetaArchivo(data []byte) (archivo, hash string, err error) {
-	compressed, err := utils.Gzip(data)
+	hash, encoded, err := utils.CompressAndHash(data)
 	if err != nil {
 		return "", "", fmt.Errorf("no se pudo comprimir el XML: %w", err)
 	}
-	sum := sha256.Sum256(compressed)
-	return base64.StdEncoding.EncodeToString(compressed), fmt.Sprintf("%x", sum), nil
+	return encoded, hash, nil
 }
 
 func (s SolicitudDocumento) sector() int {

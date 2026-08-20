@@ -22,6 +22,7 @@ type SiatEmissionService interface {
 	VerificarEstado(ctx context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error)
 	AnularFactura(ctx context.Context, req siat.SolicitudDocumento, codigoMotivo int) (*siat.ResultadoDocumento, error)
 	RevertirAnulacion(ctx context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error)
+	VerificarNit(ctx context.Context, nit string, cuis string, codigoAmbiente, codigoSucursal, codigoModalidad int) (bool, error)
 }
 
 // EmissionRejectedError indica que el SIAT respondió y rechazó la factura

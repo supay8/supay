@@ -109,6 +109,10 @@ func (f *fakeEmissionService) RevertirAnulacion(_ context.Context, req siat.Soli
 	return f.docResult, f.err
 }
 
+func (f *fakeEmissionService) VerificarNit(_ context.Context, _ string, _ string, _, _, _ int) (bool, error) {
+	return true, f.err
+}
+
 type fakeCufdRepo struct {
 	vigente *domain.Cufd
 	err     error

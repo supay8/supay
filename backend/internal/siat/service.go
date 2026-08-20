@@ -52,6 +52,36 @@ func NewService(cfg Config) (*Service, error) {
 	return &Service{sdk: sdk}, nil
 }
 
+// VerificarNit verifica un NIT contra el SIAT antes de emitir facturas.
+// Devuelve true si el NIT es válido, false si no.
+func (s *Service) VerificarNit(ctx context.Context, nit string, cuis string, codigoAmbiente, codigoSucursal, codigoModalidad int) (bool, error) {
+	if s.sdk == nil {
+		return false, fmt.Errorf("siat verificar nit: servicio SIAT no inicializado")
+	}
+	nitInt := parseNit(nit)
+	if nitInt <= 0 {
+		return false, fmt.Errorf("siat verificar nit: NIT inválido %q", nit)
+	}
+
+	request := models.NewVerificarNitBuilder().
+		WithCodigoSucursal(codigoSucursal).
+		WithCuis(cuis).
+		WithNitParaVerificacion(nitInt).
+		WithCodigoModalidad(codigoModalidad).
+		Build()
+
+	resp, err := s.sdk.Codigos().VerificarNit(ctx, request)
+	if err != nil {
+		return false, fmt.Errorf("siat verificar nit: %w", err)
+	}
+
+	// Verificar la respuesta
+	if resp == nil || resp.Body.Content.RespuestaVerificarNit.Transaccion {
+		return true, nil
+	}
+	return false, nil
+}
+
 // buildCredentialSign construye la credencial de firma digital a partir de la
 // configuración. Prioriza P12 si se provee; en caso contrario usa el par
 // PEM cert/key. Devuelve una credencial vacía si no hay datos.

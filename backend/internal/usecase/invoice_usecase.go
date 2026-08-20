@@ -240,3 +240,33 @@ func (uc *InvoiceUsecase) GetByID(id string) (*domain.Invoice, error) {
 func (uc *InvoiceUsecase) ListByPointOfSale(pointOfSaleID string) ([]*domain.Invoice, error) {
 	return uc.invoiceRepo.ListByPointOfSale(pointOfSaleID)
 }
+
+// resolveDocumentoSector determina el documento-sector del SIAT para la
+// actividad económica de la empresa consultando el catálogo sincronizado
+// actividadesDocumentoSector (descripción "actividad|FCV|FSEDU|NCD|NCDDE").
+// Prefiere la factura de compraventa (FCV); si la actividad solo está asociada
+// a sectores educativos (p.ej. 8549100 -> FSEDU), usa ese sector.
+func (uc *InvoiceUsecase) resolveDocumentoSector(companyID, actividad string) int {
+	if uc.catalogRepo != nil {
+		if items, err := uc.catalogRepo.List(companyID, "actividadesDocumentoSector"); err == nil {
+			found := 0
+			for _, item := range items {
+				fields := strings.Split(item.Descripcion, "|")
+				if len(fields) < 2 || strings.TrimSpace(fields[0]) != actividad {
+					continue
+				}
+				tipo := strings.TrimSpace(fields[1])
+				if tipo == "FCV" {
+					return item.Codigo
+				}
+				if tipo == "FSEDU" {
+					found = item.Codigo
+				}
+			}
+			if found > 0 {
+				return found
+			}
+		}
+	}
+	return 1
+}

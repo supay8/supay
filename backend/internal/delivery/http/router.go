@@ -66,6 +66,7 @@ func NewRouter(h Handlers) http.Handler {
 		r.Post("/masiva/{companyId}/{pointOfSaleId}", h.Siat.EnviarMasiva)
 		r.Post("/masiva/{companyId}/{pointOfSaleId}/validar", h.Siat.ValidarMasiva)
 		r.Post("/compras/{companyId}/{pointOfSaleId}", h.Siat.EnviarCompras)
+		r.Post("/documento-ajuste/{companyId}/{pointOfSaleId}", h.Siat.EmitirDocumentoAjuste)
 		r.Get("/invoice/{invoiceId}/pdf", h.Siat.DownloadPDF)
 	})
 

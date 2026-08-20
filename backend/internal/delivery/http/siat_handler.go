@@ -13,6 +13,7 @@ import (
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/siat"
+	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -23,6 +24,7 @@ type SiatHandler struct {
 	tipoPVRepo      domain.TipoPuntoVentaRepository
 	catalogRepo     domain.CatalogRepository
 	contingencyRepo domain.ContingencyEventRepository
+	sentPackageRepo domain.SentPackageRepository
 	siatService     *siat.Service
 	pdfService      *pdf.Service
 	modalidad       int
@@ -35,6 +37,7 @@ func NewSiatHandler(
 	tipoPVRepo domain.TipoPuntoVentaRepository,
 	catalogRepo domain.CatalogRepository,
 	contingencyRepo domain.ContingencyEventRepository,
+	sentPackageRepo domain.SentPackageRepository,
 	siatService *siat.Service,
 	pdfService *pdf.Service,
 	modalidad int,
@@ -46,6 +49,7 @@ func NewSiatHandler(
 		tipoPVRepo:      tipoPVRepo,
 		catalogRepo:     catalogRepo,
 		contingencyRepo: contingencyRepo,
+		sentPackageRepo: sentPackageRepo,
 		siatService:     siatService,
 		pdfService:      pdfService,
 		modalidad:       modalidad,
@@ -302,7 +306,11 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 			IsSynced:      true,
 		}
 		if err := h.contingencyRepo.Create(ev); err != nil {
-			_ = err
+			// Log el error pero no falla la respuesta: el evento SIAT ya se registró
+			// exitosamente; la persistencia local es complementaria. Un error aquí
+			// implica que la resolución automática de codigoEvento no funcionará
+			// para envíos posteriores de paquetes.
+			fmt.Printf("WARNING: no se pudo persistir evento de contingencia (SIAT code=%s): %v\n", result.CodigoRecepcion, err)
 		}
 	}
 
@@ -424,6 +432,23 @@ func (h *SiatHandler) buildSolicitudPaquete(r *http.Request, body siatPaqueteReq
 		}
 		facturasProcesadas = append(facturasProcesadas, f)
 	}
+
+	// Resolver documento-sector desde la primera factura del paquete o desde la
+	// empresa (catálogo actividadesDocumentoSector).  El hardcode "1" provocaba
+	// que facturas del sector educativo (11) se enviaran con sector incorrecto.
+	codigoDocSector := 0
+	codigoTipoFact := 0
+	if len(facturasProcesadas) > 0 {
+		codigoDocSector = facturasProcesadas[0].CodigoDocumentoSector
+		codigoTipoFact = facturasProcesadas[0].CodigoTipoFactura
+	}
+	if codigoDocSector <= 0 {
+		codigoDocSector = h.resolveDocumentoSector(company)
+	}
+	if codigoTipoFact <= 0 {
+		codigoTipoFact = 1
+	}
+
 	req := &siat.SolicitudPaqueteFactura{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
@@ -434,8 +459,8 @@ func (h *SiatHandler) buildSolicitudPaquete(r *http.Request, body siatPaqueteReq
 		Cuis:                  *pointOfSale.Cuis,
 		Cufd:                  cufd.Cufd,
 		CodigoControl:         cufd.ControlCode,
-		CodigoDocumentoSector: 1,
-		CodigoTipoFactura:     1,
+		CodigoDocumentoSector: codigoDocSector,
+		CodigoTipoFactura:     codigoTipoFact,
 		CodigoEmision:         body.CodigoEmision,
 		CodigoEvento:          int64(body.CodigoEvento),
 		Descripcion:           body.Descripcion,
@@ -491,6 +516,19 @@ func (h *SiatHandler) EnviarPaquete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
+	}
+	if h.sentPackageRepo != nil && result != nil && result.CodigoRecepcion != "" {
+		pkg := &domain.SentPackage{
+			CompanyId:           company.ID,
+			PointOfSaleId:       pointOfSale.ID,
+			CodigoRecepcion:    result.CodigoRecepcion,
+			Type:               domain.PackageTypePaquete,
+			CodigoDocumentoSector: req.CodigoDocumentoSector,
+			CodigoEmision:      int(req.CodigoEmision),
+			CantidadFacturas:   len(req.Facturas),
+			Status:             domain.PackageStatusPending,
+		}
+		_ = h.sentPackageRepo.Create(pkg)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -578,6 +616,21 @@ func (h *SiatHandler) buildSolicitudMasiva(r *http.Request, body siatMasivaReque
 		modalidad = siat.ModalidadElectronica
 	}
 
+	// Resolver documento-sector desde la primera factura del lote o desde la
+	// empresa (catálogo actividadesDocumentoSector).
+	codigoDocSector := 0
+	codigoTipoFact := 0
+	if len(body.Facturas) > 0 {
+		codigoDocSector = body.Facturas[0].CodigoDocumentoSector
+		codigoTipoFact = body.Facturas[0].CodigoTipoFactura
+	}
+	if codigoDocSector <= 0 {
+		codigoDocSector = h.resolveDocumentoSector(company)
+	}
+	if codigoTipoFact <= 0 {
+		codigoTipoFact = 1
+	}
+
 	req := &siat.SolicitudMasivaFactura{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
@@ -588,8 +641,8 @@ func (h *SiatHandler) buildSolicitudMasiva(r *http.Request, body siatMasivaReque
 		Cuis:                  *pointOfSale.Cuis,
 		Cufd:                  cufd.Cufd,
 		CodigoControl:         cufd.ControlCode,
-		CodigoDocumentoSector: 1,
-		CodigoTipoFactura:     1,
+		CodigoDocumentoSector: codigoDocSector,
+		CodigoTipoFactura:     codigoTipoFact,
 		CodigoEmision:         body.CodigoEmision,
 		Facturas:              body.Facturas,
 	}
@@ -627,6 +680,19 @@ func (h *SiatHandler) EnviarMasiva(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
+	}
+	if h.sentPackageRepo != nil && result != nil && result.CodigoRecepcion != "" {
+		pkg := &domain.SentPackage{
+			CompanyId:           company.ID,
+			PointOfSaleId:       pointOfSale.ID,
+			CodigoRecepcion:    result.CodigoRecepcion,
+			Type:               domain.PackageTypeMasiva,
+			CodigoDocumentoSector: req.CodigoDocumentoSector,
+			CodigoEmision:      req.CodigoEmision,
+			CantidadFacturas:   len(req.Facturas),
+			Status:             domain.PackageStatusPending,
+		}
+		_ = h.sentPackageRepo.Create(pkg)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -749,6 +815,18 @@ func (h *SiatHandler) EnviarCompras(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if h.sentPackageRepo != nil && result != nil && result.CodigoRecepcion != "" {
+		pkg := &domain.SentPackage{
+			CompanyId:           company.ID,
+			PointOfSaleId:       pointOfSale.ID,
+			CodigoRecepcion:    result.CodigoRecepcion,
+			Type:               domain.PackageTypeCompras,
+			CodigoDocumentoSector: 19,
+			CantidadFacturas:   body.CantidadFacturas,
+			Status:             domain.PackageStatusPending,
+		}
+		_ = h.sentPackageRepo.Create(pkg)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1026,10 +1104,47 @@ type conflictError struct {
 
 func (e *conflictError) Error() string { return e.message }
 
+// resolveDocumentoSector determina el documento-sector del SIAT para la
+// actividad económica de la empresa consultando el catálogo sincronizado
+// actividadesDocumentoSector.  Prefiere la factura de compraventa (FCV); si la
+// actividad solo está asociada a sectores educativos (FSEDU), usa ese sector.
+func (h *SiatHandler) resolveDocumentoSector(company *domain.Company) int {
+	if h.catalogRepo == nil || company.CodigoActividad == nil {
+		return siat.SectorCompraVenta
+	}
+	actividad := strings.TrimSpace(*company.CodigoActividad)
+	if actividad == "" {
+		return siat.SectorCompraVenta
+	}
+	items, err := h.catalogRepo.List(company.ID, "actividadesDocumentoSector")
+	if err != nil || len(items) == 0 {
+		return siat.SectorCompraVenta
+	}
+	found := 0
+	for _, item := range items {
+		fields := strings.Split(item.Descripcion, "|")
+		if len(fields) < 2 || strings.TrimSpace(fields[0]) != actividad {
+			continue
+		}
+		tipo := strings.TrimSpace(fields[1])
+		if tipo == "FCV" {
+			return item.Codigo
+		}
+		if tipo == "FSEDU" {
+			found = item.Codigo
+		}
+	}
+	if found > 0 {
+		return found
+	}
+	return siat.SectorCompraVenta
+}
+
 func errToStatus(err error) int {
 	var br *badRequestError
 	var nf *notFoundError
 	var cf *conflictError
+	var siatErr *goSiat.SiatError
 	switch {
 	case errors.As(err, &br):
 		return http.StatusBadRequest
@@ -1037,7 +1152,127 @@ func errToStatus(err error) int {
 		return http.StatusNotFound
 	case errors.As(err, &cf):
 		return http.StatusConflict
+	case errors.As(err, &siatErr):
+		if goSiat.IsNetworkError(err) || goSiat.IsRetryable(err) {
+			return http.StatusServiceUnavailable
+		}
+		return http.StatusBadGateway
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// --- Documentos de Ajuste (Notas de Crédito/Débito) ---
+
+type siatDocumentoAjusteRequest struct {
+	CodigoAmbiente        int                    `json:"codigoAmbiente"`
+	CodigoSistema         string                 `json:"codigoSistema"`
+	Nit                   string                 `json:"nit"`
+	Modalidad             int                    `json:"modalidad"`
+	NumeroFactura         int64                  `json:"numeroFactura"`
+	CodigoSucursal        int                    `json:"codigoSucursal"`
+	CodigoPuntoVenta      int                    `json:"codigoPuntoVenta"`
+	Cuis                  string                 `json:"cuis"`
+	Cufd                  string                 `json:"cufd"`
+	CodigoControl         string                 `json:"codigoControl"`
+	CufFacturaOriginal    string                 `json:"cufFacturaOriginal"`
+	CodigoDocumentoSector int                    `json:"codigoDocumentoSector"`
+	CodigoTipoFactura     int                    `json:"codigoTipoFactura"`
+	TipoNota              int                    `json:"tipoNota"`
+	Motivo                string                 `json:"motivo"`
+	CodigoMetodoPago      int                    `json:"codigoMetodoPago"`
+	CodigoMoneda          int                    `json:"codigoMoneda"`
+	TipoCambio            float64                `json:"tipoCambio"`
+	MontoTotal            float64                `json:"montoTotal"`
+	Leyenda               string                 `json:"leyenda"`
+	Cliente               siat.ClienteFactura    `json:"cliente"`
+	Items                 []siat.ItemFactura     `json:"items"`
+}
+
+type siatDocumentoAjusteResponse struct {
+	Company     *domain.Company                   `json:"company"`
+	PointOfSale *domain.PointOfSale               `json:"point_of_sale"`
+	Response    *siat.ResultadoDocumentoAjuste    `json:"response"`
+}
+
+// EmitirDocumentoAjuste emite un documento de ajuste (nota de crédito o débito)
+// ante el SIAT.
+func (h *SiatHandler) EmitirDocumentoAjuste(w http.ResponseWriter, r *http.Request) {
+	if h.siatService == nil {
+		http.Error(w, "Servicio SIAT no inicializado", http.StatusServiceUnavailable)
+		return
+	}
+
+	company, pointOfSale, err := h.loadCompanyAndPointOfSale(r)
+	if err != nil {
+		http.Error(w, err.Error(), errToStatus(err))
+		return
+	}
+
+	var body siatDocumentoAjusteRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			return
+		}
+	}
+
+	if strings.TrimSpace(body.CufFacturaOriginal) == "" {
+		http.Error(w, "cufFacturaOriginal es obligatorio para documentos de ajuste", http.StatusBadRequest)
+		return
+	}
+	if body.TipoNota != 1 && body.TipoNota != 2 {
+		http.Error(w, "tipoNota debe ser 1 (nota de crédito) o 2 (nota de débito)", http.StatusBadRequest)
+		return
+	}
+
+	usuario := "SUPAY"
+	if company.UsuarioSiat != "" {
+		usuario = company.UsuarioSiat
+	}
+
+	req := siat.SolicitudDocumentoAjuste{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             h.modalidad,
+		NumeroFactura:         body.NumeroFactura,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      pointOfSale.CodigoPuntoVenta,
+		Cuis:                  body.Cuis,
+		Cufd:                  body.Cufd,
+		CodigoControl:         body.CodigoControl,
+		FechaEmision:          time.Now().In(siat.LaPaz),
+		Usuario:               usuario,
+		TipoNota:              siat.TipoNota(body.TipoNota),
+		CufFacturaOriginal:    body.CufFacturaOriginal,
+		CodigoDocumentoSector: body.CodigoDocumentoSector,
+		CodigoTipoFactura:     body.CodigoTipoFactura,
+		RazonSocialEmisor:     company.BusinessName,
+		Municipio:             company.Municipio,
+		Direccion:             company.Direccion,
+		Telefono:              &company.Telefono,
+		Cliente:               body.Cliente,
+		CodigoMetodoPago:      body.CodigoMetodoPago,
+		CodigoMoneda:          body.CodigoMoneda,
+		TipoCambio:            body.TipoCambio,
+		MontoTotal:            body.MontoTotal,
+		Leyenda:               body.Leyenda,
+		Motivo:                body.Motivo,
+		Items:                 body.Items,
+	}
+
+	result, err := h.siatService.EmitirDocumentoAjuste(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(siatDocumentoAjusteResponse{
+		Company:     company,
+		PointOfSale: pointOfSale,
+		Response:    result,
+	})
 }

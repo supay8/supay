@@ -506,6 +506,11 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		periodoFacturado = strings.TrimSpace(*inv.PeriodoFacturado)
 	}
 
+	usuario := "SUPAY"
+	if company.UsuarioSiat != "" {
+		usuario = company.UsuarioSiat
+	}
+
 	return &siat.SolicitudFactura{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
@@ -518,7 +523,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		Cufd:                  cufd.Cufd,
 		CodigoControl:         cufd.ControlCode,
 		FechaEmision:          inv.IssueDate,
-		Usuario:               "SUPAY",
+		Usuario:               usuario,
 		Leyenda:               leyenda,
 		RazonSocialEmisor:     company.BusinessName,
 		Municipio:             company.Municipio,

@@ -20,6 +20,7 @@ type RegisterCompanyRequest struct {
 	BusinessName  string                 `json:"business_name"`
 	CodigoSistema string                 `json:"codigo_sistema"`
 	Ambiente      domain.SiatEnvironment `json:"ambiente"`
+	UsuarioSiat   string                 `json:"usuario_siat,omitempty"`
 }
 
 type UpdateCompanyRequest struct {
@@ -27,6 +28,7 @@ type UpdateCompanyRequest struct {
 	BusinessName  *string                 `json:"business_name,omitempty"`
 	CodigoSistema *string                 `json:"codigo_sistema,omitempty"`
 	Ambiente      *domain.SiatEnvironment `json:"ambiente,omitempty"`
+	UsuarioSiat   *string                 `json:"usuario_siat,omitempty"`
 }
 
 func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company, error) {
@@ -52,10 +54,14 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 		BusinessName:  req.BusinessName,
 		CodigoSistema: req.CodigoSistema,
 		Ambiente:      req.Ambiente,
+		UsuarioSiat:   req.UsuarioSiat,
 	}
 
 	if company.Ambiente == "" {
 		company.Ambiente = domain.EnvironmentPiloto
+	}
+	if company.UsuarioSiat == "" {
+		company.UsuarioSiat = "SUPAY"
 	}
 
 	if !validEnvironment(company.Ambiente) {
@@ -112,6 +118,9 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 			}
 			existing.Ambiente = *req.Ambiente
 		}
+	}
+	if req.UsuarioSiat != nil {
+		existing.UsuarioSiat = *req.UsuarioSiat
 	}
 
 	if err := uc.repo.Update(existing); err != nil {

@@ -39,6 +39,7 @@ type Company struct {
 	Telefono        string          `json:"telefono,omitempty"`
 	CodigoActividad *string         `json:"codigo_actividad,omitempty"`
 	PiePagina       string          `json:"pie_pagina,omitempty"`
+	UsuarioSiat     string          `json:"usuario_siat,omitempty"`
 	CreatedAt       time.Time       `json:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`
 }

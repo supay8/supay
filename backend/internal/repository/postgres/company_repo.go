@@ -27,6 +27,7 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 		Telefono:       c.Telefono,
 		CodigoActividad: c.CodigoActividad,
 		PiePagina:      c.PiePagina,
+		UsuarioSiat:    c.UsuarioSiat,
 	}
 
 	if err := r.db.Create(&dbModel).Error; err != nil {
@@ -70,6 +71,7 @@ func toDomainCompany(dbModel *models.Company) *domain.Company {
 		Telefono:        dbModel.Telefono,
 		CodigoActividad: dbModel.CodigoActividad,
 		PiePagina:       dbModel.PiePagina,
+		UsuarioSiat:     dbModel.UsuarioSiat,
 		CreatedAt:       dbModel.CreatedAt,
 		UpdatedAt:       dbModel.UpdatedAt,
 	}
@@ -90,6 +92,7 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	dbModel.Telefono = c.Telefono
 	dbModel.CodigoActividad = c.CodigoActividad
 	dbModel.PiePagina = c.PiePagina
+	dbModel.UsuarioSiat = c.UsuarioSiat
 
 	if err := r.db.Save(&dbModel).Error; err != nil {
 		if isUniqueViolation(err) {

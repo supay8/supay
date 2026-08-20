@@ -78,6 +78,7 @@ type Company struct {
 	Telefono       string          `gorm:"type:varchar(50);not null;default:''"`
 	CodigoActividad *string        `gorm:"type:varchar(20)"`
 	PiePagina      string          `gorm:"type:text;not null;default:''"`
+	UsuarioSiat    string          `gorm:"type:varchar(50);not null;default:'SUPAY'"`
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 

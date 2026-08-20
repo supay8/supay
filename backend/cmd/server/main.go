@@ -38,6 +38,7 @@ func main() {
 	tipoPVRepo := postgres.NewPostgresTipoPuntoVentaRepository(database.DB)
 	catalogRepo := postgres.NewPostgresCatalogRepository(database.DB)
 	branchRepo := postgres.NewPostgresBranchRepository(database.DB)
+	sentPackageRepo := postgres.NewPostgresSentPackageRepository(database.DB)
 	branchUsecase := usecase.NewBranchUsecase(branchRepo, companyRepo)
 	branchHandler := deliveryHttp.NewBranchHandler(branchUsecase)
 
@@ -68,7 +69,7 @@ func main() {
 	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
-	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, siatService, pdf.NewService(database.DB), appCfg.SiatModalidad)
+	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, pdf.NewService(database.DB), appCfg.SiatModalidad)
 
 	// 4. Router
 	router := deliveryHttp.NewRouter(deliveryHttp.Handlers{

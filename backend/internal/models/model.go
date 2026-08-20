@@ -275,3 +275,46 @@ type InvoiceEvent struct {
 
 	Invoice Invoice `gorm:"foreignKey:InvoiceId"`
 }
+
+type SentPackage struct {
+	ID                string               `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CompanyId         string               `gorm:"type:uuid;index:idx_sent_pkg_company;not null"`
+	PointOfSaleId     string               `gorm:"type:uuid;index:idx_sent_pkg_pos;not null"`
+	Type              string               `gorm:"type:varchar(20);not null"`
+	CodigoRecepcion   string               `gorm:"type:varchar(100);uniqueIndex;not null"`
+	HashArchivo       string               `gorm:"type:varchar(100);not null"`
+	CantidadFacturas  int                  `gorm:"not null"`
+	CodigoDocumentoSector int              `gorm:"not null"`
+	CodigoTipoFactura int                  `gorm:"not null"`
+	CodigoEmision     int                  `gorm:"not null"`
+	CodigoEvento      *int64               `gorm:"type:bigint"`
+	Status            string               `gorm:"type:varchar(30);default:'SENT';index;not null"`
+	Mensajes          *string              `gorm:"type:text"`
+	XmlHash           string               `gorm:"type:varchar(100);not null"`
+	SentAt            time.Time            `gorm:"not null"`
+	ValidatedAt       *time.Time
+	CreatedAt         time.Time
+
+	Company     Company     `gorm:"foreignKey:CompanyId"`
+	PointOfSale PointOfSale `gorm:"foreignKey:PointOfSaleId"`
+}
+
+type Certificate struct {
+	ID            string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CompanyId     string    `gorm:"type:uuid;index:idx_cert_company;not null"`
+	Name          string    `gorm:"type:varchar(150);not null"`
+	Type          string    `gorm:"type:varchar(10);not null"`
+	Status        string    `gorm:"type:varchar(20);default:'ACTIVE';index;not null"`
+	NotBefore     time.Time `gorm:"not null"`
+	NotAfter      time.Time `gorm:"not null"`
+	Issuer        string    `gorm:"type:text"`
+	Subject       string    `gorm:"type:text"`
+	Thumbprint    string    `gorm:"type:varchar(100)"`
+	SiatUserCode  string    `gorm:"type:varchar(50)"`
+	ConfigPath    string    `gorm:"type:text"`
+	RenewedFrom   *string   `gorm:"type:uuid"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+
+	Company Company `gorm:"foreignKey:CompanyId"`
+}

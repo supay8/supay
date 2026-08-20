@@ -72,6 +72,8 @@ func ConnectDB() {
 		&models.Invoice{},
 		&models.InvoiceItem{},
 		&models.InvoiceEvent{},
+		&models.SentPackage{},
+		&models.Certificate{},
 		&dataMigration{},
 	)
 	if err != nil {

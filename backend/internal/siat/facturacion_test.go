@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
+	"encoding/xml"
 	"io"
 	"math/big"
 	"net/http"
@@ -20,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	goSiat "github.com/ron86i/go-siat/v2"
 )
 
 func TestEmpaquetaArchivo(t *testing.T) {
@@ -252,6 +255,112 @@ func TestEmitirFacturaSectorEducativoPayload(t *testing.T) {
 	}
 
 	assertFacturaXMLSinXsiNil(t, result.Archivo)
+}
+
+func TestEmitirFacturaTasaCeroPayload(t *testing.T) {
+	var gotBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <recepcionFacturaResponse>
+      <RespuestaServicioFacturacion>
+        <transaccion>true</transaccion>
+        <codigoEstado>908</codigoEstado>
+        <codigoRecepcion>RCV-TASA0</codigoRecepcion>
+      </RespuestaServicioFacturacion>
+    </recepcionFacturaResponse>
+  </soapenv:Body>
+</soapenv:Envelope>`))
+	}))
+	defer server.Close()
+
+	svc := newTestService(t, server.URL)
+
+	req := SolicitudFactura{
+		CodigoAmbiente:        AmbientePruebas,
+		CodigoSistema:         "SYS-123",
+		Nit:                   "1020304050",
+		Modalidad:             ModalidadComputarizada,
+		NumeroFactura:         300,
+		CodigoSucursal:        0,
+		CodigoPuntoVenta:      0,
+		Cuis:                  "CUIS-TEST-001",
+		Cufd:                  "CUFD-TEST-001",
+		CodigoControl:         "CONTROL-CODE-29-CHARACTERS-03",
+		FechaEmision:          time.Now(),
+		Usuario:               "SUPAY",
+		Leyenda:               "Ley N° 453",
+		RazonSocialEmisor:     "EMPRESA TEST SRL",
+		Municipio:             "LA PAZ",
+		Direccion:             "AV. MOCK 123",
+		CodigoMetodoPago:      1,
+		CodigoMoneda:          1,
+		TipoCambio:            1,
+		MontoTotal:            200,
+		CodigoDocumentoSector: SectorTasaCero,
+		CodigoTipoFactura:     1,
+		Cliente: ClienteFactura{
+			NombreRazonSocial:            "CLIENTE TEST",
+			CodigoTipoDocumentoIdentidad: 1,
+			NumeroDocumento:              "1234567",
+			CodigoCliente:                "C-001",
+		},
+		Items: []ItemFactura{
+			{
+				ActividadEconomica: "473000",
+				CodigoProductoSin:  12345,
+				CodigoProducto:     "P-001",
+				Descripcion:        "Producto tasa cero",
+				Cantidad:           2,
+				UnidadMedida:       1,
+				PrecioUnitario:     100,
+				SubTotal:           200,
+			},
+		},
+	}
+
+	result, err := svc.EmitirFactura(t.Context(), req)
+	if err != nil {
+		t.Fatalf("EmitirFactura (tasa cero): %v", err)
+	}
+
+	if !strings.Contains(gotBody, "<codigoDocumentoSector>8</codigoDocumentoSector>") {
+		t.Error("el payload SOAP no declara codigoDocumentoSector=8")
+	}
+	if result.CodigoRecepcion != "RCV-TASA0" {
+		t.Fatalf("unexpected codigoRecepcion: %q", result.CodigoRecepcion)
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(result.Archivo)
+	if err != nil {
+		t.Fatalf("decodificando base64: %v", err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("abriendo gzip: %v", err)
+	}
+	defer zr.Close()
+	xmlData, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("descomprimiendo: %v", err)
+	}
+	xmlStr := string(xmlData)
+
+	if !strings.Contains(xmlStr, "facturaComputarizadaTasaCero") {
+		t.Errorf("el XML debe usar la raíz facturaComputarizadaTasaCero, got:\n%s", xmlStr[:min(len(xmlStr), 200)])
+	}
+	if !strings.Contains(xmlStr, "<montoTotalSujetoIva>0</montoTotalSujetoIva>") {
+		t.Error("montoTotalSujetoIva debe ser 0 para Tasa Cero")
+	}
+	if !strings.Contains(xmlStr, "<codigoDocumentoSector>8</codigoDocumentoSector>") {
+		t.Error("el XML debe contener codigoDocumentoSector=8")
+	}
 }
 
 // assertFacturaXMLSinXsiNil descomprime el archivo gzip+Base64 del SIAT y
@@ -498,6 +607,164 @@ func TestFirmarFacturaXMLSinCredencial(t *testing.T) {
 		t.Fatal("se esperaba error al firmar sin credenciales configuradas")
 	}
 }
+
+func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
+	fecha := time.Date(2025, 8, 15, 10, 30, 0, 0, LaPaz)
+	fechaFacturaOriginal := fecha.Add(-24 * time.Hour)
+
+	req := SolicitudNotaCreditoDebito{
+		CodigoAmbiente:        AmbientePruebas,
+		CodigoSistema:         "SYS-123",
+		Nit:                   "1020304050",
+		Modalidad:             ModalidadComputarizada,
+		NumeroFactura:         501,
+		CodigoSucursal:        0,
+		CodigoPuntoVenta:      0,
+		Cuis:                  "CUIS-TEST-001",
+		Cufd:                  "CUFD-TEST-001",
+		CodigoControl:         "CONTROL-CODE-29-CHARACTERS-03",
+		FechaEmision:          fecha,
+		Usuario:               "SUPAY",
+		RazonSocialEmisor:     "EMPRESA TEST SRL",
+		Municipio:             "LA PAZ",
+		Direccion:             "AV. MOCK 123",
+		Telefono:              ptrStr("2123456"),
+		CodigoMetodoPago:      1,
+		CodigoMoneda:          1,
+		TipoCambio:            1,
+		Leyenda:               "Ley N° 453",
+		CufFacturaOriginal:    "CUF-FACTURA-ORIGINAL-ABC123",
+		FechaEmisionFactura:   fechaFacturaOriginal,
+		MontoTotalOriginal:    1000,
+		MontoTotalDevuelto:    500,
+		MontoEfectivoNota:     500,
+		TipoNota:              TipoNotaCredito,
+		CodigoDocumentoSector: SectorNotaCreditoDebito,
+		CodigoTipoFactura:     1,
+		Cliente: ClienteFactura{
+			NombreRazonSocial:            "CLIENTE TEST",
+			CodigoTipoDocumentoIdentidad: 1,
+			NumeroDocumento:              "1234567",
+			CodigoCliente:                "C-001",
+		},
+		Items: []ItemFactura{
+			{
+				ActividadEconomica: "473000",
+				CodigoProductoSin:  12345,
+				CodigoProducto:     "P-001",
+				Descripcion:        "Producto devuelto",
+				Cantidad:           1,
+				UnidadMedida:       1,
+				PrecioUnitario:     500,
+				SubTotal:           500,
+			},
+		},
+	}
+
+	factura, cuf, err := buildNotaCreditoDebito(req, goSiat.EmisionOnline)
+	if err != nil {
+		t.Fatalf("buildNotaCreditoDebito: %v", err)
+	}
+	if cuf == "" {
+		t.Fatal("CUF no debe ser vacío")
+	}
+
+	xmlData, err := xml.Marshal(factura)
+	if err != nil {
+		t.Fatalf("xml.Marshal: %v", err)
+	}
+	xmlStr := string(xmlData)
+
+	if !strings.Contains(xmlStr, "notaFiscalComputarizadaCreditoDebito") {
+		t.Errorf("el XML debe usar la raíz notaFiscalComputarizadaCreditoDebito, got:\n%s", xmlStr[:min(len(xmlStr), 300)])
+	}
+	if !strings.Contains(xmlStr, "<codigoDocumentoSector>24</codigoDocumentoSector>") {
+		t.Error("codigoDocumentoSector debe ser 24")
+	}
+	if !strings.Contains(xmlStr, "<numeroNotaCreditoDebito>501</numeroNotaCreditoDebito>") {
+		t.Error("numeroNotaCreditoDebito debe ser 501")
+	}
+	if !strings.Contains(xmlStr, "<numeroAutorizacionCuf>CUF-FACTURA-ORIGINAL-ABC123</numeroAutorizacionCuf>") {
+		t.Error("numeroAutorizacionCuf debe contener el CUF de la factura original")
+	}
+	if !strings.Contains(xmlStr, "<montoTotalOriginal>") {
+		t.Error("montoTotalOriginal debe estar presente")
+	}
+	if !strings.Contains(xmlStr, "<montoTotalDevuelto>") {
+		t.Error("montoTotalDevuelto debe estar presente")
+	}
+	if !strings.Contains(xmlStr, "<montoEfectivoCreditoDebito>") {
+		t.Error("montoEfectivoCreditoDebito debe estar presente")
+	}
+	if !strings.Contains(xmlStr, "<codigoDetalleTransaccion>1</codigoDetalleTransaccion>") {
+		t.Error("codigoDetalleTransaccion del primer ítem debe ser 1")
+	}
+	t.Logf("NotaCreditoDebito XML:\n%s", xmlStr)
+}
+
+func TestBuildNotaCreditoDebitoDebitoPayload(t *testing.T) {
+	fecha := time.Date(2025, 8, 15, 10, 30, 0, 0, LaPaz)
+
+	req := SolicitudNotaCreditoDebito{
+		CodigoAmbiente:        AmbientePruebas,
+		CodigoSistema:         "SYS-123",
+		Nit:                   "1020304050",
+		Modalidad:             ModalidadComputarizada,
+		NumeroFactura:         601,
+		CodigoSucursal:        0,
+		CodigoPuntoVenta:      0,
+		Cuis:                  "CUIS-TEST-001",
+		Cufd:                  "CUFD-TEST-001",
+		CodigoControl:         "CONTROL-CODE-29-CHARACTERS-03",
+		FechaEmision:          fecha,
+		Usuario:               "SUPAY",
+		RazonSocialEmisor:     "EMPRESA TEST SRL",
+		Municipio:             "LA PAZ",
+		Direccion:             "AV. MOCK 123",
+		CodigoMetodoPago:      1,
+		CodigoMoneda:          1,
+		TipoCambio:            1,
+		Leyenda:               "Ley N° 453",
+		CufFacturaOriginal:    "CUF-FACTURA-ORIGINAL-ND456",
+		FechaEmisionFactura:   fecha.Add(-48 * time.Hour),
+		MontoTotalOriginal:    800,
+		MontoTotalDevuelto:    200,
+		MontoEfectivoNota:     200,
+		TipoNota:              TipoNotaDebito,
+		CodigoDocumentoSector: SectorNotaCreditoDebito,
+		CodigoTipoFactura:     1,
+		Cliente: ClienteFactura{
+			NombreRazonSocial:            "CLIENTE ND",
+			CodigoTipoDocumentoIdentidad: 4,
+			NumeroDocumento:              "9876543210",
+			Complemento:                  ptrStr("LP"),
+			CodigoCliente:                "C-002",
+		},
+		Items: []ItemFactura{
+			{
+				ActividadEconomica: "473000",
+				CodigoProductoSin:  12345,
+				CodigoProducto:     "P-002",
+				Descripcion:        "Cargo adicional",
+				Cantidad:           1,
+				UnidadMedida:       1,
+				PrecioUnitario:     200,
+				SubTotal:           200,
+			},
+		},
+	}
+
+	_, cuf, err := buildNotaCreditoDebito(req, goSiat.EmisionOnline)
+	if err != nil {
+		t.Fatalf("buildNotaCreditoDebito (debito): %v", err)
+	}
+	if cuf == "" {
+		t.Fatal("CUF no debe ser vacío para nota de débito")
+	}
+	t.Logf("ND CUF: %s", cuf)
+}
+
+func ptrStr(s string) *string { return &s }
 
 // newSignedTestService construye un servicio con un certificado digital
 // autofirmado (PEM) válido para poder ejercitar la firma XML (XAdES).

@@ -2,6 +2,7 @@ package siat
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"strings"
 	"time"
@@ -111,21 +112,51 @@ func (s *Service) EmitirDocumentoAjuste(ctx context.Context, req SolicitudDocume
 		tipoFactura = 1
 	}
 
-	// Determinar tipo de documento (NC=3, ND=4)
-	tipoDoc := 3 // Nota de Crédito
-	if req.TipoNota == TipoNotaDebito {
-		tipoDoc = 4 // Nota de Débito
-	}
-
-	// Serializar y firmar el documento
-	xmlData, err := buildDocumentoAjusteXML(req, sector, tipoFactura, tipoDoc)
+	// Construir el XML usando los builders del SDK
+	xmlData, _, err := buildNotaCreditoDebito(SolicitudNotaCreditoDebito{
+		CodigoAmbiente:        req.CodigoAmbiente,
+		CodigoSistema:         req.CodigoSistema,
+		Nit:                   req.Nit,
+		Modalidad:             req.Modalidad,
+		NumeroFactura:         req.NumeroFactura,
+		CodigoSucursal:        req.CodigoSucursal,
+		CodigoPuntoVenta:      req.CodigoPuntoVenta,
+		Cuis:                  req.Cuis,
+		Cufd:                  req.Cufd,
+		CodigoControl:         req.CodigoControl,
+		FechaEmision:          req.FechaEmision,
+		Usuario:               req.Usuario,
+		RazonSocialEmisor:     req.RazonSocialEmisor,
+		Municipio:             req.Municipio,
+		Direccion:             req.Direccion,
+		Telefono:              req.Telefono,
+		Cliente:               req.Cliente,
+		CodigoMetodoPago:      req.CodigoMetodoPago,
+		CodigoMoneda:          req.CodigoMoneda,
+		TipoCambio:            req.TipoCambio,
+		Leyenda:               req.Leyenda,
+		CufFacturaOriginal:    req.CufFacturaOriginal,
+		FechaEmisionFactura:   req.FechaEmision,
+		MontoTotalOriginal:    req.MontoTotal,
+		MontoTotalDevuelto:    req.MontoTotal,
+		MontoEfectivoNota:     req.MontoTotal,
+		TipoNota:              req.TipoNota,
+		CodigoDocumentoSector: sector,
+		CodigoTipoFactura:     tipoFactura,
+		Items:                 req.Items,
+	}, goSiat.EmisionOnline)
 	if err != nil {
 		return nil, fmt.Errorf("siat documento ajuste: %w", err)
 	}
 
-	xmlToSend := xmlData
+	// Serializar y firmar
+	xmlBytes, err := xml.Marshal(xmlData)
+	if err != nil {
+		return nil, fmt.Errorf("siat documento ajuste: no se pudo serializar el documento: %w", err)
+	}
+	xmlToSend := xmlBytes
 	if req.Modalidad == ModalidadElectronica {
-		xmlToSend, err = s.sdk.Config().SignXML(xmlData)
+		xmlToSend, err = s.sdk.Config().SignXML(xmlBytes)
 		if err != nil {
 			return nil, fmt.Errorf("siat documento ajuste: no se pudo firmar el XML: %w", err)
 		}
@@ -142,7 +173,7 @@ func (s *Service) EmitirDocumentoAjuste(ctx context.Context, req SolicitudDocume
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
 		WithCodigoDocumentoSector(sector).
 		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(tipoDoc).
+		WithTipoFacturaDocumento(tipoFactura).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
 		WithFechaEnvio(time.Now().In(LaPaz)).

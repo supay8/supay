@@ -2,6 +2,7 @@ package siat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -76,10 +77,10 @@ func (s *Service) VerificarNit(ctx context.Context, nit string, cuis string, cod
 	}
 
 	// Verificar la respuesta
-	if resp == nil || resp.Body.Content.RespuestaVerificarNit.Transaccion {
-		return true, nil
+	if resp == nil {
+		return false, fmt.Errorf("siat verificar nit: respuesta vacía del servicio")
 	}
-	return false, nil
+	return resp.Body.Content.RespuestaVerificarNit.Transaccion, nil
 }
 
 // buildCredentialSign construye la credencial de firma digital a partir de la
@@ -93,6 +94,15 @@ func buildCredentialSign(cfg Config) goSiat.CredentialSign {
 		return goSiat.NewPEMCredential(strings.TrimSpace(cfg.CertPemCert), strings.TrimSpace(cfg.CertPemKey))
 	}
 	return goSiat.CredentialSign{}
+}
+
+// cuisYaVigente detecta el mensaje 980 del SIAT ("EXISTE UN CUIS VIGENTE PARA
+// LA SUCURSAL O PUNTO DE VENTA"). En ese caso el SIAT responde
+// transaccion=false pero incluye el CUIS vigente en <codigo>: no es un fallo,
+// es la reemisión del código existente.
+func cuisYaVigente(err error) bool {
+	var siatErr *goSiat.SiatError
+	return errors.As(err, &siatErr) && siatErr.SiatCode == goSiat.CodeExisteCuisVigente
 }
 
 // SolicitarCUIS solicita un CUIS al SIAT usando el SDK go-siat.
@@ -113,11 +123,19 @@ func (s *Service) SolicitarCUIS(ctx context.Context, req SolicitudCuis) (*Respue
 	if err != nil {
 		return nil, fmt.Errorf("siat cuis: %w", err)
 	}
-	if err := goSiat.Verify(resp.Body.Content.RespuestaCuis); err != nil {
-		return nil, fmt.Errorf("siat cuis: %w", err)
-	}
 
 	result := resp.Body.Content.RespuestaCuis
+
+	if err := goSiat.Verify(result); err != nil {
+		// 980 con código presente: éxito — el propio SIAT devuelve el CUIS
+		// vigente en la misma respuesta; se normaliza como transacción OK y
+		// se conservan los mensajes para trazabilidad.
+		if !cuisYaVigente(err) || result.Codigo == "" {
+			return nil, fmt.Errorf("siat cuis: %w", err)
+		}
+		result.Transaccion = true
+	}
+
 	return &RespuestaCuis{
 		Codigo:        result.Codigo,
 		FechaVigencia: XMLDateTime{Time: SIATWallClockToInstant(result.FechaVigencia)},

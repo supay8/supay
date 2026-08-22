@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +121,15 @@ const SectorEducativo = 11
 // SectorCompraVenta es el documento-sector de la factura de compra y venta.
 const SectorCompraVenta = 1
 
+// SectorTasaCero es el código de documento-sector del SIAT para facturas con
+// tasa cero (productos exentos de IVA). La cabecera es idéntica a CompraVenta
+// pero el XML usa la raíz facturaElectronicaTasaCero y MontoTotalSujetoIva=0.
+const SectorTasaCero = 8
+
+// SectorNotaCreditoDebito es el código de documento-sector del SIAT para notas
+// de crédito y débito (documento de ajuste, sector 24).
+const SectorNotaCreditoDebito = 24
+
 // ResultadoDocumento es la respuesta procesada del SIAT para una operación
 // sobre un documento ya emitido (verificar estado, anular o revertir).
 type ResultadoDocumento struct {
@@ -127,6 +137,56 @@ type ResultadoDocumento struct {
 	CodigoEstado    int       `json:"codigoEstado"`
 	CodigoRecepcion string    `json:"codigoRecepcion,omitempty"`
 	Mensajes        []Mensaje `json:"mensajes,omitempty"`
+}
+
+// SolicitudNotaCreditoDebito contiene los datos para emitir una nota de crédito
+// o débito (documento de ajuste, sector 24) ante el SIAT. Extiende los datos
+// base de facturación con los campos específicos del XSD de notas.
+type SolicitudNotaCreditoDebito struct {
+	CodigoAmbiente   int       `json:"codigoAmbiente"`
+	CodigoSistema    string    `json:"codigoSistema"`
+	Nit              string    `json:"nit"`
+	Modalidad        int       `json:"modalidad"`
+	NumeroFactura    int64     `json:"numeroFactura"`
+	CodigoSucursal   int       `json:"codigoSucursal"`
+	CodigoPuntoVenta int       `json:"codigoPuntoVenta"`
+	Cuis             string    `json:"cuis"`
+	Cufd             string    `json:"cufd"`
+	CodigoControl    string    `json:"codigoControl"`
+	FechaEmision     time.Time `json:"fechaEmision"`
+	Usuario          string    `json:"usuario"`
+
+	// Datos del emisor
+	RazonSocialEmisor string  `json:"razonSocialEmisor"`
+	Municipio         string  `json:"municipio"`
+	Direccion         string  `json:"direccion"`
+	Telefono          *string `json:"telefono,omitempty"`
+
+	// Datos del receptor
+	Cliente ClienteFactura `json:"cliente"`
+
+	// Datos de pago
+	CodigoMetodoPago int     `json:"codigoMetodoPago"`
+	CodigoMoneda     int     `json:"codigoMoneda"`
+	TipoCambio       float64 `json:"tipoCambio"`
+	Leyenda          string  `json:"leyenda"`
+
+	// Referencia a la factura original que se está ajustando
+	CufFacturaOriginal  string    `json:"cufFacturaOriginal"`
+	FechaEmisionFactura time.Time `json:"fechaEmisionFactura"`
+	MontoTotalOriginal  float64   `json:"montoTotalOriginal"`
+	MontoTotalDevuelto  float64   `json:"montoTotalDevuelto"`
+	MontoDescuento      *float64  `json:"montoDescuento,omitempty"`
+	MontoEfectivoNota   float64   `json:"montoEfectivoNota"`
+
+	// Tipo de nota: 1 = crédito, 2 = débito
+	TipoNota TipoNota `json:"tipoNota"`
+
+	// CodigoDocumentoSector y CodigoTipoFactura del documento original
+	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
+	CodigoTipoFactura     int `json:"codigoTipoFactura"`
+
+	Items []ItemFactura `json:"items"`
 }
 
 // EmitirFactura construye, firma (si corresponde) y envía una factura al SIAT
@@ -178,6 +238,10 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	if err != nil {
 		return nil, fmt.Errorf("siat emision: no se pudo serializar la factura: %w", err)
 	}
+	// go-siat representa campos opcionales sin valor con xsi:nil. El XSD de
+	// facturas del SIAT no acepta esos nodos para complemento/cafc, por lo que
+	// se eliminan antes de firmar y empaquetar el XML.
+	xmlData = removeEmptyOptionalFacturaFields(xmlData)
 	xmlToSend := xmlData
 	if req.Modalidad == ModalidadElectronica {
 		xmlToSend, err = s.sdk.Config().SignXML(xmlData)
@@ -270,6 +334,25 @@ var (
 	zeroInt64 = int64(0)
 )
 
+func optionalStringPtr(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	clean := strings.TrimSpace(*value)
+	if clean == "" {
+		return nil
+	}
+	return &clean
+}
+
+func removeEmptyOptionalFacturaFields(data []byte) []byte {
+	for _, field := range []string{"complemento", "cafc"} {
+		data = regexp.MustCompile(`<`+field+`(?:\\s+[^>]*)?>\\s*</`+field+`>`).ReplaceAll(data, nil)
+		data = regexp.MustCompile(`<`+field+`(?:\\s+[^>]*)?\\s*/>`).ReplaceAll(data, nil)
+	}
+	return data
+}
+
 // descuentoPtr devuelve un puntero seguro para el MontoDescuento de un ítem.
 func descuentoPtr(v *float64) *float64 {
 	if v == nil {
@@ -311,30 +394,8 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 	}
 	puntoVenta := req.CodigoPuntoVenta
 	nombreCliente := req.Cliente.NombreRazonSocial
-	getComplementoStr := func(comp *string) string {
-		if comp != nil {
-			return *comp
-		}
-		return ""
-	}
-
-	// Asegurar puntero seguro para el complemento
-	var complementoPtr *string
-	if getComplementoStr(req.Cliente.Complemento) != "" {
-		complementoPtr = req.Cliente.Complemento
-	} else {
-		empty := ""
-		complementoPtr = &empty
-	}
-
-	// Asegurar puntero seguro para el teléfono del emisor (si viene nil)
-	var telefonoPtr *string
-	if req.Telefono != nil && *req.Telefono != "" {
-		telefonoPtr = req.Telefono
-	} else {
-		emptyTel := ""
-		telefonoPtr = &emptyTel
-	}
+	complementoPtr := optionalStringPtr(req.Cliente.Complemento)
+	telefonoPtr := optionalStringPtr(req.Telefono)
 
 	if sector == SectorEducativo {
 		// FACTURA SECTORES EDUCATIVOS (documento-sector 11): estructura XSD
@@ -360,7 +421,7 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 			WithMontoGiftCard(&zeroFloat).
 			WithDescuentoAdicional(&zeroFloat).
 			WithCodigoExcepcion(&zeroInt).
-			WithCafc(&emptyStr).
+			WithCafc(nil).
 			WithNombreEstudiante(req.NombreEstudiante).
 			WithPeriodoFacturado(req.PeriodoFacturado).
 			WithCodigoMetodoPago(req.CodigoMetodoPago).
@@ -380,6 +441,63 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 		for i := range req.Items {
 			item := req.Items[i]
 			detalle := invoices.NewSectorEducativoDetalleBuilder().
+				WithActividadEconomica(item.ActividadEconomica).
+				WithCodigoProductoSin(item.CodigoProductoSin).
+				WithCodigoProducto(item.CodigoProducto).
+				WithDescripcion(item.Descripcion).
+				WithCantidad(item.Cantidad).
+				WithUnidadMedida(item.UnidadMedida).
+				WithPrecioUnitario(item.PrecioUnitario).
+				WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
+				WithSubTotal(item.SubTotal).
+				Build()
+			facturaBuilder.AddDetalle(detalle)
+		}
+		return facturaBuilder.Build(), cuf, nil
+	}
+
+	if sector == SectorTasaCero {
+		// FACTURA TASA CERO (documento-sector 8): misma estructura que CompraVenta
+		// pero con raíz XML facturaElectronicaTasaCero y MontoTotalSujetoIva=0.
+		cabecera := invoices.NewTasaCeroCabeceraBuilder().
+			WithNitEmisor(nit).
+			WithRazonSocialEmisor(req.RazonSocialEmisor).
+			WithMunicipio(req.Municipio).
+			WithTelefono(telefonoPtr).
+			WithNumeroFactura(req.NumeroFactura).
+			WithCuf(cuf).
+			WithCufd(req.Cufd).
+			WithCodigoSucursal(req.CodigoSucursal).
+			WithDireccion(req.Direccion).
+			WithCodigoPuntoVenta(&puntoVenta).
+			WithFechaEmision(req.FechaEmision).
+			WithNombreRazonSocial(&nombreCliente).
+			WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
+			WithNumeroDocumento(req.Cliente.NumeroDocumento).
+			WithComplemento(complementoPtr).
+			WithCodigoCliente(req.Cliente.CodigoCliente).
+			WithNumeroTarjeta(&zeroInt64).
+			WithMontoGiftCard(&zeroFloat).
+			WithDescuentoAdicional(&zeroFloat).
+			WithCodigoExcepcion(&zeroInt).
+			WithCafc(nil).
+			WithCodigoMetodoPago(req.CodigoMetodoPago).
+			WithMontoTotal(req.MontoTotal).
+			WithMontoTotalSujetoIva(0).
+			WithCodigoMoneda(req.CodigoMoneda).
+			WithTipoCambio(req.TipoCambio).
+			WithMontoTotalMoneda(req.MontoTotal).
+			WithLeyenda(req.Leyenda).
+			WithUsuario(req.Usuario).
+			WithCodigoDocumentoSector(sector).
+			Build()
+
+		facturaBuilder := invoices.NewTasaCeroBuilder().
+			WithModalidad(req.Modalidad).
+			WithCabecera(cabecera)
+		for i := range req.Items {
+			item := req.Items[i]
+			detalle := invoices.NewTasaCeroDetalleBuilder().
 				WithActividadEconomica(item.ActividadEconomica).
 				WithCodigoProductoSin(item.CodigoProductoSin).
 				WithCodigoProducto(item.CodigoProducto).
@@ -417,6 +535,7 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 		WithMontoGiftCard(&zeroFloat).
 		WithDescuentoAdicional(&zeroFloat).
 		WithCodigoExcepcion(&zeroInt64).
+		WithCafc(nil).
 		WithCodigoMetodoPago(req.CodigoMetodoPago).
 		WithMontoTotal(req.MontoTotal).
 		WithMontoTotalSujetoIva(req.MontoTotal).
@@ -447,6 +566,98 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 		facturaBuilder.AddDetalle(detalle)
 	}
 	return facturaBuilder.Build(), cuf, nil
+}
+
+// buildNotaCreditoDebito construye el struct de nota de crédito/débito del SDK
+// (sector 24) para una SolicitudNotaCreditoDebito, junto con el CUF generado.
+// El CUF usa TipoFactura=3 para NC y TipoFactura=4 para ND.
+func buildNotaCreditoDebito(req SolicitudNotaCreditoDebito, codigoEmision int) (factura any, cuf string, err error) {
+	nit := parseNit(req.Nit)
+	sector := SectorNotaCreditoDebito
+	if req.CodigoDocumentoSector > 0 {
+		sector = req.CodigoDocumentoSector
+	}
+	tipoFactura := req.CodigoTipoFactura
+	if tipoFactura <= 0 {
+		tipoFactura = 1
+	}
+
+	// Tipo de documento para el CUF: 3 = Nota de Crédito, 4 = Nota de Débito
+	tipoDoc := 3
+	if req.TipoNota == TipoNotaDebito {
+		tipoDoc = 4
+	}
+
+	cuf, err = utils.NewCUF().
+		WithNit(nit).
+		WithFechaHora(req.FechaEmision).
+		WithSucursal(req.CodigoSucursal).
+		WithModalidad(req.Modalidad).
+		WithTipoEmision(codigoEmision).
+		WithTipoFactura(tipoDoc).
+		WithTipoDocumentoSector(sector).
+		WithNumeroFactura(req.NumeroFactura).
+		WithPuntoVenta(req.CodigoPuntoVenta).
+		WithCodigoControl(req.CodigoControl).
+		Generate()
+	if err != nil {
+		return nil, "", fmt.Errorf("siat nota credito/debito cuf: %w", err)
+	}
+
+	puntoVenta := req.CodigoPuntoVenta
+	nombreCliente := req.Cliente.NombreRazonSocial
+	complementoPtr := optionalStringPtr(req.Cliente.Complemento)
+	telefonoPtr := optionalStringPtr(req.Telefono)
+
+	cabecera := invoices.NewNotaCreditoDebitoCabeceraBuilder().
+		WithNitEmisor(nit).
+		WithRazonSocialEmisor(req.RazonSocialEmisor).
+		WithMunicipio(req.Municipio).
+		WithTelefono(telefonoPtr).
+		WithNumeroNotaCreditoDebito(req.NumeroFactura).
+		WithCuf(cuf).
+		WithCufd(req.Cufd).
+		WithCodigoSucursal(req.CodigoSucursal).
+		WithDireccion(req.Direccion).
+		WithCodigoPuntoVenta(&puntoVenta).
+		WithFechaEmision(req.FechaEmision).
+		WithNombreRazonSocial(&nombreCliente).
+		WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
+		WithNumeroDocumento(req.Cliente.NumeroDocumento).
+		WithComplemento(complementoPtr).
+		WithCodigoCliente(req.Cliente.CodigoCliente).
+		WithNumeroFactura(req.NumeroFactura).
+		WithNumeroAutorizacionCuf(req.CufFacturaOriginal).
+		WithFechaEmisionFactura(req.FechaEmisionFactura).
+		WithMontoTotalOriginal(req.MontoTotalOriginal).
+		WithMontoTotalDevuelto(req.MontoTotalDevuelto).
+		WithMontoDescuentoCreditoDebito(req.MontoDescuento).
+		WithMontoEfectivoCreditoDebito(req.MontoEfectivoNota).
+		WithCodigoExcepcion(&zeroInt).
+		WithLeyenda(req.Leyenda).
+		WithUsuario(req.Usuario).
+		Build()
+
+	notaBuilder := invoices.NewNotaCreditoDebitoBuilder().
+		WithModalidad(req.Modalidad).
+		WithCabecera(cabecera)
+	for i := range req.Items {
+		item := req.Items[i]
+		detalle := invoices.NewNotaDetalleCreditoDebitoBuilder().
+			WithActividadEconomica(item.ActividadEconomica).
+			WithCodigoProductoSin(item.CodigoProductoSin).
+			WithCodigoProducto(item.CodigoProducto).
+			WithDescripcion(item.Descripcion).
+			WithCantidad(item.Cantidad).
+			WithUnidadMedida(item.UnidadMedida).
+			WithPrecioUnitario(item.PrecioUnitario).
+			WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
+			WithSubTotal(item.SubTotal).
+			WithCodigoDetalleTransaccion(i + 1).
+			Build()
+		notaBuilder.AddDetalle(detalle)
+	}
+	return notaBuilder.Build(), cuf, nil
 }
 
 // VerificarEstado consulta al SIAT el estado real de un documento ya emitido
@@ -801,6 +1012,97 @@ func (s SolicitudDocumento) validate() error {
 	}
 	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" {
 		return fmt.Errorf("siat documento: cuis y cufd son obligatorios")
+	}
+	return nil
+}
+
+func (s SolicitudNotaCreditoDebito) validate() error {
+	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+		return fmt.Errorf("siat nota credito/debito: codigoAmbiente inválido")
+	}
+	if strings.TrimSpace(s.CodigoSistema) == "" {
+		return fmt.Errorf("siat nota credito/debito: codigoSistema es obligatorio")
+	}
+	if strings.TrimSpace(s.Nit) == "" {
+		return fmt.Errorf("siat nota credito/debito: nit es obligatorio")
+	}
+	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
+		return fmt.Errorf("siat nota credito/debito: modalidad inválida (%d)", s.Modalidad)
+	}
+	if s.NumeroFactura <= 0 {
+		return fmt.Errorf("siat nota credito/debito: numeroFactura debe ser mayor a cero")
+	}
+	if s.CodigoSucursal < 0 || s.CodigoPuntoVenta < 0 {
+		return fmt.Errorf("siat nota credito/debito: codigoSucursal y codigoPuntoVenta deben ser >= 0")
+	}
+	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" || strings.TrimSpace(s.CodigoControl) == "" {
+		return fmt.Errorf("siat nota credito/debito: cuis, cufd y codigoControl son obligatorios")
+	}
+	if s.FechaEmision.IsZero() {
+		return fmt.Errorf("siat nota credito/debito: fechaEmision es obligatoria")
+	}
+	if strings.TrimSpace(s.CufFacturaOriginal) == "" {
+		return fmt.Errorf("siat nota credito/debito: cufFacturaOriginal es obligatorio")
+	}
+	if s.FechaEmisionFactura.IsZero() {
+		return fmt.Errorf("siat nota credito/debito: fechaEmisionFactura es obligatoria")
+	}
+	if s.MontoTotalOriginal < 0 {
+		return fmt.Errorf("siat nota credito/debito: montoTotalOriginal no puede ser negativo")
+	}
+	if s.MontoEfectivoNota < 0 {
+		return fmt.Errorf("siat nota credito/debito: montoEfectivoNota no puede ser negativo")
+	}
+	if s.TipoNota != TipoNotaCredito && s.TipoNota != TipoNotaDebito {
+		return fmt.Errorf("siat nota credito/debito: tipoNota debe ser 1 (crédito) o 2 (débito)")
+	}
+	if strings.TrimSpace(s.Leyenda) == "" {
+		return fmt.Errorf("siat nota credito/debito: leyenda es obligatoria")
+	}
+	if strings.TrimSpace(s.RazonSocialEmisor) == "" {
+		return fmt.Errorf("siat nota credito/debito: razonSocialEmisor es obligatoria")
+	}
+	if strings.TrimSpace(s.Municipio) == "" {
+		return fmt.Errorf("siat nota credito/debito: municipio es obligatorio")
+	}
+	if strings.TrimSpace(s.Direccion) == "" {
+		return fmt.Errorf("siat nota credito/debito: direccion es obligatoria")
+	}
+	if s.CodigoMetodoPago <= 0 || s.CodigoMoneda <= 0 || s.TipoCambio <= 0 {
+		return fmt.Errorf("siat nota credito/debito: codigoMetodoPago, codigoMoneda y tipoCambio deben ser mayores a cero")
+	}
+	if strings.TrimSpace(s.Cliente.NombreRazonSocial) == "" {
+		return fmt.Errorf("siat nota credito/debito: nombre del cliente es obligatorio")
+	}
+	if s.Cliente.CodigoTipoDocumentoIdentidad <= 0 {
+		return fmt.Errorf("siat nota credito/debito: codigoTipoDocumentoIdentidad debe ser mayor a cero")
+	}
+	if strings.TrimSpace(s.Cliente.NumeroDocumento) == "" {
+		return fmt.Errorf("siat nota credito/debito: numeroDocumento del cliente es obligatorio")
+	}
+	if len(s.Items) == 0 {
+		return fmt.Errorf("siat nota credito/debito: la nota debe tener al menos un ítem")
+	}
+	for i := range s.Items {
+		item := s.Items[i]
+		if strings.TrimSpace(item.ActividadEconomica) == "" {
+			return fmt.Errorf("siat nota credito/debito: actividadEconomica del ítem %d es obligatoria", i+1)
+		}
+		if item.CodigoProductoSin <= 0 {
+			return fmt.Errorf("siat nota credito/debito: codigoProductoSin del ítem %d debe ser mayor a cero", i+1)
+		}
+		if strings.TrimSpace(item.Descripcion) == "" {
+			return fmt.Errorf("siat nota credito/debito: descripcion del ítem %d es obligatoria", i+1)
+		}
+		if item.Cantidad <= 0 {
+			return fmt.Errorf("siat nota credito/debito: cantidad del ítem %d debe ser mayor a cero", i+1)
+		}
+		if item.UnidadMedida <= 0 {
+			return fmt.Errorf("siat nota credito/debito: unidadMedida del ítem %d debe ser mayor a cero", i+1)
+		}
+		if item.PrecioUnitario < 0 || item.SubTotal < 0 {
+			return fmt.Errorf("siat nota credito/debito: precio y subtotal del ítem %d no pueden ser negativos", i+1)
+		}
 	}
 	return nil
 }

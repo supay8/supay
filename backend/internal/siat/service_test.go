@@ -161,6 +161,93 @@ func TestServiceSolicitarCUISBusinessError(t *testing.T) {
 	}
 }
 
+func TestServiceSolicitarCUISYaVigente(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ns2:cuisResponse xmlns:ns2="https://siat.impuestos.gob.bo/">
+      <RespuestaCuis>
+        <codigo>4FF1AED1</codigo>
+        <fechaVigencia>2027-08-05T18:34:19.295-04:00</fechaVigencia>
+        <mensajesList>
+          <codigo>980</codigo>
+          <descripcion>EXISTE UN CUIS VIGENTE PARA LA SUCURSAL O PUNTO DE VENTA</descripcion>
+        </mensajesList>
+        <transaccion>false</transaccion>
+      </RespuestaCuis>
+    </ns2:cuisResponse>
+  </soap:Body>
+</soap:Envelope>`))
+	}))
+	defer server.Close()
+
+	svc := newTestService(t, server.URL)
+
+	resp, err := svc.SolicitarCUIS(context.Background(), SolicitudCuis{
+		CodigoAmbiente:   AmbientePruebas,
+		CodigoSistema:    "SYS-123",
+		Nit:              "1020304050",
+		CodigoSucursal:   0,
+		CodigoModalidad:  ModalidadElectronica,
+		CodigoPuntoVenta: 1,
+	})
+	if err != nil {
+		t.Fatalf("SolicitarCUIS con CUIS vigente (980): %v", err)
+	}
+	if resp.Codigo != "4FF1AED1" {
+		t.Fatalf("unexpected cuis code: %q", resp.Codigo)
+	}
+	if !resp.Transaccion {
+		t.Fatalf("expected transaccion=true for 980 with codigo")
+	}
+	if len(resp.Mensajes) != 1 || resp.Mensajes[0].Codigo != 980 {
+		t.Fatalf("expected 980 message preserved, got: %+v", resp.Mensajes)
+	}
+	if resp.FechaVigencia.Time.IsZero() {
+		t.Fatalf("expected CUIS vigencia to be parsed")
+	}
+}
+
+func TestServiceSolicitarCUISVigenteSinCodigo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <cuisResponse>
+      <RespuestaCuis>
+        <transaccion>false</transaccion>
+        <mensajesList>
+          <codigo>980</codigo>
+          <descripcion>EXISTE UN CUIS VIGENTE PARA LA SUCURSAL O PUNTO DE VENTA</descripcion>
+        </mensajesList>
+      </RespuestaCuis>
+    </cuisResponse>
+  </soapenv:Body>
+</soapenv:Envelope>`))
+	}))
+	defer server.Close()
+
+	svc := newTestService(t, server.URL)
+
+	_, err := svc.SolicitarCUIS(context.Background(), SolicitudCuis{
+		CodigoAmbiente:   AmbientePruebas,
+		CodigoSistema:    "SYS-123",
+		Nit:              "1020304050",
+		CodigoSucursal:   0,
+		CodigoModalidad:  ModalidadElectronica,
+		CodigoPuntoVenta: 1,
+	})
+	if err == nil {
+		t.Fatalf("expected error for 980 without codigo in body, got nil")
+	}
+	if !strings.Contains(err.Error(), "980") {
+		t.Fatalf("expected error to include SIAT code 980, got: %v", err)
+	}
+}
+
 func TestServiceSolicitarCUISWithWarningMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")

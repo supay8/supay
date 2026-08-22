@@ -122,7 +122,7 @@ type fakeCompanyRepo struct {
 	company domain.Company
 }
 
-func (f *fakeCompanyRepo) Create(*domain.Company) error { return nil }
+func (f *fakeCompanyRepo) Create(*domain.Company) error             { return nil }
 func (f *fakeCompanyRepo) GetByNit(string) (*domain.Company, error) { return &f.company, nil }
 func (f *fakeCompanyRepo) GetByID(string) (*domain.Company, error)  { return &f.company, nil }
 func (f *fakeCompanyRepo) Update(*domain.Company) error             { return nil }
@@ -929,23 +929,31 @@ func TestBuildSolicitudFacturaNoArrastraCamposEducativosFueraDeSector11(t *testi
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura: %v", err)
 	}
-	if req.NombreEstudiante != "" {
-		t.Errorf("NombreEstudiante=%q, se esperaba vacío fuera del sector 11", req.NombreEstudiante)
+	// Nuevo contrato: el usecase siempre pasa los campos legados y la capa siat
+	// los ignora fuera de los sectores educativos (11/46): los datos específicos
+	// resultantes deben quedar vacíos para compraventa.
+	perfil, err := siat.PerfilSector(1)
+	if err != nil {
+		t.Fatalf("PerfilSector(1): %v", err)
 	}
-	if req.PeriodoFacturado != "" {
-		t.Errorf("PeriodoFacturado=%q, se esperaba vacío fuera del sector 11", req.PeriodoFacturado)
+	valores, err := perfil.PrepararDatosSector(*req)
+	if err != nil {
+		t.Fatalf("PrepararDatosSector: %v", err)
+	}
+	if len(valores) != 0 {
+		t.Errorf("datos_sector normalizados=%v, se esperaba vacío fuera del sector 11", valores)
 	}
 }
 
 func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	repo.activeCufd = &domain.Cufd{
-		ID:         "cufd-1",
-		Cufd:       "CUFD-XYZ",
+		ID:          "cufd-1",
+		Cufd:        "CUFD-XYZ",
 		ControlCode: "CC-123",
-		ValidFrom:  time.Now().Add(-time.Hour),
-		ValidTo:    time.Now().Add(time.Hour),
-		Active:     true,
+		ValidFrom:   time.Now().Add(-time.Hour),
+		ValidTo:     time.Now().Add(time.Hour),
+		Active:      true,
 	}
 	posRepo := &fakePointOfSaleRepo{pos: domain.PointOfSale{
 		ID:               "pos-1",
@@ -993,11 +1001,16 @@ func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if inv.NombreEstudiante != nil {
-		t.Fatalf("NombreEstudiante quedó persistido fuera del sector 11: %q", *inv.NombreEstudiante)
+	// Nuevo contrato: Create persiste los campos tal cual llegan (auditoría);
+	// el filtrado ocurre al construir el XML, no al guardar.
+	if inv.NombreEstudiante == nil || *inv.NombreEstudiante != nombre {
+		t.Fatalf("NombreEstudiante=%v, se esperaba %q persistido", inv.NombreEstudiante, nombre)
 	}
-	if inv.PeriodoFacturado != nil {
-		t.Fatalf("PeriodoFacturado quedó persistido fuera del sector 11: %q", *inv.PeriodoFacturado)
+	if inv.PeriodoFacturado == nil || *inv.PeriodoFacturado != periodo {
+		t.Fatalf("PeriodoFacturado=%v, se esperaba %q persistido", inv.PeriodoFacturado, periodo)
+	}
+	if len(inv.SectorData) != 0 && string(inv.SectorData) != "{}" {
+		t.Errorf("SectorData=%s, se esperaba vacío para compraventa sin datos específicos", inv.SectorData)
 	}
 }
 

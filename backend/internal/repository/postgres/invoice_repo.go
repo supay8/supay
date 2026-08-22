@@ -1,11 +1,13 @@
 package postgres
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -170,6 +172,8 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		CodigoTipoFactura:     inv.CodigoTipoFactura,
 		NombreEstudiante:      inv.NombreEstudiante,
 		PeriodoFacturado:      inv.PeriodoFacturado,
+		SectorData:            datatypes.JSON(inv.SectorData),
+		AjustaFacturaId:       inv.AjustaFacturaId,
 		IssueDate:             inv.IssueDate,
 		Subtotal:              inv.Subtotal,
 		Discount:              inv.Discount,
@@ -191,6 +195,7 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		mi := models.InvoiceItem{
 			ID:                item.ID,
 			InvoiceId:         item.InvoiceId,
+			ProductId:         item.ProductID,
 			Code:              item.Code,
 			Description:       item.Description,
 			CodigoActividad:   item.CodigoActividad,
@@ -211,34 +216,36 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 
 func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 	inv := &domain.Invoice{
-		ID:                   m.ID,
-		CompanyId:            m.CompanyId,
-		CustomerId:           m.CustomerId,
-		PointOfSaleId:        m.PointOfSaleId,
-		CufdId:               m.CufdId,
-		ContingencyEventId:   m.ContingencyEventId,
-		InvoiceNumber:        m.InvoiceNumber,
-		Cuf:                  m.Cuf,
-		EmissionType:         string(m.EmissionType),
-		CodigoMetodoPago:     m.CodigoMetodoPago,
-		CodigoMoneda:         m.CodigoMoneda,
-		TipoCambio:           m.TipoCambio,
+		ID:                    m.ID,
+		CompanyId:             m.CompanyId,
+		CustomerId:            m.CustomerId,
+		PointOfSaleId:         m.PointOfSaleId,
+		CufdId:                m.CufdId,
+		ContingencyEventId:    m.ContingencyEventId,
+		InvoiceNumber:         m.InvoiceNumber,
+		Cuf:                   m.Cuf,
+		EmissionType:          string(m.EmissionType),
+		CodigoMetodoPago:      m.CodigoMetodoPago,
+		CodigoMoneda:          m.CodigoMoneda,
+		TipoCambio:            m.TipoCambio,
 		CodigoDocumentoSector: m.CodigoDocumentoSector,
-		CodigoTipoFactura:    m.CodigoTipoFactura,
-		NombreEstudiante:     m.NombreEstudiante,
-		PeriodoFacturado:     m.PeriodoFacturado,
-		IssueDate:            m.IssueDate,
-		Subtotal:             m.Subtotal,
-		Discount:             m.Discount,
-		Total:                m.Total,
-		Xml:                  m.Xml,
-		XmlHash:              m.XmlHash,
-		SiatReceptionCode:    m.SiatReceptionCode,
-		SiatMensajes:         m.SiatMensajes,
-		MotivoAnulacion:      m.MotivoAnulacion,
-		FechaAnulacion:       m.FechaAnulacion,
-		Status:               domain.InvoiceStatus(m.Status),
-		CreatedAt:            m.CreatedAt,
+		CodigoTipoFactura:     m.CodigoTipoFactura,
+		NombreEstudiante:      m.NombreEstudiante,
+		PeriodoFacturado:      m.PeriodoFacturado,
+		SectorData:            json.RawMessage(m.SectorData),
+		AjustaFacturaId:       m.AjustaFacturaId,
+		IssueDate:             m.IssueDate,
+		Subtotal:              m.Subtotal,
+		Discount:              m.Discount,
+		Total:                 m.Total,
+		Xml:                   m.Xml,
+		XmlHash:               m.XmlHash,
+		SiatReceptionCode:     m.SiatReceptionCode,
+		SiatMensajes:          m.SiatMensajes,
+		MotivoAnulacion:       m.MotivoAnulacion,
+		FechaAnulacion:        m.FechaAnulacion,
+		Status:                domain.InvoiceStatus(m.Status),
+		CreatedAt:             m.CreatedAt,
 	}
 	inv.Company = *toDomainCompany(&m.Company)
 	inv.Customer = *toDomainCustomer(&m.Customer)
@@ -250,6 +257,7 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		inv.Items = append(inv.Items, domain.InvoiceItem{
 			ID:                mi.ID,
 			InvoiceId:         mi.InvoiceId,
+			ProductID:         mi.ProductId,
 			Code:              mi.Code,
 			Description:       mi.Description,
 			CodigoActividad:   mi.CodigoActividad,
@@ -278,5 +286,3 @@ func toDomainCufd(m *models.Cufd) *domain.Cufd {
 		CreatedAt:     m.CreatedAt,
 	}
 }
-
-

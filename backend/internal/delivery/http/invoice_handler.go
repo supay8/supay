@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/brandsrx/supay/internal/siat"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
@@ -143,4 +144,56 @@ func (h *InvoiceHandler) RevertAnnul(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(inv)
+}
+
+type sectorCampoDTO struct {
+	JSON      string `json:"json"`
+	Metodo    string `json:"-"`
+	Requerido bool   `json:"requerido"`
+	Tipo      string `json:"tipo"`
+}
+
+type sectorDTO struct {
+	Codigo             int              `json:"codigo"`
+	Nombre             string           `json:"nombre"`
+	TipoDocumento      int              `json:"tipo_documento"`
+	Operacion          string           `json:"operacion"`
+	Fachada            string           `json:"fachada"`
+	ConDetalle         bool             `json:"con_detalle"`
+	DetalleUnico       bool             `json:"detalle_unico"`
+	MontoSujetoIvaCero bool             `json:"monto_sujeto_iva_cero"`
+	Ajuste             bool             `json:"es_ajuste"`
+	Campos             []sectorCampoDTO `json:"campos_datos_sector"`
+}
+
+// Sectores expone el catálogo de documentos-sector soportados con la
+// declaración de sus campos datos_sector, para que los clientes construyan
+// formularios dinámicos y validen en el frontend.
+func (h *InvoiceHandler) Sectores(w http.ResponseWriter, r *http.Request) {
+	perfiles := siat.PerfilesSector()
+	salida := make([]sectorDTO, 0, len(perfiles))
+	for _, p := range perfiles {
+		campos := make([]sectorCampoDTO, 0, len(p.Campos))
+		for _, c := range p.Campos {
+			campos = append(campos, sectorCampoDTO{
+				JSON:      c.JSON,
+				Requerido: c.Requerido,
+				Tipo:      c.Tipo,
+			})
+		}
+		salida = append(salida, sectorDTO{
+			Codigo:             p.Codigo,
+			Nombre:             p.Nombre,
+			TipoDocumento:      p.TipoDocumentoResuelto(0),
+			Operacion:          p.Operacion.String(),
+			Fachada:            p.Fachada.String(),
+			ConDetalle:         p.ConDetalle,
+			DetalleUnico:       p.DetalleUnico,
+			MontoSujetoIvaCero: p.MontoSujetoIvaCero,
+			Ajuste:             p.EsAjuste(),
+			Campos:             campos,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(salida)
 }

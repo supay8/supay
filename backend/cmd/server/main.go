@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	appconfig "github.com/brandsrx/supay/internal/config"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/repository/database"
 	"github.com/brandsrx/supay/internal/repository/postgres"
@@ -51,6 +51,9 @@ func main() {
 	contingencyRepo := postgres.NewPostgresContingencyEventRepository(database.DB)
 	tipoPVRepo := postgres.NewPostgresTipoPuntoVentaRepository(database.DB)
 	catalogRepo := postgres.NewPostgresCatalogRepository(database.DB)
+	productRepo := postgres.NewPostgresProductRepository(database.DB)
+	productUsecase := usecase.NewProductUsecase(productRepo, companyRepo, catalogRepo)
+	productHandler := deliveryHttp.NewProductHandler(productUsecase)
 	branchRepo := postgres.NewPostgresBranchRepository(database.DB)
 	sentPackageRepo := postgres.NewPostgresSentPackageRepository(database.DB)
 	branchUsecase := usecase.NewBranchUsecase(branchRepo, companyRepo)
@@ -80,7 +83,7 @@ func main() {
 	if siatService != nil {
 		emissionService = siatService
 	}
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad)
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
 	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad)
@@ -92,6 +95,7 @@ func main() {
 		Pos:      posHandler,
 		Branch:   branchHandler,
 		Customer: customerHandler,
+		Product:  productHandler,
 		Invoice:  invoiceHandler,
 		Siat:     siatHandler,
 	}, appCfg.APIKey)

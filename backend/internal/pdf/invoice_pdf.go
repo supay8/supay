@@ -163,12 +163,12 @@ func drawDetalle(pdf *gofpdf.Fpdf, inv *models.Invoice) {
 	pdf.Ln(2)
 
 	const (
-		colCod   = 16.0
-		colCant  = 16.0
+		colCod    = 16.0
+		colCant   = 16.0
 		colPrecio = 24.0
-		colSub   = 24.0
-		colDesc  = bodyW - colCod - colCant - colPrecio - colSub
-		lineH    = 5.0
+		colSub    = 24.0
+		colDesc   = bodyW - colCod - colCant - colPrecio - colSub
+		lineH     = 5.0
 	)
 
 	pdf.SetFillColor(18, 52, 86)

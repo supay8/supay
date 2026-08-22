@@ -708,10 +708,10 @@ type SincronizacionOpError struct {
 }
 
 type SincronizacionResultado struct {
-	Company    *domain.Company
+	Company     *domain.Company
 	PointOfSale *domain.PointOfSale
-	Operations []SincronizacionOpResult
-	Errors     []SincronizacionOpError
+	Operations  []SincronizacionOpResult
+	Errors      []SincronizacionOpError
 }
 
 // Sincronizar baja catálogos del SIAT. Con opRaw vacío sincroniza todas las
@@ -858,19 +858,19 @@ func (uc *SiatUsecase) ResolveDocumentoSector(company *domain.Company) int {
 // --- Documentos de ajuste (NC/ND) ---
 
 type DocumentoAjusteInput struct {
-	NumeroFactura         int64                 `json:"numeroFactura"`
-	CufFacturaOriginal    string                `json:"cufFacturaOriginal"`
-	CodigoDocumentoSector int                   `json:"codigoDocumentoSector"`
-	CodigoTipoFactura     int                   `json:"codigoTipoFactura"`
-	TipoNota              int                   `json:"tipoNota"`
-	Motivo                string                `json:"motivo"`
-	CodigoMetodoPago      int                   `json:"codigoMetodoPago"`
-	CodigoMoneda          int                   `json:"codigoMoneda"`
-	TipoCambio            float64               `json:"tipoCambio"`
-	MontoTotal            float64               `json:"montoTotal"`
-	Leyenda               string                `json:"leyenda"`
-	Cliente               siat.ClienteFactura   `json:"cliente"`
-	Items                 []siat.ItemFactura    `json:"items"`
+	NumeroFactura         int64               `json:"numeroFactura"`
+	CufFacturaOriginal    string              `json:"cufFacturaOriginal"`
+	CodigoDocumentoSector int                 `json:"codigoDocumentoSector"`
+	CodigoTipoFactura     int                 `json:"codigoTipoFactura"`
+	TipoNota              int                 `json:"tipoNota"`
+	Motivo                string              `json:"motivo"`
+	CodigoMetodoPago      int                 `json:"codigoMetodoPago"`
+	CodigoMoneda          int                 `json:"codigoMoneda"`
+	TipoCambio            float64             `json:"tipoCambio"`
+	MontoTotal            float64             `json:"montoTotal"`
+	Leyenda               string              `json:"leyenda"`
+	Cliente               siat.ClienteFactura `json:"cliente"`
+	Items                 []siat.ItemFactura  `json:"items"`
 }
 
 type DocumentoAjusteResultado struct {

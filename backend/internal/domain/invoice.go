@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type InvoiceStatus string
 
@@ -16,48 +19,51 @@ const (
 )
 
 type InvoiceItem struct {
-	ID                string   `json:"id"`
-	InvoiceId         string   `json:"invoice_id"`
-	Code              string   `json:"code"`
-	Description       string   `json:"description"`
-	CodigoActividad   *string  `json:"codigo_actividad,omitempty"`
-	CodigoProductoSin *string  `json:"codigo_producto_sin,omitempty"`
-	UnitCode          *int     `json:"unit_code,omitempty"`
-	Quantity          float64  `json:"quantity"`
-	UnitPrice         float64  `json:"unit_price"`
-	Discount          float64  `json:"discount"`
-	Subtotal          float64  `json:"subtotal"`
+	ID                string  `json:"id"`
+	InvoiceId         string  `json:"invoice_id"`
+	ProductID         *string `json:"product_id,omitempty"`
+	Code              string  `json:"code"`
+	Description       string  `json:"description"`
+	CodigoActividad   *string `json:"codigo_actividad,omitempty"`
+	CodigoProductoSin *string `json:"codigo_producto_sin,omitempty"`
+	UnitCode          *int    `json:"unit_code,omitempty"`
+	Quantity          float64 `json:"quantity"`
+	UnitPrice         float64 `json:"unit_price"`
+	Discount          float64 `json:"discount"`
+	Subtotal          float64 `json:"subtotal"`
 }
 
 type Invoice struct {
-	ID                 string         `json:"id"`
-	CompanyId          string         `json:"company_id"`
-	CustomerId         string         `json:"customer_id"`
-	PointOfSaleId      string         `json:"point_of_sale_id"`
-	CufdId             string         `json:"cufd_id"`
-	ContingencyEventId *string        `json:"contingency_event_id,omitempty"`
-	InvoiceNumber      int            `json:"invoice_number"`
-	Cuf                *string        `json:"cuf,omitempty"`
-	EmissionType       string         `json:"emission_type"`
-	CodigoMetodoPago   int            `json:"codigo_metodo_pago"`
-	CodigoMoneda       int            `json:"codigo_moneda"`
-	TipoCambio         float64        `json:"tipo_cambio"`
-	CodigoDocumentoSector int         `json:"codigo_documento_sector"`
-	CodigoTipoFactura  int            `json:"codigo_tipo_factura"`
-	NombreEstudiante   *string        `json:"nombre_estudiante,omitempty"`
-	PeriodoFacturado   *string        `json:"periodo_facturado,omitempty"`
-	IssueDate          time.Time      `json:"issue_date"`
-	Subtotal           float64        `json:"subtotal"`
-	Discount           float64        `json:"discount"`
-	Total              float64        `json:"total"`
-	Xml                *string        `json:"xml,omitempty"`
-	XmlHash            *string        `json:"xml_hash,omitempty"`
-	SiatReceptionCode  *string        `json:"siat_reception_code,omitempty"`
-	SiatMensajes       *string        `json:"siat_mensajes,omitempty"`
-	MotivoAnulacion    *int           `json:"motivo_anulacion,omitempty"`
-	FechaAnulacion     *time.Time     `json:"fecha_anulacion,omitempty"`
-	Status             InvoiceStatus  `json:"status"`
-	CreatedAt          time.Time      `json:"created_at"`
+	ID                    string          `json:"id"`
+	CompanyId             string          `json:"company_id"`
+	CustomerId            string          `json:"customer_id"`
+	PointOfSaleId         string          `json:"point_of_sale_id"`
+	CufdId                string          `json:"cufd_id"`
+	ContingencyEventId    *string         `json:"contingency_event_id,omitempty"`
+	InvoiceNumber         int             `json:"invoice_number"`
+	Cuf                   *string         `json:"cuf,omitempty"`
+	EmissionType          string          `json:"emission_type"`
+	CodigoMetodoPago      int             `json:"codigo_metodo_pago"`
+	CodigoMoneda          int             `json:"codigo_moneda"`
+	TipoCambio            float64         `json:"tipo_cambio"`
+	CodigoDocumentoSector int             `json:"codigo_documento_sector"`
+	CodigoTipoFactura     int             `json:"codigo_tipo_factura"`
+	NombreEstudiante      *string         `json:"nombre_estudiante,omitempty"`
+	PeriodoFacturado      *string         `json:"periodo_facturado,omitempty"`
+	SectorData            json.RawMessage `json:"sector_data,omitempty"`
+	AjustaFacturaId       *string         `json:"ajusta_factura_id,omitempty"`
+	IssueDate             time.Time       `json:"issue_date"`
+	Subtotal              float64         `json:"subtotal"`
+	Discount              float64         `json:"discount"`
+	Total                 float64         `json:"total"`
+	Xml                   *string         `json:"xml,omitempty"`
+	XmlHash               *string         `json:"xml_hash,omitempty"`
+	SiatReceptionCode     *string         `json:"siat_reception_code,omitempty"`
+	SiatMensajes          *string         `json:"siat_mensajes,omitempty"`
+	MotivoAnulacion       *int            `json:"motivo_anulacion,omitempty"`
+	FechaAnulacion        *time.Time      `json:"fecha_anulacion,omitempty"`
+	Status                InvoiceStatus   `json:"status"`
+	CreatedAt             time.Time       `json:"created_at"`
 
 	Company     Company       `json:"company"`
 	Customer    Customer      `json:"customer"`

@@ -70,6 +70,8 @@ func ConnectDB() {
 		&models.Cufd{},
 		&models.Cuis{},
 		&models.Catalog{},
+		&models.Product{},
+		&models.ProductMapping{},
 		&models.ContingencyEvent{},
 		&models.Customer{},
 		&models.Invoice{},

@@ -17,17 +17,17 @@ func NewPostgresCompanyRepository(db *gorm.DB) domain.CompanyRepository {
 
 func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 	dbModel := models.Company{
-		ID:             uuid.NewString(),
-		Nit:            c.Nit,
-		BusinessName:   c.BusinessName,
-		CodigoSistema:  c.CodigoSistema,
-		Ambiente:       models.SiatEnvironment(c.Ambiente),
-		Municipio:      c.Municipio,
-		Direccion:      c.Direccion,
-		Telefono:       c.Telefono,
+		ID:              uuid.NewString(),
+		Nit:             c.Nit,
+		BusinessName:    c.BusinessName,
+		CodigoSistema:   c.CodigoSistema,
+		Ambiente:        models.SiatEnvironment(c.Ambiente),
+		Municipio:       c.Municipio,
+		Direccion:       c.Direccion,
+		Telefono:        c.Telefono,
 		CodigoActividad: c.CodigoActividad,
-		PiePagina:      c.PiePagina,
-		UsuarioSiat:    c.UsuarioSiat,
+		PiePagina:       c.PiePagina,
+		UsuarioSiat:     c.UsuarioSiat,
 	}
 
 	if err := r.db.Create(&dbModel).Error; err != nil {

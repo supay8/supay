@@ -560,19 +560,20 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 	if sector <= 0 {
 		sector = 1
 	}
-	tipoFactura := inv.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
+	perfil, err := siat.PerfilSector(sector)
+	if err != nil {
+		return nil, fmt.Errorf("factura %s: %w", inv.ID, err)
 	}
+	tipoFactura := perfil.TipoDocumentoResuelto(inv.CodigoTipoFactura)
 
+	// Los campos legados educativos viajan siempre; el paquete siat los ignora
+	// fuera de los sectores 11/46 y los fusiona a datos_sector cuando aplica.
 	var nombreEstudiante, periodoFacturado string
-	if sector == siat.SectorEducativo {
-		if inv.NombreEstudiante != nil {
-			nombreEstudiante = strings.TrimSpace(*inv.NombreEstudiante)
-		}
-		if inv.PeriodoFacturado != nil {
-			periodoFacturado = strings.TrimSpace(*inv.PeriodoFacturado)
-		}
+	if inv.NombreEstudiante != nil {
+		nombreEstudiante = strings.TrimSpace(*inv.NombreEstudiante)
+	}
+	if inv.PeriodoFacturado != nil {
+		periodoFacturado = strings.TrimSpace(*inv.PeriodoFacturado)
 	}
 
 	usuario := "SUPAY"
@@ -606,6 +607,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		CodigoTipoFactura:     tipoFactura,
 		NombreEstudiante:      nombreEstudiante,
 		PeriodoFacturado:      periodoFacturado,
+		DatosSector:           inv.SectorData,
 		Cliente: siat.ClienteFactura{
 			NombreRazonSocial:            inv.Customer.Name,
 			CodigoTipoDocumentoIdentidad: codigoDoc,

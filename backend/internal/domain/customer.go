@@ -10,12 +10,12 @@ import (
 var ErrCustomerDocumentConflict = errors.New("ya existe un cliente con este documento para la empresa")
 
 type Customer struct {
-	ID             string  `json:"id"`
-	CompanyId      string  `json:"company_id"`
-	DocumentType   string  `json:"document_type"`
-	DocumentNumber string  `json:"document_number"`
-	Complement     *string `json:"complement,omitempty"`
-	Name           string  `json:"name"`
+	ID             string    `json:"id"`
+	CompanyId      string    `json:"company_id"`
+	DocumentType   string    `json:"document_type"`
+	DocumentNumber string    `json:"document_number"`
+	Complement     *string   `json:"complement,omitempty"`
+	Name           string    `json:"name"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

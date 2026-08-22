@@ -19,18 +19,18 @@ var ErrPointOfSaleHasDependencies = errors.New("no se puede eliminar: el punto d
 var ErrTipoPuntoVentaInvalido = errors.New("código de tipo de punto de venta no válido para esta empresa (sincronice el catálogo)")
 
 type PointOfSale struct {
-	ID               string          `json:"id"`
-	CompanyId        string          `json:"company_id"`
-	BranchId         *string         `json:"branch_id,omitempty"`
-	CodigoSucursal   int             `json:"codigo_sucursal"`
-	CodigoPuntoVenta int             `json:"codigo_punto_venta"`
-	Description      string          `json:"description"`
-	Cuis             *string         `json:"cuis,omitempty"`
-	CuisCreatedAt    *time.Time      `json:"cuis_created_at,omitempty"`
-	IsActive         bool            `json:"is_active"`
-	SiatCode         *int            `json:"siat_code,omitempty"`
-	Status           string          `json:"status,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
+	ID               string     `json:"id"`
+	CompanyId        string     `json:"company_id"`
+	BranchId         *string    `json:"branch_id,omitempty"`
+	CodigoSucursal   int        `json:"codigo_sucursal"`
+	CodigoPuntoVenta int        `json:"codigo_punto_venta"`
+	Description      string     `json:"description"`
+	Cuis             *string    `json:"cuis,omitempty"`
+	CuisCreatedAt    *time.Time `json:"cuis_created_at,omitempty"`
+	IsActive         bool       `json:"is_active"`
+	SiatCode         *int       `json:"siat_code,omitempty"`
+	Status           string     `json:"status,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 
 	// Datos del registro oficial ante el SIAT (operación registroPuntoVenta)
 	TipoPuntoVenta   *int            `json:"tipo_punto_venta,omitempty"`

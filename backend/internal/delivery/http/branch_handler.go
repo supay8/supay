@@ -21,7 +21,7 @@ func NewBranchHandler(uc *usecase.BranchUsecase) *BranchHandler {
 func (h *BranchHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req usecase.CreateBranchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Payload inválido")
 		return
 	}
 	b, err := h.uc.Create(req)
@@ -44,7 +44,7 @@ func (h *BranchHandler) List(w http.ResponseWriter, r *http.Request) {
 	companyID := r.URL.Query().Get("companyId")
 	list, err := h.uc.List(companyID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -54,12 +54,12 @@ func (h *BranchHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *BranchHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	b, err := h.uc.GetByID(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -70,12 +70,12 @@ func (h *BranchHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req usecase.UpdateBranchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Payload inválido")
 		return
 	}
 	b, err := h.uc.Update(req, id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -85,11 +85,11 @@ func (h *BranchHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *BranchHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	if err := h.uc.Delete(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

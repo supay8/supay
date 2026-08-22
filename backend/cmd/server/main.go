@@ -1,9 +1,18 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
+	"github.com/brandsrx/supay/internal/domain"
 	appconfig "github.com/brandsrx/supay/internal/config"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	"github.com/brandsrx/supay/internal/pdf"
@@ -18,8 +27,13 @@ func main() {
 	// Cargar .env antes de leer la configuración para que las credenciales
 	// del SIAT estén disponibles.
 	_ = godotenv.Load()
+	setupLogging()
 	log.Println("Iniciando Supay API...")
 	appCfg := appconfig.Load()
+
+	if appCfg.APIKey == "" {
+		log.Fatal("API_KEY no está configurada: la API quedaría abierta sin autenticación. Define API_KEY en el entorno o en .env")
+	}
 
 	// 1. Conectar a PostgreSQL y migrar
 	database.ConnectDB()
@@ -69,7 +83,8 @@ func main() {
 	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
-	siatHandler := deliveryHttp.NewSiatHandler(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, pdf.NewService(database.DB), appCfg.SiatModalidad)
+	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad)
+	siatHandler := deliveryHttp.NewSiatHandler(siatUsecase, pdf.NewService(database.DB))
 
 	// 4. Router
 	router := deliveryHttp.NewRouter(deliveryHttp.Handlers{
@@ -79,11 +94,94 @@ func main() {
 		Customer: customerHandler,
 		Invoice:  invoiceHandler,
 		Siat:     siatHandler,
-	})
+	}, appCfg.APIKey)
 
-	port := ":" + appCfg.Port
-	log.Printf("Servidor escuchando en el puerto %s", port)
-	if err := http.ListenAndServe(port, router); err != nil {
-		log.Fatalf("Error al iniciar el servidor: %v", err)
+	srv := &http.Server{
+		Addr:              ":" + appCfg.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
+
+	// 5. Graceful shutdown: al recibir SIGINT/SIGTERM se detiene de forma
+	// ordenada (drenando conexiones activas hasta el timeout del servidor).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// 6. Reaper de facturas SENDING atascadas: cada 5 min libera las que llevan
+	// más de 10 min sin completar la emisión (crash, fallo de red persistente).
+	startStaleEmissionReaper(ctx, invoiceRepo, 5*time.Minute, 10*time.Minute)
+
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("Servidor escuchando en el puerto :%s", appCfg.Port)
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Error al iniciar el servidor: %v", err)
+		}
+	case <-ctx.Done():
+		log.Println("Señal de apagado recibida, cerrando servidor...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Apagado forzado por timeout: %v", err)
+		}
+		log.Println("Servidor detenido")
+	}
+}
+
+// setupLogging configura slog como logger por defecto. LOG_LEVEL ajusta la
+// verbosidad (debug|info|warn|error) y LOG_FORMAT elige json o texto.
+func setupLogging() {
+	var level slog.Level
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_FORMAT")), "json") {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+	slog.SetDefault(slog.New(handler))
+}
+
+// startStaleEmissionReaper libera periódicamente las facturas atascadas en
+// SENDING (p.ej. crash del proceso entre el claim y el update final),
+// devolviéndolas a PENDING para que puedan reemitirse.
+func startStaleEmissionReaper(ctx context.Context, repo domain.InvoiceRepository, interval, staleAfter time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				released, err := repo.ReleaseStaleSending(staleAfter)
+				if err != nil {
+					slog.Error("reaper: no se pudo liberar facturas SENDING atascadas", "error", err)
+					continue
+				}
+				if released > 0 {
+					slog.Warn("reaper: facturas SENDING atascadas liberadas a PENDING", "cantidad", released, "stale_after", staleAfter.String())
+				}
+			}
+		}
+	}()
 }

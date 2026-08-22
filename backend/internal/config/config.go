@@ -13,6 +13,9 @@ type Config struct {
 	Port          string
 	SIAT          siat.Config
 	SiatModalidad int
+	// APIKey protege la API HTTP: todas las rutas (excepto /health) exigen el
+	// header X-API-Key con este valor. Vacío deshabilita la protección.
+	APIKey string
 }
 
 func Load() Config {
@@ -58,6 +61,7 @@ func Load() Config {
 		Port:          getEnv("PORT", "8081"),
 		SIAT:          siatConfig,
 		SiatModalidad: modalidad,
+		APIKey:        strings.TrimSpace(os.Getenv("API_KEY")),
 	}
 }
 

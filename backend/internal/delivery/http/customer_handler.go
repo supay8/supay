@@ -21,7 +21,7 @@ func NewCustomerHandler(uc *usecase.CustomerUsecase) *CustomerHandler {
 func (h *CustomerHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req usecase.CreateCustomerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Payload inválido")
 		return
 	}
 	c, err := h.uc.Create(req)
@@ -42,7 +42,7 @@ func (h *CustomerHandler) List(w http.ResponseWriter, r *http.Request) {
 	companyID := r.URL.Query().Get("companyId")
 	list, err := h.uc.List(companyID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -52,12 +52,12 @@ func (h *CustomerHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *CustomerHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "id obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id obligatorio")
 		return
 	}
 	c, err := h.uc.GetByID(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

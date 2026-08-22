@@ -21,7 +21,7 @@ func NewCompanyHandler(uc *usecase.CompanyUsecase) *CompanyHandler {
 func (h *CompanyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req usecase.RegisterCompanyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload JSON inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Payload JSON inválido")
 		return
 	}
 
@@ -41,7 +41,7 @@ func (h *CompanyHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *CompanyHandler) GetByNit(w http.ResponseWriter, r *http.Request) {
 	nit := r.URL.Query().Get("nit")
 	if nit == "" {
-		http.Error(w, "El parámetro 'nit' es obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "El parámetro 'nit' es obligatorio")
 		return
 	}
 
@@ -62,13 +62,13 @@ func (h *CompanyHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Ejemplo usando Chi para obtener el ID de la URL: /companies/{id}
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "El ID es obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "El ID es obligatorio")
 		return
 	}
 
 	var req usecase.UpdateCompanyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload JSON inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Payload JSON inválido")
 		return
 	}
 	company, err := h.usecase.Update(req, id)
@@ -91,7 +91,7 @@ func (h *CompanyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if id == "" {
-		http.Error(w, "El parámetro 'id' es obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "El parámetro 'id' es obligatorio")
 		return
 	}
 

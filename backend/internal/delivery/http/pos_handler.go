@@ -21,7 +21,7 @@ func NewPosHandler(uc *usecase.PointOfSaleUsecase) *PosHandler {
 func (h *PosHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req usecase.RegisterPointOfSaleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload JSON inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Payload JSON inválido")
 		return
 	}
 
@@ -61,7 +61,7 @@ func (h *PosHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *PosHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "El ID es obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "El ID es obligatorio")
 		return
 	}
 
@@ -81,13 +81,13 @@ func (h *PosHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 func (h *PosHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "El ID es obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "El ID es obligatorio")
 		return
 	}
 
 	var req usecase.UpdatePointOfSaleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Payload JSON inválido", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Payload JSON inválido")
 		return
 	}
 	pos, err := h.usecase.Update(req, id)
@@ -105,7 +105,7 @@ func (h *PosHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *PosHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "El parámetro 'id' es obligatorio", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "El parámetro 'id' es obligatorio")
 		return
 	}
 

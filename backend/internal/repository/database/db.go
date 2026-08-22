@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/brandsrx/supay/internal/models"
@@ -33,7 +34,9 @@ func ConnectDB() {
 
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info), // Muestra las queries SQL en la terminal para debug
+		// Nivel de log configurable vía LOG_LEVEL (debug|info|warn|error).
+		// Por defecto Warn para no volcar queries con datos fiscales en producción.
+		Logger: logger.Default.LogMode(gormLogLevel()),
 	})
 	if err != nil {
 		log.Fatalf("Error of connection to PostgreSQL: %v", err)
@@ -112,6 +115,18 @@ func ConnectDB() {
 	}
 
 	fmt.Println("✨ ¡Tablas migradas y listas en PostgreSQL!")
+}
+
+// gormLogLevel traduce LOG_LEVEL al nivel de logger de GORM.
+func gormLogLevel() logger.LogLevel {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
+	case "debug":
+		return logger.Info
+	case "error":
+		return logger.Error
+	default:
+		return logger.Warn
+	}
 }
 
 // runDataMigration ejecuta un backfill de datos una sola vez, registrándolo en

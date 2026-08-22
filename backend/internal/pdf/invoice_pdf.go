@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/brandsrx/supay/internal/models"
-	"github.com/jung-kurt/gofpdf"
+	gofpdf "github.com/go-pdf/fpdf"
 )
 
 const (

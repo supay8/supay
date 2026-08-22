@@ -4,9 +4,9 @@ go 1.25.0
 
 require (
 	github.com/go-chi/chi/v5 v5.3.1
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/ron86i/go-siat/v2 v2.1.1
 	gorm.io/datatypes v1.2.7
 	gorm.io/driver/postgres v1.6.2

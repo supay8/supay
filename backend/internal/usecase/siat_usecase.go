@@ -1,0 +1,965 @@
+package usecase
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/siat"
+)
+
+// ErrSiatNoDisponible indica que el adaptador SIAT no pudo inicializarse
+// (configuración ausente o inválida). La capa delivery lo mapea a 503.
+var ErrSiatNoDisponible = errors.New("el servicio SIAT no está disponible")
+
+// SiatUsecase concentra la lógica de negocio de las operaciones SIAT que no
+// son emisión individual de facturas: códigos (CUIS/CUFD), eventos
+// significativos, paquetes/lotes, compras, sincronización de catálogos y
+// documentos de ajuste. Los handlers HTTP solo decodifican/encodean.
+type SiatUsecase struct {
+	companyRepo     domain.CompanyRepository
+	pointOfSaleRepo domain.PointOfSaleRepository
+	cufdRepo        domain.CufdRepository
+	tipoPVRepo      domain.TipoPuntoVentaRepository
+	catalogRepo     domain.CatalogRepository
+	contingencyRepo domain.ContingencyEventRepository
+	sentPackageRepo domain.SentPackageRepository
+	siatService     *siat.Service
+	modalidad       int
+}
+
+func NewSiatUsecase(
+	companyRepo domain.CompanyRepository,
+	pointOfSaleRepo domain.PointOfSaleRepository,
+	cufdRepo domain.CufdRepository,
+	tipoPVRepo domain.TipoPuntoVentaRepository,
+	catalogRepo domain.CatalogRepository,
+	contingencyRepo domain.ContingencyEventRepository,
+	sentPackageRepo domain.SentPackageRepository,
+	siatService *siat.Service,
+	modalidad int,
+) *SiatUsecase {
+	return &SiatUsecase{
+		companyRepo:     companyRepo,
+		pointOfSaleRepo: pointOfSaleRepo,
+		cufdRepo:        cufdRepo,
+		tipoPVRepo:      tipoPVRepo,
+		catalogRepo:     catalogRepo,
+		contingencyRepo: contingencyRepo,
+		sentPackageRepo: sentPackageRepo,
+		siatService:     siatService,
+		modalidad:       modalidad,
+	}
+}
+
+func (uc *SiatUsecase) requireService() error {
+	if uc.siatService == nil {
+		return ErrSiatNoDisponible
+	}
+	return nil
+}
+
+// LoadCompanyAndPointOfSale valida que el punto de venta pertenezca a la empresa.
+func (uc *SiatUsecase) LoadCompanyAndPointOfSale(companyID, pointOfSaleID string) (*domain.Company, *domain.PointOfSale, error) {
+	if companyID == "" || pointOfSaleID == "" {
+		return nil, nil, domain.NewBadRequestError("companyId y pointOfSaleId son obligatorios")
+	}
+
+	company, err := uc.companyRepo.GetByID(companyID)
+	if err != nil {
+		return nil, nil, domain.NewNotFoundError("Empresa no encontrada")
+	}
+
+	pointOfSale, err := uc.pointOfSaleRepo.GetByID(pointOfSaleID)
+	if err != nil {
+		return nil, nil, domain.NewNotFoundError("Punto de venta no encontrado")
+	}
+
+	if pointOfSale.CompanyId != company.ID {
+		return nil, nil, domain.NewBadRequestError("El punto de venta no pertenece a la empresa indicada")
+	}
+
+	return company, pointOfSale, nil
+}
+
+// resolveCodigoPuntoVenta prefiere el código registrado ante el SIAT.
+func resolveCodigoPuntoVenta(pos *domain.PointOfSale) int {
+	if pos.SiatCode != nil {
+		return *pos.SiatCode
+	}
+	return pos.CodigoPuntoVenta
+}
+
+func (uc *SiatUsecase) effectiveModalidad() int {
+	if uc.modalidad <= 0 {
+		return siat.ModalidadElectronica
+	}
+	return uc.modalidad
+}
+
+// --- CUIS / CUFD ---
+
+type CuisResultado struct {
+	Company     *domain.Company
+	PointOfSale *domain.PointOfSale
+	Response    *siat.RespuestaCuis
+}
+
+func (uc *SiatUsecase) SolicitarCUIS(ctx context.Context, companyID, posID string) (*CuisResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, err
+	}
+
+	req := siat.SolicitudCuis{
+		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:    company.CodigoSistema,
+		Nit:              company.Nit,
+		CodigoSucursal:   pointOfSale.CodigoSucursal,
+		CodigoModalidad:  uc.effectiveModalidad(),
+		CodigoPuntoVenta: resolveCodigoPuntoVenta(pointOfSale),
+	}
+	if pointOfSale.Cuis != nil && *pointOfSale.Cuis != "" {
+		req.Cuis = pointOfSale.Cuis
+	}
+
+	resp, err := uc.siatService.SolicitarCUIS(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().In(siat.LaPaz)
+	updatedCuis := resp.Codigo
+	pointOfSale.Cuis = &updatedCuis
+	pointOfSale.CuisCreatedAt = &now
+	if err := uc.pointOfSaleRepo.Update(pointOfSale); err != nil {
+		slog.Error("no se pudo persistir el CUIS en el punto de venta", "pos_id", pointOfSale.ID, "error", err)
+		return nil, errors.New("no se pudo persistir el CUIS en el punto de venta")
+	}
+
+	return &CuisResultado{Company: company, PointOfSale: pointOfSale, Response: resp}, nil
+}
+
+type CufdResultado struct {
+	Company     *domain.Company
+	PointOfSale *domain.PointOfSale
+	Response    *siat.RespuestaCufd
+}
+
+func (uc *SiatUsecase) SolicitarCUFD(ctx context.Context, companyID, posID string) (*CufdResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, err
+	}
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	}
+
+	req := siat.SolicitudCufd{
+		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:    company.CodigoSistema,
+		Nit:              company.Nit,
+		CodigoSucursal:   pointOfSale.CodigoSucursal,
+		Cuis:             *pointOfSale.Cuis,
+		CodigoModalidad:  uc.effectiveModalidad(),
+		CodigoPuntoVenta: resolveCodigoPuntoVenta(pointOfSale),
+	}
+
+	resp, err := uc.siatService.SolicitarCUFD(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().In(siat.LaPaz)
+	cufd := &domain.Cufd{
+		PointOfSaleID: pointOfSale.ID,
+		Cufd:          resp.Codigo,
+		ControlCode:   resp.CodigoControl,
+		Direccion:     resp.Direccion,
+		ValidFrom:     now,
+		ValidTo:       resp.FechaVigencia.Time,
+		Active:        true,
+	}
+	if err := uc.cufdRepo.Create(cufd); err != nil {
+		slog.Error("no se pudo persistir el CUFD", "pos_id", pointOfSale.ID, "error", err)
+		return nil, errors.New("no se pudo persistir el CUFD")
+	}
+	return &CufdResultado{Company: company, PointOfSale: pointOfSale, Response: resp}, nil
+}
+
+// --- Evento significativo ---
+
+type EventoSignificativoInput struct {
+	CodigoMotivoEvento    int    `json:"codigoMotivoEvento"`
+	Descripcion           string `json:"descripcion"`
+	CufdEvento            string `json:"cufdEvento"`
+	FechaHoraInicioEvento string `json:"fechaHoraInicioEvento"`
+	FechaHoraFinEvento    string `json:"fechaHoraFinEvento"`
+}
+
+type EventoSignificativoResultado struct {
+	Company     *domain.Company
+	PointOfSale *domain.PointOfSale
+	Response    *siat.ResultadoEventoSignificativo
+}
+
+// RegistrarEventoSignificativo registra una contingencia ante el SIAT
+// (registroEventoSignificativo). El CUFD vigente se usa como cufdEvento salvo
+// que el input lo sobrescriba (p.ej. el CUFD vencido durante la contingencia).
+func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, companyID, posID string, body EventoSignificativoInput) (*EventoSignificativoResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, err
+	}
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	}
+	cufd, err := uc.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
+	}
+
+	codigoMotivo := body.CodigoMotivoEvento
+	if codigoMotivo <= 0 {
+		codigoMotivo = siat.MotivoCorteInternet
+	}
+	descripcion := strings.TrimSpace(body.Descripcion)
+	if descripcion == "" {
+		descripcion = "Corte del servicio de internet"
+	}
+	cufdEvento := strings.TrimSpace(body.CufdEvento)
+	if cufdEvento == "" {
+		cufdEvento = cufd.Cufd
+	}
+
+	inicio, err := ParseFechaSiat(body.FechaHoraInicioEvento)
+	if err != nil {
+		return nil, domain.NewBadRequestError("fechaHoraInicioEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)")
+	}
+	fin, err := ParseFechaSiat(body.FechaHoraFinEvento)
+	if err != nil {
+		return nil, domain.NewBadRequestError("fechaHoraFinEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)")
+	}
+
+	req := siat.SolicitudEventoSignificativo{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      resolveCodigoPuntoVenta(pointOfSale),
+		Cuis:                  *pointOfSale.Cuis,
+		Cufd:                  cufd.Cufd,
+		CufdEvento:            cufdEvento,
+		CodigoMotivoEvento:    codigoMotivo,
+		Descripcion:           descripcion,
+		FechaHoraInicioEvento: inicio,
+		FechaHoraFinEvento:    fin,
+	}
+	result, err := uc.siatService.RegistrarEventoSignificativo(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Se persiste el evento registrado (con su codigoRecepcion del SIAT) para
+	// que el envío de paquetes pueda resolver automáticamente el codigoEvento.
+	if uc.contingencyRepo != nil && result != nil && result.Transaccion && result.CodigoRecepcion != "" {
+		ev := &domain.ContingencyEvent{
+			PointOfSaleID: pointOfSale.ID,
+			Reason:        motivoEventoAReason(codigoMotivo),
+			Description:   &descripcion,
+			StartDate:     inicio,
+			EndDate:       &fin,
+			SiatEventCode: &result.CodigoRecepcion,
+			IsSynced:      true,
+		}
+		if err := uc.contingencyRepo.Create(ev); err != nil {
+			// El evento SIAT ya se registró exitosamente; la persistencia local es
+			// complementaria. Un error aquí implica que la resolución automática de
+			// codigoEvento no funcionará para envíos posteriores de paquetes.
+			slog.Error("no se pudo persistir evento de contingencia",
+				"siat_code", result.CodigoRecepcion, "pos_id", pointOfSale.ID, "error", err)
+		}
+	}
+
+	return &EventoSignificativoResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// motivoEventoAReason traduce el codigoMotivoEvento del catálogo del SIAT a la
+// razón de contingencia local (enum de models.ContingencyReason).
+func motivoEventoAReason(motivo int) string {
+	if motivo == siat.MotivoCorteInternet {
+		return string(models.ReasonFallaInternet)
+	}
+	return string(models.ReasonOtro)
+}
+
+// --- Paquetes / lotes / compras / firma ---
+
+type PaqueteInput struct {
+	CodigoEvento  int                     `json:"codigoEvento"`
+	Descripcion   string                  `json:"descripcion"`
+	CodigoEmision int                     `json:"codigoEmision"`
+	Facturas      []siat.SolicitudFactura `json:"facturas"`
+}
+
+type MasivaInput struct {
+	CodigoEmision int                     `json:"codigoEmision"`
+	Facturas      []siat.SolicitudFactura `json:"facturas"`
+}
+
+type ComprasInput struct {
+	Descripcion      string    `json:"descripcion"`
+	TipoCompra       int       `json:"tipoCompra"`
+	Archivo          string    `json:"archivo"`
+	HashArchivo      string    `json:"hashArchivo"`
+	CantidadFacturas int       `json:"cantidadFacturas"`
+	Gestion          int       `json:"gestion"`
+	Periodo          int       `json:"periodo"`
+	FechaEnvio       time.Time `json:"fechaEnvio"`
+}
+
+type PaqueteValidacionInput struct {
+	CodigoRecepcion string `json:"codigoRecepcion"`
+	CodigoEmision   int    `json:"codigoEmision"`
+	CodigoDocSector int    `json:"codigoDocumentoSector"`
+	CodigoTipoFact  int    `json:"codigoTipoFactura"`
+}
+
+type FirmaInput struct {
+	Xml string `json:"xml"`
+}
+
+type PaqueteResultado struct {
+	Company     *domain.Company
+	PointOfSale *domain.PointOfSale
+	Response    *siat.ResultadoPaquete
+}
+
+type ComprasResultado struct {
+	Company     *domain.Company
+	PointOfSale *domain.PointOfSale
+	Response    *siat.ResultadoCompras
+}
+
+type FirmaResultado struct {
+	Company     *domain.Company
+	PointOfSale *domain.PointOfSale
+	Response    *siat.ResultadoFirma
+}
+
+// buildSolicitudPaquete reúne la identidad del contribuyente (empresa + punto
+// de venta + CUIS/CUFD vigente) y la mezcla con los datos específicos del
+// paquete enviados en el body (codigoEvento, descripcion, codigoEmision y
+// facturas).
+func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body PaqueteInput) (*siat.SolicitudPaqueteFactura, *domain.Company, *domain.PointOfSale, error) {
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, nil, nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	}
+	cufd, err := uc.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		return nil, nil, nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
+	}
+
+	modalidad := uc.effectiveModalidad()
+	var facturasProcesadas []siat.SolicitudFactura
+	for _, f := range body.Facturas {
+		f.CodigoAmbiente = company.Ambiente.CodigoAmbiente()
+		f.CodigoSistema = company.CodigoSistema
+		f.Nit = company.Nit
+		f.Modalidad = modalidad
+		f.CodigoSucursal = pointOfSale.CodigoSucursal
+		f.CodigoPuntoVenta = resolveCodigoPuntoVenta(pointOfSale)
+		f.Cuis = *pointOfSale.Cuis
+		f.Cufd = cufd.Cufd
+		f.CodigoControl = cufd.ControlCode
+
+		if f.FechaEmision.IsZero() {
+			f.FechaEmision = time.Now().In(siat.LaPaz)
+		}
+		facturasProcesadas = append(facturasProcesadas, f)
+	}
+
+	// Resolver documento-sector desde la primera factura del paquete o desde la
+	// empresa (catálogo actividadesDocumentoSector).  El hardcode "1" provocaba
+	// que facturas del sector educativo (11) se enviaran con sector incorrecto.
+	codigoDocSector := 0
+	codigoTipoFact := 0
+	if len(facturasProcesadas) > 0 {
+		codigoDocSector = facturasProcesadas[0].CodigoDocumentoSector
+		codigoTipoFact = facturasProcesadas[0].CodigoTipoFactura
+	}
+	if codigoDocSector <= 0 {
+		codigoDocSector = uc.ResolveDocumentoSector(company)
+	}
+	if codigoTipoFact <= 0 {
+		codigoTipoFact = 1
+	}
+
+	req := &siat.SolicitudPaqueteFactura{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             modalidad,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      resolveCodigoPuntoVenta(pointOfSale),
+		Cuis:                  *pointOfSale.Cuis,
+		Cufd:                  cufd.Cufd,
+		CodigoControl:         cufd.ControlCode,
+		CodigoDocumentoSector: codigoDocSector,
+		CodigoTipoFactura:     codigoTipoFact,
+		CodigoEmision:         body.CodigoEmision,
+		CodigoEvento:          int64(body.CodigoEvento),
+		Descripcion:           body.Descripcion,
+		Facturas:              facturasProcesadas,
+	}
+	return req, company, pointOfSale, nil
+}
+
+// EnviarPaquete envía al SIAT un paquete de facturas (recepcionPaqueteFactura),
+// en el contexto de un evento significativo registrado (codigoEvento).
+func (uc *SiatUsecase) EnviarPaquete(ctx context.Context, companyID, posID string, body PaqueteInput) (*PaqueteResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	if len(body.Facturas) == 0 {
+		return nil, domain.NewBadRequestError("El paquete debe contener al menos una factura en el campo facturas")
+	}
+	req, company, pointOfSale, err := uc.buildSolicitudPaquete(companyID, posID, body)
+	if err != nil {
+		return nil, err
+	}
+
+	// codigoEvento debe ser el codigoRecepcion del último evento significativo
+	// registrado en el SIAT; si no se envía, se resuelve automáticamente desde
+	// el último evento persistido del punto de venta. Un código inventado hace
+	// que el SIAT lo rechace (código 942).
+	if req.CodigoEvento <= 0 && uc.contingencyRepo != nil {
+		if ev, evErr := uc.contingencyRepo.GetLatestByPointOfSale(pointOfSale.ID); evErr == nil && ev.SiatEventCode != nil {
+			if code, cErr := strconv.ParseInt(*ev.SiatEventCode, 10, 64); cErr == nil && code > 0 {
+				req.CodigoEvento = code
+			}
+		}
+	}
+	if req.CodigoEvento <= 0 {
+		return nil, domain.NewBadRequestError("codigoEvento es obligatorio: registre primero un evento significativo (POST /evento-significativo/{companyId}/{pointOfSaleId}) y use el codigoRecepcion de la respuesta, o envíelo vacío para tomar el último evento registrado")
+	}
+
+	result, err := uc.siatService.EnviarPaqueteFactura(ctx, *req)
+	if err != nil {
+		return nil, err
+	}
+	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypePaquete, req.CodigoDocumentoSector, int(req.CodigoEmision), len(req.Facturas))
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// ValidarPaquete consulta al SIAT la validación de un paquete ya enviado
+// (validacionRecepcionPaqueteFactura).
+func (uc *SiatUsecase) ValidarPaquete(ctx context.Context, companyID, posID string, body PaqueteValidacionInput) (*PaqueteResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.CodigoRecepcion) == "" {
+		return nil, domain.NewBadRequestError("codigoRecepcion es obligatorio (código devuelto por el envío del paquete)")
+	}
+
+	req, company, pointOfSale, err := uc.buildSolicitudPaquete(companyID, posID, PaqueteInput{
+		CodigoEmision: body.CodigoEmision,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if body.CodigoDocSector > 0 {
+		req.CodigoDocumentoSector = body.CodigoDocSector
+	}
+	if body.CodigoTipoFact > 0 {
+		req.CodigoTipoFactura = body.CodigoTipoFact
+	}
+
+	result, err := uc.siatService.ValidarPaqueteFactura(ctx, *req, body.CodigoRecepcion)
+	if err != nil {
+		return nil, err
+	}
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// buildSolicitudMasiva reúne la identidad del contribuyente y los datos del lote.
+func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body MasivaInput) (*siat.SolicitudMasivaFactura, *domain.Company, *domain.PointOfSale, error) {
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, nil, nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	}
+	cufd, err := uc.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		return nil, nil, nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
+	}
+
+	modalidad := uc.effectiveModalidad()
+
+	// Resolver documento-sector desde la primera factura del lote o desde la
+	// empresa (catálogo actividadesDocumentoSector).
+	codigoDocSector := 0
+	codigoTipoFact := 0
+	if len(body.Facturas) > 0 {
+		codigoDocSector = body.Facturas[0].CodigoDocumentoSector
+		codigoTipoFact = body.Facturas[0].CodigoTipoFactura
+	}
+	if codigoDocSector <= 0 {
+		codigoDocSector = uc.ResolveDocumentoSector(company)
+	}
+	if codigoTipoFact <= 0 {
+		codigoTipoFact = 1
+	}
+
+	req := &siat.SolicitudMasivaFactura{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             modalidad,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      resolveCodigoPuntoVenta(pointOfSale),
+		Cuis:                  *pointOfSale.Cuis,
+		Cufd:                  cufd.Cufd,
+		CodigoControl:         cufd.ControlCode,
+		CodigoDocumentoSector: codigoDocSector,
+		CodigoTipoFactura:     codigoTipoFact,
+		CodigoEmision:         body.CodigoEmision,
+		Facturas:              body.Facturas,
+	}
+	return req, company, pointOfSale, nil
+}
+
+// EnviarMasiva envía al SIAT un lote de facturas por emisión masiva
+// (recepcionMasivaFactura, codigoEmision = 3).
+func (uc *SiatUsecase) EnviarMasiva(ctx context.Context, companyID, posID string, body MasivaInput) (*PaqueteResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	if len(body.Facturas) == 0 {
+		return nil, domain.NewBadRequestError("El lote debe contener al menos una factura en el campo facturas")
+	}
+
+	req, company, pointOfSale, err := uc.buildSolicitudMasiva(companyID, posID, body)
+	if err != nil {
+		return nil, err
+	}
+	result, err := uc.siatService.EnviarMasivaFacturas(ctx, *req)
+	if err != nil {
+		return nil, err
+	}
+	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypeMasiva, req.CodigoDocumentoSector, req.CodigoEmision, len(req.Facturas))
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// ValidarMasiva consulta al SIAT la validación de un lote ya enviado
+// (validacionRecepcionMasivaFactura).
+func (uc *SiatUsecase) ValidarMasiva(ctx context.Context, companyID, posID string, body PaqueteValidacionInput) (*PaqueteResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.CodigoRecepcion) == "" {
+		return nil, domain.NewBadRequestError("codigoRecepcion es obligatorio (código devuelto por el envío del lote)")
+	}
+
+	req, company, pointOfSale, err := uc.buildSolicitudMasiva(companyID, posID, MasivaInput{
+		CodigoEmision: body.CodigoEmision,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if body.CodigoDocSector > 0 {
+		req.CodigoDocumentoSector = body.CodigoDocSector
+	}
+	if body.CodigoTipoFact > 0 {
+		req.CodigoTipoFactura = body.CodigoTipoFact
+	}
+
+	result, err := uc.siatService.ValidarMasivaFacturas(ctx, *req, body.CodigoRecepcion)
+	if err != nil {
+		return nil, err
+	}
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// EnviarCompras registra en el SIAT un paquete de facturas de compras
+// (recepcionPaqueteCompras, Etapa XI). codigoPuntoVenta no aplica en el
+// servicio de compras.
+func (uc *SiatUsecase) EnviarCompras(ctx context.Context, companyID, posID string, body ComprasInput) (*ComprasResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.Archivo) == "" || strings.TrimSpace(body.HashArchivo) == "" {
+		return nil, domain.NewBadRequestError("archivo y hashArchivo son obligatorios (Base64 del TAR.GZ y su SHA-256)")
+	}
+
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, err
+	}
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	}
+	cufd, err := uc.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
+	}
+
+	req := siat.SolicitudCompras{
+		Descripcion:      body.Descripcion,
+		TipoCompra:       body.TipoCompra,
+		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:    company.CodigoSistema,
+		Nit:              company.Nit,
+		CodigoSucursal:   pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta: 0,
+		Cuis:             *pointOfSale.Cuis,
+		Cufd:             cufd.Cufd,
+		Archivo:          body.Archivo,
+		HashArchivo:      body.HashArchivo,
+		CantidadFacturas: body.CantidadFacturas,
+		Gestion:          body.Gestion,
+		Periodo:          body.Periodo,
+		FechaEnvio:       body.FechaEnvio,
+	}
+
+	result, err := uc.siatService.EnviarCompras(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypeCompras, 19, 0, body.CantidadFacturas)
+	return &ComprasResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// FirmarFactura firma digitalmente el XML de una factura con el certificado de
+// la empresa (Etapa VIII - Firma Digital).
+func (uc *SiatUsecase) FirmarFactura(ctx context.Context, companyID, posID string, body FirmaInput) (*FirmaResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.Xml) == "" {
+		return nil, domain.NewBadRequestError("xml es obligatorio (la cadena del XML de la factura a firmar)")
+	}
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := uc.siatService.FirmarFacturaXML(ctx, body.Xml)
+	if err != nil {
+		return nil, err
+	}
+	return &FirmaResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// persistSentPackage guarda el registro de auditoría del envío al SIAT. Un
+// fallo no revierte el envío pero sí se loguea: perder la trazabilidad fiscal
+// (codigoRecepcion ↔ facturas) sin rastro es inaceptable.
+func (uc *SiatUsecase) persistSentPackage(company *domain.Company, pos *domain.PointOfSale, codigoRecepcion string, tipo domain.SentPackageType, docSector, codigoEmision, cantidad int) {
+	if uc.sentPackageRepo == nil || codigoRecepcion == "" {
+		return
+	}
+	pkg := &domain.SentPackage{
+		CompanyId:             company.ID,
+		PointOfSaleId:         pos.ID,
+		CodigoRecepcion:       codigoRecepcion,
+		Type:                  tipo,
+		CodigoDocumentoSector: docSector,
+		CodigoEmision:         codigoEmision,
+		CantidadFacturas:      cantidad,
+		Status:                domain.PackageStatusPending,
+	}
+	if err := uc.sentPackageRepo.Create(pkg); err != nil {
+		slog.Error("no se pudo persistir el registro de paquete enviado",
+			"codigo_recepcion", codigoRecepcion, "pos_id", pos.ID, "tipo", tipo, "error", err)
+	}
+}
+
+// --- Sincronización ---
+
+type SincronizacionOpResult struct {
+	Operation   string `json:"operation"`
+	Transaccion bool   `json:"transaccion"`
+	Codigos     int    `json:"codigos"`
+	FechaHora   string `json:"fechaHora,omitempty"`
+}
+
+type SincronizacionOpError struct {
+	Operation string `json:"operation"`
+	Error     string `json:"error"`
+}
+
+type SincronizacionResultado struct {
+	Company    *domain.Company
+	PointOfSale *domain.PointOfSale
+	Operations []SincronizacionOpResult
+	Errors     []SincronizacionOpError
+}
+
+// Sincronizar baja catálogos del SIAT. Con opRaw vacío sincroniza todas las
+// operaciones del SDK; con ?operation=X solo esa.
+func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw string) (*SincronizacionResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, err
+	}
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	}
+
+	// El código de punto de venta que usa el CUIS debe ser el mismo en todas
+	// las operaciones (preferir el código registrado ante SIAT).
+	req := siat.SolicitudSincronizacion{
+		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:    company.CodigoSistema,
+		Nit:              company.Nit,
+		CodigoSucursal:   pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta: pointOfSale.CodigoPuntoVenta,
+		Cuis:             *pointOfSale.Cuis,
+	}
+
+	out := &SincronizacionResultado{Company: company, PointOfSale: pointOfSale}
+
+	if opRaw != "" {
+		op, ok := siat.ParseSincronizacionOp(opRaw)
+		if !ok {
+			return nil, domain.NewBadRequestError("Operación de sincronización desconocida: " + opRaw)
+		}
+		result, err := uc.siatService.Sincronizar(ctx, req, op)
+		if err != nil {
+			return nil, err
+		}
+		if perr := uc.PersistSincronizacion(company.ID, op, result); perr != nil {
+			return nil, perr
+		}
+		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
+		return out, nil
+	}
+
+	for _, op := range siat.SincronizacionOperations {
+		result, err := uc.siatService.Sincronizar(ctx, req, op)
+		if err != nil {
+			out.Errors = append(out.Errors, SincronizacionOpError{Operation: string(op), Error: err.Error()})
+			continue
+		}
+		if perr := uc.PersistSincronizacion(company.ID, op, result); perr != nil {
+			out.Errors = append(out.Errors, SincronizacionOpError{Operation: string(op), Error: "persistencia: " + perr.Error()})
+		}
+		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
+	}
+	return out, nil
+}
+
+func toSincronizacionOpResult(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) SincronizacionOpResult {
+	out := SincronizacionOpResult{
+		Operation:   string(op),
+		Transaccion: res.Transaccion,
+		Codigos:     len(res.Codigos),
+	}
+	if !res.FechaHora.IsZero() {
+		out.FechaHora = res.FechaHora.Format(time.RFC3339Nano)
+	}
+	return out
+}
+
+// PersistSincronizacion guarda el catálogo sincronizado: tipos de punto de
+// venta en tipo_punto_ventas y el resto en catalogs. FechaHora y
+// VerificarComunicacion no son catálogos y no se persisten.
+func (uc *SiatUsecase) PersistSincronizacion(companyID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) error {
+	if res == nil || !res.Transaccion {
+		return nil
+	}
+	now := time.Now().In(siat.LaPaz)
+
+	if op == siat.OpTipoPuntoVenta {
+		tipos := make([]domain.TipoPuntoVenta, 0, len(res.Codigos))
+		for _, c := range res.Codigos {
+			tipos = append(tipos, domain.TipoPuntoVenta{
+				CodigoClasificador: c.CodigoClasificador,
+				Descripcion:        c.Descripcion,
+			})
+		}
+		return uc.tipoPVRepo.Replace(companyID, tipos, now)
+	}
+
+	switch op {
+	case siat.OpFechaHora, siat.OpVerificarComunicacion:
+		return nil
+	}
+
+	items := make([]domain.CatalogItem, 0, len(res.Codigos))
+	for _, c := range res.Codigos {
+		items = append(items, domain.CatalogItem{
+			Codigo:      c.CodigoClasificador,
+			Descripcion: c.Descripcion,
+			Tipo:        string(op),
+		})
+	}
+	return uc.catalogRepo.Replace(companyID, string(op), items, now)
+}
+
+// ResolveDocumentoSector determina el documento-sector del SIAT para la
+// actividad económica de la empresa consultando el catálogo sincronizado
+// actividadesDocumentoSector. Prefiere la factura de compraventa (FCV); si la
+// actividad solo está asociada a sectores educativos (FSEDU), usa ese sector.
+func (uc *SiatUsecase) ResolveDocumentoSector(company *domain.Company) int {
+	if uc.catalogRepo == nil || company.CodigoActividad == nil {
+		return siat.SectorCompraVenta
+	}
+	actividad := strings.TrimSpace(*company.CodigoActividad)
+	if actividad == "" {
+		return siat.SectorCompraVenta
+	}
+	items, err := uc.catalogRepo.List(company.ID, "actividadesDocumentoSector")
+	if err != nil || len(items) == 0 {
+		return siat.SectorCompraVenta
+	}
+	found := 0
+	for _, item := range items {
+		fields := strings.Split(item.Descripcion, "|")
+		if len(fields) < 2 || strings.TrimSpace(fields[0]) != actividad {
+			continue
+		}
+		tipo := strings.TrimSpace(fields[1])
+		if tipo == "FCV" {
+			return item.Codigo
+		}
+		if tipo == "FSEDU" {
+			found = item.Codigo
+		}
+	}
+	if found > 0 {
+		return found
+	}
+	return siat.SectorCompraVenta
+}
+
+// --- Documentos de ajuste (NC/ND) ---
+
+type DocumentoAjusteInput struct {
+	NumeroFactura         int64                 `json:"numeroFactura"`
+	CufFacturaOriginal    string                `json:"cufFacturaOriginal"`
+	CodigoDocumentoSector int                   `json:"codigoDocumentoSector"`
+	CodigoTipoFactura     int                   `json:"codigoTipoFactura"`
+	TipoNota              int                   `json:"tipoNota"`
+	Motivo                string                `json:"motivo"`
+	CodigoMetodoPago      int                   `json:"codigoMetodoPago"`
+	CodigoMoneda          int                   `json:"codigoMoneda"`
+	TipoCambio            float64               `json:"tipoCambio"`
+	MontoTotal            float64               `json:"montoTotal"`
+	Leyenda               string                `json:"leyenda"`
+	Cliente               siat.ClienteFactura   `json:"cliente"`
+	Items                 []siat.ItemFactura    `json:"items"`
+}
+
+type DocumentoAjusteResultado struct {
+	Company     *domain.Company
+	PointOfSale *domain.PointOfSale
+	Response    *siat.ResultadoDocumentoAjuste
+}
+
+// EmitirDocumentoAjuste emite un documento de ajuste (nota de crédito o
+// débito) ante el SIAT. La identidad SIAT (CUIS/CUFD/código de control/
+// modalidad) se resuelve SIEMPRE desde la base de datos — nunca del request —
+// para impedir emitir NC/ND con un CUFD vencido o de otro punto de venta.
+func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, posID string, body DocumentoAjusteInput) (*DocumentoAjusteResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.CufFacturaOriginal) == "" {
+		return nil, domain.NewBadRequestError("cufFacturaOriginal es obligatorio para documentos de ajuste")
+	}
+	if body.TipoNota != 1 && body.TipoNota != 2 {
+		return nil, domain.NewBadRequestError("tipoNota debe ser 1 (nota de crédito) o 2 (nota de débito)")
+	}
+
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+	if err != nil {
+		return nil, err
+	}
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	}
+	cufd, err := uc.cufdRepo.GetActiveByPos(pointOfSale.ID)
+	if err != nil {
+		return nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
+	}
+
+	usuario := "SUPAY"
+	if company.UsuarioSiat != "" {
+		usuario = company.UsuarioSiat
+	}
+
+	req := siat.SolicitudDocumentoAjuste{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             uc.effectiveModalidad(),
+		NumeroFactura:         body.NumeroFactura,
+		CodigoSucursal:        pointOfSale.CodigoSucursal,
+		CodigoPuntoVenta:      pointOfSale.CodigoPuntoVenta,
+		Cuis:                  *pointOfSale.Cuis,
+		Cufd:                  cufd.Cufd,
+		CodigoControl:         cufd.ControlCode,
+		FechaEmision:          time.Now().In(siat.LaPaz),
+		Usuario:               usuario,
+		TipoNota:              siat.TipoNota(body.TipoNota),
+		CufFacturaOriginal:    body.CufFacturaOriginal,
+		CodigoDocumentoSector: body.CodigoDocumentoSector,
+		CodigoTipoFactura:     body.CodigoTipoFactura,
+		RazonSocialEmisor:     company.BusinessName,
+		Municipio:             company.Municipio,
+		Direccion:             company.Direccion,
+		Telefono:              &company.Telefono,
+		Cliente:               body.Cliente,
+		CodigoMetodoPago:      body.CodigoMetodoPago,
+		CodigoMoneda:          body.CodigoMoneda,
+		TipoCambio:            body.TipoCambio,
+		MontoTotal:            body.MontoTotal,
+		Leyenda:               body.Leyenda,
+		Motivo:                body.Motivo,
+		Items:                 body.Items,
+	}
+
+	result, err := uc.siatService.EmitirDocumentoAjuste(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &DocumentoAjusteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+}
+
+// ParseFechaSiat parsea una fecha/hora del SIAT en formato UTC extendido sin
+// zona horaria (YYYY-MM-DDTHH:mm:ss.SSS). Si el valor está vacío usa la fecha
+// y hora actual en Bolivia.
+func ParseFechaSiat(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Now().In(siat.LaPaz), nil
+	}
+	parsed, err := time.ParseInLocation("2006-01-02T15:04:05.000", value, siat.LaPaz)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed, nil
+}

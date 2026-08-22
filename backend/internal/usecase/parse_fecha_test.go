@@ -1,4 +1,4 @@
-package http
+package usecase
 
 import (
 	"testing"
@@ -8,9 +8,9 @@ import (
 )
 
 func TestParseFechaSiatLaPaz(t *testing.T) {
-	got, err := parseFechaSiat("2026-08-14T09:00:00.000")
+	got, err := ParseFechaSiat("2026-08-14T09:00:00.000")
 	if err != nil {
-		t.Fatalf("parseFechaSiat: %v", err)
+		t.Fatalf("ParseFechaSiat: %v", err)
 	}
 	if got.In(siat.LaPaz).Hour() != 9 {
 		t.Errorf("se esperaba 09:00 en America/La_Paz, got %v", got.In(siat.LaPaz))
@@ -21,9 +21,9 @@ func TestParseFechaSiatLaPaz(t *testing.T) {
 }
 
 func TestParseFechaSiatEmptyUsesLaPaz(t *testing.T) {
-	got, err := parseFechaSiat("")
+	got, err := ParseFechaSiat("")
 	if err != nil {
-		t.Fatalf("parseFechaSiat: %v", err)
+		t.Fatalf("ParseFechaSiat: %v", err)
 	}
 	now := time.Now()
 	if got.In(siat.LaPaz).Year() != now.Year() || got.In(siat.LaPaz).Day() != now.Day() {
@@ -32,7 +32,7 @@ func TestParseFechaSiatEmptyUsesLaPaz(t *testing.T) {
 }
 
 func TestParseFechaSiatInvalid(t *testing.T) {
-	if _, err := parseFechaSiat("2026-13-40T99:00:00.000"); err == nil {
+	if _, err := ParseFechaSiat("2026-13-40T99:00:00.000"); err == nil {
 		t.Fatal("se esperaba error para fecha inválida")
 	}
 }

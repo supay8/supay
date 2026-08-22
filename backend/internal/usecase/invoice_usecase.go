@@ -154,6 +154,10 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		if req.PeriodoFacturado == nil || strings.TrimSpace(*req.PeriodoFacturado) == "" {
 			return nil, errors.New("el documento-sector educativo (11) requiere periodo_facturado")
 		}
+	} else {
+		// Purga defensiva: cualquier dato educativo se descarta fuera del sector 11.
+		req.NombreEstudiante = nil
+		req.PeriodoFacturado = nil
 	}
 
 	// La fecha de emisión debe expresarse en hora local de Bolivia (UTC-4): el

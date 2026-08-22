@@ -71,9 +71,55 @@ func (r *PostgresInvoiceRepository) ListByPointOfSale(pointOfSaleID string) ([]*
 	return res, nil
 }
 
+// invoiceMutableFields son las únicas columnas que la lógica de negocio muta
+// después de crear la factura. Update() es parcial sobre estas columnas para
+// que una escritura con datos obsoletos no pise campos no relacionados
+// (montos, número correlativo, etc.).
+func invoiceMutableFields(inv *domain.Invoice) map[string]any {
+	return map[string]any{
+		"status":              models.InvoiceStatus(inv.Status),
+		"cuf":                 inv.Cuf,
+		"xml":                 inv.Xml,
+		"xml_hash":            inv.XmlHash,
+		"siat_reception_code": inv.SiatReceptionCode,
+		"siat_mensajes":       inv.SiatMensajes,
+		"motivo_anulacion":    inv.MotivoAnulacion,
+		"fecha_anulacion":     inv.FechaAnulacion,
+	}
+}
+
 func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
-	m := toModelInvoice(inv)
-	return r.db.Save(&m).Error
+	res := r.db.Model(&models.Invoice{}).
+		Where("id = ?", inv.ID).
+		Updates(invoiceMutableFields(inv))
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		var count int64
+		if err := r.db.Model(&models.Invoice{}).Where("id = ?", inv.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			return gorm.ErrRecordNotFound
+		}
+	}
+	return nil
+}
+
+func (r *PostgresInvoiceRepository) ClaimStatus(id string, from domain.InvoiceStatus, to domain.InvoiceStatus, fields map[string]any) (bool, error) {
+	values := make(map[string]any, len(fields)+1)
+	for k, v := range fields {
+		values[k] = v
+	}
+	values["status"] = models.InvoiceStatus(to)
+	res := r.db.Model(&models.Invoice{}).
+		Where("id = ? AND status = ?", id, models.InvoiceStatus(from)).
+		Updates(values)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
@@ -84,6 +130,18 @@ func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
 		return false, res.Error
 	}
 	return res.RowsAffected == 1, nil
+}
+
+func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+	// updated_at IS NULL cubre filas históricas previas a la columna.
+	res := r.db.Model(&models.Invoice{}).
+		Where("status = ? AND (updated_at IS NULL OR updated_at < ?)", models.StatusSending, cutoff).
+		Update("status", models.StatusPending)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*domain.Cufd, error) {

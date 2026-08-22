@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -77,20 +79,23 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	// un rechazo del SIAT queda persistido como REJECTED.
 	rollback := func() {
 		inv.Status = domain.InvoicePending
-		_ = uc.invoiceRepo.Update(inv)
+		if err := uc.invoiceRepo.Update(inv); err != nil {
+			slog.Error("emisión: no se pudo revertir la factura a PENDING",
+				"invoice_id", inv.ID, "error", err)
+		}
 	}
 
 	if uc.siatService == nil {
 		rollback()
 		return nil, errors.New("el servicio SIAT no está disponible")
 	}
-
 	req, err := uc.buildSolicitudFactura(inv)
 	if err != nil {
 		rollback()
 		return nil, err
 	}
-
+	log.Println("viendo la factura")
+	log.Println(req)
 	result, err := uc.siatService.EmitirFactura(ctx, *req)
 	if err != nil {
 		rollback()
@@ -121,10 +126,13 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	} else {
 		inv.Status = domain.InvoiceRejected
 	}
-	if err := uc.invoiceRepo.Update(inv); err != nil {
+	log.Println("bloque 2")
+
+	if err := uc.persistResultadoConReintentos(inv, result); err != nil {
 		return nil, err
 	}
-
+	log.Println("bloque 3")
+	log.Println(result)
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
 			CodigoEstado:    result.CodigoEstado,
@@ -132,8 +140,37 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 			Mensajes:        result.Mensajes,
 		}
 	}
+	log.Println("bloque 4")
 
 	return inv, nil
+}
+
+// persistResultadoConReintentos persiste el resultado de la emisión reintentando
+// ante fallos transitorios del repositorio. Es crítico: el SIAT ya aceptó (o
+// rechazó) la factura, así que perder el CUF dejaría la factura irrecuperable
+// por API. Si aun así falla, se loguea a nivel crítico con los datos para
+// conciliar manualmente (el reaper devolverá la factura a PENDING y el reenvío
+// con el mismo numeroFactura/CUF es idempotente ante el SIAT).
+func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, result *siat.ResultadoEmision) error {
+	const maxIntentos = 3
+	var err error
+	for intento := 1; intento <= maxIntentos; intento++ {
+		if err = uc.invoiceRepo.Update(inv); err == nil {
+			return nil
+		}
+		slog.Error("emisión: fallo al persistir resultado del SIAT",
+			"invoice_id", inv.ID, "intento", intento, "error", err)
+		time.Sleep(time.Duration(intento) * 200 * time.Millisecond)
+	}
+	slog.Error("emisión: resultado SIAT NO PERSISTIDO tras reintentos — conciliar manualmente",
+		"invoice_id", inv.ID,
+		"numero_factura", inv.InvoiceNumber,
+		"punto_venta_id", inv.PointOfSaleId,
+		"cuf", result.Cuf,
+		"codigo_recepcion", result.CodigoRecepcion,
+		"codigo_estado", result.CodigoEstado,
+		"transaccion", result.Transaccion)
+	return fmt.Errorf("no se pudo persistir el resultado de la emisión tras %d intentos: %w", maxIntentos, err)
 }
 
 // VerifyStatus consulta al SIAT el estado real de un documento emitido
@@ -220,14 +257,29 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	}
 
 	now := time.Now()
+	fields := map[string]any{
+		"motivo_anulacion": codigoMotivo,
+		"fecha_anulacion":  now,
+	}
+	if result.CodigoRecepcion != "" {
+		fields["siat_reception_code"] = result.CodigoRecepcion
+	}
+	// Transición condicional ACCEPTED->CANCELLED: si otra anulación concurrente
+	// ya la aplicó, aquí llega false en lugar de pisar el estado.
+	claimed, err := uc.invoiceRepo.ClaimStatus(id, domain.InvoiceAccepted, domain.InvoiceCancelled, fields)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, errors.New("la factura ya no está en estado ACCEPTED (posible anulación concurrente)")
+	}
+
 	inv.Status = domain.InvoiceCancelled
 	inv.MotivoAnulacion = &codigoMotivo
 	inv.FechaAnulacion = &now
-	if result.CodigoRecepcion != "" {
-		inv.SiatReceptionCode = &result.CodigoRecepcion
-	}
-	if err := uc.invoiceRepo.Update(inv); err != nil {
-		return nil, err
+	if code, ok := fields["siat_reception_code"]; ok {
+		codeStr := code.(string)
+		inv.SiatReceptionCode = &codeStr
 	}
 
 	return inv, nil
@@ -273,14 +325,28 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 		}
 	}
 
+	fields := map[string]any{
+		"motivo_anulacion": nil,
+		"fecha_anulacion":  nil,
+	}
+	if result.CodigoRecepcion != "" {
+		fields["siat_reception_code"] = result.CodigoRecepcion
+	}
+	// Transición condicional CANCELLED->ACCEPTED (simétrica a Annul).
+	claimed, err := uc.invoiceRepo.ClaimStatus(id, domain.InvoiceCancelled, domain.InvoiceAccepted, fields)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, errors.New("la factura ya no está en estado CANCELLED (posible reversión concurrente)")
+	}
+
 	inv.Status = domain.InvoiceAccepted
 	inv.MotivoAnulacion = nil
 	inv.FechaAnulacion = nil
-	if result.CodigoRecepcion != "" {
-		inv.SiatReceptionCode = &result.CodigoRecepcion
-	}
-	if err := uc.invoiceRepo.Update(inv); err != nil {
-		return nil, err
+	if code, ok := fields["siat_reception_code"]; ok {
+		codeStr := code.(string)
+		inv.SiatReceptionCode = &codeStr
 	}
 
 	return inv, nil
@@ -500,11 +566,13 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 	}
 
 	var nombreEstudiante, periodoFacturado string
-	if inv.NombreEstudiante != nil {
-		nombreEstudiante = strings.TrimSpace(*inv.NombreEstudiante)
-	}
-	if inv.PeriodoFacturado != nil {
-		periodoFacturado = strings.TrimSpace(*inv.PeriodoFacturado)
+	if sector == siat.SectorEducativo {
+		if inv.NombreEstudiante != nil {
+			nombreEstudiante = strings.TrimSpace(*inv.NombreEstudiante)
+		}
+		if inv.PeriodoFacturado != nil {
+			periodoFacturado = strings.TrimSpace(*inv.PeriodoFacturado)
+		}
 	}
 
 	usuario := "SUPAY"

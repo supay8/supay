@@ -76,5 +76,15 @@ type InvoiceRepository interface {
 	// ClaimForEmission marca la factura como SENDING si está PENDING
 	// (transición atómica), retornando false si el estado ya no es PENDING.
 	ClaimForEmission(id string) (bool, error)
+	// ReleaseStaleSending revierte a PENDING las facturas atascadas en SENDING
+	// durante más de olderThan (crash del proceso, fallo del update final),
+	// devolviendo cuántas fueron liberadas.
+	ReleaseStaleSending(olderThan time.Duration) (int64, error)
+	// ClaimStatus aplica una transición de estado condicional: si la factura
+	// está en `from`, la mueve a `to` aplicando los campos indicados (nombres
+	// de columna) y devuelve true; si no, devuelve false sin tocar nada.
+	// Evita que operaciones concurrentes (p.ej. dos anulaciones) pasen ambos
+	// el chequeo de estado y pisen sus resultados.
+	ClaimStatus(id string, from InvoiceStatus, to InvoiceStatus, fields map[string]any) (bool, error)
 	FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*Cufd, error)
 }

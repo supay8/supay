@@ -19,6 +19,7 @@ type fakeInvoiceRepo struct {
 	claimCalls  int
 	updateCalls int
 	updateErr   error
+	activeCufd  *domain.Cufd
 }
 
 func newFakeInvoiceRepo() *fakeInvoiceRepo {
@@ -64,8 +65,41 @@ func (f *fakeInvoiceRepo) ClaimForEmission(id string) (bool, error) {
 	return true, nil
 }
 
+func (f *fakeInvoiceRepo) ReleaseStaleSending(time.Duration) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeInvoiceRepo) ClaimStatus(id string, from, to domain.InvoiceStatus, fields map[string]any) (bool, error) {
+	inv, ok := f.invoices[id]
+	if !ok || inv.Status != from {
+		return false, nil
+	}
+	inv.Status = to
+	for k, v := range fields {
+		switch k {
+		case "motivo_anulacion":
+			if m, ok := v.(int); ok {
+				inv.MotivoAnulacion = &m
+			} else if m, ok := v.(*int); ok {
+				inv.MotivoAnulacion = m
+			}
+		case "fecha_anulacion":
+			if t, ok := v.(time.Time); ok {
+				inv.FechaAnulacion = &t
+			} else if t, ok := v.(*time.Time); ok {
+				inv.FechaAnulacion = t
+			}
+		case "siat_reception_code":
+			if c, ok := v.(string); ok && c != "" {
+				inv.SiatReceptionCode = &c
+			}
+		}
+	}
+	return true, nil
+}
+
 func (f *fakeInvoiceRepo) FindActiveCufdForPointOfSale(string, time.Time) (*domain.Cufd, error) {
-	return nil, nil
+	return f.activeCufd, nil
 }
 
 type fakeCatalogRepo struct {
@@ -83,6 +117,44 @@ func (f *fakeCatalogRepo) List(_ string, tipo string) ([]*domain.CatalogItem, er
 func (f *fakeCatalogRepo) ListAll(string) (map[string][]*domain.CatalogItem, error) {
 	return f.items, nil
 }
+
+type fakeCompanyRepo struct {
+	company domain.Company
+}
+
+func (f *fakeCompanyRepo) Create(*domain.Company) error { return nil }
+func (f *fakeCompanyRepo) GetByNit(string) (*domain.Company, error) { return &f.company, nil }
+func (f *fakeCompanyRepo) GetByID(string) (*domain.Company, error)  { return &f.company, nil }
+func (f *fakeCompanyRepo) Update(*domain.Company) error             { return nil }
+func (f *fakeCompanyRepo) Delete(string) error                      { return nil }
+
+type fakeCustomerRepo struct {
+	customer domain.Customer
+}
+
+func (f *fakeCustomerRepo) Create(*domain.Customer) error { return nil }
+func (f *fakeCustomerRepo) GetByID(string) (*domain.Customer, error) {
+	return &f.customer, nil
+}
+func (f *fakeCustomerRepo) GetByCompanyAndDocument(string, string, string) (*domain.Customer, error) {
+	return &f.customer, nil
+}
+func (f *fakeCustomerRepo) List(string) ([]*domain.Customer, error) { return nil, nil }
+
+type fakePointOfSaleRepo struct {
+	pos domain.PointOfSale
+}
+
+func (f *fakePointOfSaleRepo) Create(*domain.PointOfSale) error { return nil }
+func (f *fakePointOfSaleRepo) GetByID(string) (*domain.PointOfSale, error) {
+	return &f.pos, nil
+}
+func (f *fakePointOfSaleRepo) List(string) ([]*domain.PointOfSale, error) { return nil, nil }
+func (f *fakePointOfSaleRepo) ListByBranch(string) ([]*domain.PointOfSale, error) {
+	return nil, nil
+}
+func (f *fakePointOfSaleRepo) Update(*domain.PointOfSale) error { return nil }
+func (f *fakePointOfSaleRepo) Delete(string) error              { return nil }
 
 type fakeEmissionService struct {
 	result    *siat.ResultadoEmision
@@ -841,6 +913,91 @@ func TestBuildSolicitudFacturaFSEDU(t *testing.T) {
 	}
 	if req.PeriodoFacturado != periodo {
 		t.Errorf("PeriodoFacturado=%q", req.PeriodoFacturado)
+	}
+}
+
+func TestBuildSolicitudFacturaNoArrastraCamposEducativosFueraDeSector11(t *testing.T) {
+	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
+	inv := testInvoice()
+	inv.CodigoDocumentoSector = 1
+	nombre := "No debe viajar"
+	periodo := "2026-1"
+	inv.NombreEstudiante = &nombre
+	inv.PeriodoFacturado = &periodo
+
+	req, err := uc.buildSolicitudFactura(inv)
+	if err != nil {
+		t.Fatalf("buildSolicitudFactura: %v", err)
+	}
+	if req.NombreEstudiante != "" {
+		t.Errorf("NombreEstudiante=%q, se esperaba vacío fuera del sector 11", req.NombreEstudiante)
+	}
+	if req.PeriodoFacturado != "" {
+		t.Errorf("PeriodoFacturado=%q, se esperaba vacío fuera del sector 11", req.PeriodoFacturado)
+	}
+}
+
+func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	repo.activeCufd = &domain.Cufd{
+		ID:         "cufd-1",
+		Cufd:       "CUFD-XYZ",
+		ControlCode: "CC-123",
+		ValidFrom:  time.Now().Add(-time.Hour),
+		ValidTo:    time.Now().Add(time.Hour),
+		Active:     true,
+	}
+	posRepo := &fakePointOfSaleRepo{pos: domain.PointOfSale{
+		ID:               "pos-1",
+		CompanyId:        "comp-1",
+		CodigoSucursal:   0,
+		CodigoPuntoVenta: 3,
+		Cuis:             strPtr("D17EEF19"),
+		IsActive:         true,
+	}}
+	customerRepo := &fakeCustomerRepo{customer: domain.Customer{
+		ID:             "cust-1",
+		CompanyId:      "comp-1",
+		DocumentType:   "CI",
+		DocumentNumber: "1234567",
+		Name:           "Juan Perez",
+	}}
+	companyRepo := &fakeCompanyRepo{company: domain.Company{
+		ID:            "comp-1",
+		Nit:           "9971522011",
+		BusinessName:  "EMPRESA PILOTO SRL",
+		CodigoSistema: "228452C38ED8739408AB6",
+		Ambiente:      domain.EnvironmentPiloto,
+		Municipio:     "LA PAZ",
+		Direccion:     "AV. CAMACHO 123",
+	}}
+	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica)
+	nombre := "MARIA TEST"
+	periodo := "2026-1"
+	req := CreateInvoiceRequest{
+		CompanyId:             "comp-1",
+		PointOfSaleId:         "pos-1",
+		CustomerId:            "cust-1",
+		CodigoDocumentoSector: 1,
+		NombreEstudiante:      &nombre,
+		PeriodoFacturado:      &periodo,
+		Items: []CreateInvoiceItemRequest{{
+			Code:        "P001",
+			Description: "Producto",
+			Quantity:    1,
+			UnitPrice:   100,
+		}},
+	}
+
+	inv, err := uc.Create(req)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inv.NombreEstudiante != nil {
+		t.Fatalf("NombreEstudiante quedó persistido fuera del sector 11: %q", *inv.NombreEstudiante)
+	}
+	if inv.PeriodoFacturado != nil {
+		t.Fatalf("PeriodoFacturado quedó persistido fuera del sector 11: %q", *inv.PeriodoFacturado)
 	}
 }
 

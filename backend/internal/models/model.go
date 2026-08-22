@@ -238,6 +238,7 @@ type Invoice struct {
 	MotivoAnulacion    *int
 	FechaAnulacion     *time.Time
 	CreatedAt          time.Time
+	UpdatedAt          time.Time
 
 	Company          Company           `gorm:"foreignKey:CompanyId"`
 	Customer         Customer          `gorm:"foreignKey:CustomerId"`

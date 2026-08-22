@@ -18,6 +18,7 @@ type Handlers struct {
 	Pos      *PosHandler
 	Branch   *BranchHandler
 	Customer *CustomerHandler
+	Product  *ProductHandler
 	Invoice  *InvoiceHandler
 	Siat     *SiatHandler
 }
@@ -88,9 +89,16 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 			r.Get("/{id}", h.Customer.GetByID)
 		})
 
+		r.Route("/products", func(r chi.Router) {
+			r.Post("/", h.Product.Create)
+			r.Get("/", h.Product.List)
+			r.Post("/{id}/mappings", h.Product.AddMapping)
+		})
+
 		r.Route("/invoices", func(r chi.Router) {
 			r.Post("/", h.Invoice.Create)
 			r.Get("/", h.Invoice.ListByPointOfSale)
+			r.Get("/sectores", h.Invoice.Sectores)
 			r.Get("/{id}", h.Invoice.GetByID)
 			r.Post("/{id}/emit", h.Invoice.Emit)
 			r.Get("/{id}/siat-status", h.Invoice.SiatStatus)

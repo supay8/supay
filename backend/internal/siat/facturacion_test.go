@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"encoding/xml"
 	"io"
@@ -608,16 +609,27 @@ func TestFirmarFacturaXMLSinCredencial(t *testing.T) {
 	}
 }
 
-func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
+// buildSolicitudNota arma una SolicitudFactura de documento de ajuste (sector 24)
+// con los datos específicos en datos_sector (formato nuevo del pipeline unificado).
+func buildSolicitudNota(t *testing.T, numeroFactura int64, cufOriginal string, fechaOriginal time.Time, montoOriginal, devuelto, efectivo float64, cliente ClienteFactura, items []ItemFactura) SolicitudFactura {
+	t.Helper()
 	fecha := time.Date(2025, 8, 15, 10, 30, 0, 0, LaPaz)
-	fechaFacturaOriginal := fecha.Add(-24 * time.Hour)
-
-	req := SolicitudNotaCreditoDebito{
+	datos, err := json.Marshal(map[string]any{
+		"numero_autorizacion_cuf":       cufOriginal,
+		"fecha_emision_factura":         fechaOriginal.Format("2006-01-02"),
+		"monto_total_original":          montoOriginal,
+		"monto_total_devuelto":          devuelto,
+		"monto_efectivo_credito_debito": efectivo,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal datos_sector: %v", err)
+	}
+	return SolicitudFactura{
 		CodigoAmbiente:        AmbientePruebas,
 		CodigoSistema:         "SYS-123",
 		Nit:                   "1020304050",
 		Modalidad:             ModalidadComputarizada,
-		NumeroFactura:         501,
+		NumeroFactura:         numeroFactura,
 		CodigoSucursal:        0,
 		CodigoPuntoVenta:      0,
 		Cuis:                  "CUIS-TEST-001",
@@ -628,26 +640,28 @@ func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
 		RazonSocialEmisor:     "EMPRESA TEST SRL",
 		Municipio:             "LA PAZ",
 		Direccion:             "AV. MOCK 123",
-		Telefono:              ptrStr("2123456"),
 		CodigoMetodoPago:      1,
 		CodigoMoneda:          1,
 		TipoCambio:            1,
 		Leyenda:               "Ley N° 453",
-		CufFacturaOriginal:    "CUF-FACTURA-ORIGINAL-ABC123",
-		FechaEmisionFactura:   fechaFacturaOriginal,
-		MontoTotalOriginal:    1000,
-		MontoTotalDevuelto:    500,
-		MontoEfectivoNota:     500,
-		TipoNota:              TipoNotaCredito,
 		CodigoDocumentoSector: SectorNotaCreditoDebito,
-		CodigoTipoFactura:     1,
-		Cliente: ClienteFactura{
+		DatosSector:           datos,
+		Cliente:               cliente,
+		Items:                 items,
+	}
+}
+
+func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
+	fechaOriginal := time.Date(2025, 8, 14, 10, 30, 0, 0, LaPaz)
+
+	req := buildSolicitudNota(t, 501, "CUF-FACTURA-ORIGINAL-ABC123", fechaOriginal, 1000, 500, 500,
+		ClienteFactura{
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
 			CodigoCliente:                "C-001",
 		},
-		Items: []ItemFactura{
+		[]ItemFactura{
 			{
 				ActividadEconomica: "473000",
 				CodigoProductoSin:  12345,
@@ -658,15 +672,17 @@ func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
 				PrecioUnitario:     500,
 				SubTotal:           500,
 			},
-		},
-	}
+		})
 
-	factura, cuf, err := buildNotaCreditoDebito(req, goSiat.EmisionOnline)
+	factura, cuf, tipoDoc, err := buildFacturaSDK(req, goSiat.EmisionOnline)
 	if err != nil {
-		t.Fatalf("buildNotaCreditoDebito: %v", err)
+		t.Fatalf("buildFacturaSDK (nota crédito): %v", err)
 	}
 	if cuf == "" {
 		t.Fatal("CUF no debe ser vacío")
+	}
+	if tipoDoc != TipoDocumentoNotaCreditoDebito {
+		t.Fatalf("tipoFacturaDocumento derivado debe ser %d (nota), got %d", TipoDocumentoNotaCreditoDebito, tipoDoc)
 	}
 
 	xmlData, err := xml.Marshal(factura)
@@ -703,44 +719,17 @@ func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
 }
 
 func TestBuildNotaCreditoDebitoDebitoPayload(t *testing.T) {
-	fecha := time.Date(2025, 8, 15, 10, 30, 0, 0, LaPaz)
+	fechaOriginal := time.Date(2025, 8, 13, 10, 30, 0, 0, LaPaz)
 
-	req := SolicitudNotaCreditoDebito{
-		CodigoAmbiente:        AmbientePruebas,
-		CodigoSistema:         "SYS-123",
-		Nit:                   "1020304050",
-		Modalidad:             ModalidadComputarizada,
-		NumeroFactura:         601,
-		CodigoSucursal:        0,
-		CodigoPuntoVenta:      0,
-		Cuis:                  "CUIS-TEST-001",
-		Cufd:                  "CUFD-TEST-001",
-		CodigoControl:         "CONTROL-CODE-29-CHARACTERS-03",
-		FechaEmision:          fecha,
-		Usuario:               "SUPAY",
-		RazonSocialEmisor:     "EMPRESA TEST SRL",
-		Municipio:             "LA PAZ",
-		Direccion:             "AV. MOCK 123",
-		CodigoMetodoPago:      1,
-		CodigoMoneda:          1,
-		TipoCambio:            1,
-		Leyenda:               "Ley N° 453",
-		CufFacturaOriginal:    "CUF-FACTURA-ORIGINAL-ND456",
-		FechaEmisionFactura:   fecha.Add(-48 * time.Hour),
-		MontoTotalOriginal:    800,
-		MontoTotalDevuelto:    200,
-		MontoEfectivoNota:     200,
-		TipoNota:              TipoNotaDebito,
-		CodigoDocumentoSector: SectorNotaCreditoDebito,
-		CodigoTipoFactura:     1,
-		Cliente: ClienteFactura{
+	req := buildSolicitudNota(t, 601, "CUF-FACTURA-ORIGINAL-ND456", fechaOriginal, 800, 200, 200,
+		ClienteFactura{
 			NombreRazonSocial:            "CLIENTE ND",
 			CodigoTipoDocumentoIdentidad: 4,
 			NumeroDocumento:              "9876543210",
 			Complemento:                  ptrStr("LP"),
 			CodigoCliente:                "C-002",
 		},
-		Items: []ItemFactura{
+		[]ItemFactura{
 			{
 				ActividadEconomica: "473000",
 				CodigoProductoSin:  12345,
@@ -751,12 +740,11 @@ func TestBuildNotaCreditoDebitoDebitoPayload(t *testing.T) {
 				PrecioUnitario:     200,
 				SubTotal:           200,
 			},
-		},
-	}
+		})
 
-	_, cuf, err := buildNotaCreditoDebito(req, goSiat.EmisionOnline)
+	_, cuf, _, err := buildFacturaSDK(req, goSiat.EmisionOnline)
 	if err != nil {
-		t.Fatalf("buildNotaCreditoDebito (debito): %v", err)
+		t.Fatalf("buildFacturaSDK (nota débito): %v", err)
 	}
 	if cuf == "" {
 		t.Fatal("CUF no debe ser vacío para nota de débito")

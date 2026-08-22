@@ -13,8 +13,8 @@ import (
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/siat"
 	"github.com/brandsrx/supay/internal/usecase"
-	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/go-chi/chi/v5"
+	goSiat "github.com/ron86i/go-siat/v2"
 	"gorm.io/gorm"
 )
 

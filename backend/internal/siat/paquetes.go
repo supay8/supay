@@ -93,14 +93,20 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
 	}
 
-	sector := req.sector()
-	tipoFactura := req.tipoFactura()
+	perfil, err := PerfilSector(req.sector())
+	if err != nil {
+		return nil, fmt.Errorf("siat paquete: %w", err)
+	}
+	if perfil.EsAjuste() {
+		return nil, fmt.Errorf("siat paquete: los documentos de ajuste (sectores 24/29/47/48) no se envían en paquete")
+	}
+	tipoFactura := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
 	codigoEmision := req.codigoEmision()
 
 	facturas := make([]any, 0, len(req.Facturas))
 	cufs := make([]string, 0, len(req.Facturas))
 	for i := range req.Facturas {
-		factura, cuf, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
+		factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
 		if err != nil {
 			return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
 		}
@@ -112,7 +118,7 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 		WithCodigoModalidad(req.Modalidad).
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(sector).
+		WithCodigoDocumentoSector(perfil.Codigo).
 		WithCodigoEmision(codigoEmision).
 		WithTipoFacturaDocumento(tipoFactura).
 		WithCuis(req.Cuis).
@@ -139,7 +145,7 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
-	resp, err := s.recepcionPaqueteEnvio(ctx, sector, req.Modalidad, built)
+	resp, err := s.paqueteParaPerfil(ctx, perfil, req.Modalidad, built)
 	if err != nil {
 		return nil, fmt.Errorf("siat paquete: %w", err)
 	}
@@ -177,12 +183,16 @@ func (s *Service) ValidarPaqueteFactura(ctx context.Context, req SolicitudPaquet
 		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
 	}
 
+	perfil, err := PerfilSector(req.sector())
+	if err != nil {
+		return nil, fmt.Errorf("siat paquete: %w", err)
+	}
 	request := models.NewValidacionRecepcionPaqueteFacturaBuilder().
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(req.sector()).
+		WithCodigoDocumentoSector(perfil.Codigo).
 		WithCodigoEmision(req.codigoEmision()).
-		WithTipoFacturaDocumento(req.tipoFactura()).
+		WithTipoFacturaDocumento(perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
 		WithCodigoRecepcion(codigoRecepcion).
@@ -191,7 +201,7 @@ func (s *Service) ValidarPaqueteFactura(ctx context.Context, req SolicitudPaquet
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
-	resp, err := s.validacionPaqueteEnvio(ctx, req.sector(), req.Modalidad, request)
+	resp, err := s.validacionPaqueteParaPerfil(ctx, perfil, req.Modalidad, request)
 	if err != nil {
 		return nil, fmt.Errorf("siat paquete: %w", err)
 	}
@@ -207,34 +217,6 @@ func (s *Service) ValidarPaqueteFactura(ctx context.Context, req SolicitudPaquet
 		CodigoRecepcion: codigoRecepcionResp,
 		Mensajes:        mensajes,
 	}, nil
-}
-
-// recepcionPaqueteEnvio ejecuta recepcionPaqueteFactura en el servicio del SDK
-// adecuado para el documento-sector y la modalidad: CompraVenta() atiende los
-// sectores 1, 35 y 41; el resto (p.ej. sector 11 educativo) se enruta por
-// modalidad a Electronica() o Computarizada().
-func (s *Service) recepcionPaqueteEnvio(ctx context.Context, sector, modalidad int, req models.RecepcionPaqueteFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().RecepcionPaqueteFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.RecepcionPaqueteFactura(ctx, req)
-}
-
-func (s *Service) validacionPaqueteEnvio(ctx context.Context, sector, modalidad int, req models.ValidacionRecepcionPaqueteFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().ValidacionRecepcionPaqueteFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.ValidacionRecepcionPaqueteFactura(ctx, req)
 }
 
 // normalized devuelve una copia de la solicitud en la que cada factura hereda
@@ -322,13 +304,6 @@ func (s SolicitudPaqueteFactura) sector() int {
 		return SectorCompraVenta
 	}
 	return s.CodigoDocumentoSector
-}
-
-func (s SolicitudPaqueteFactura) tipoFactura() int {
-	if s.CodigoTipoFactura <= 0 {
-		return 1
-	}
-	return s.CodigoTipoFactura
 }
 
 func (s SolicitudPaqueteFactura) codigoEmision() int {

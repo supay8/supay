@@ -2,6 +2,7 @@ package siat
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"reflect"
@@ -12,7 +13,6 @@ import (
 
 	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/ron86i/go-siat/v2/pkg/models"
-	"github.com/ron86i/go-siat/v2/pkg/models/invoices"
 	"github.com/ron86i/go-siat/v2/pkg/utils"
 )
 
@@ -70,10 +70,18 @@ type SolicitudFactura struct {
 	// CodigoDocumentoSector identifica el diseño de factura del SIAT (1 =
 	// compraventa, 11 = sector educativo). 0 se interpreta como compraventa.
 	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
-	// CodigoTipoFactura es el tipo de documento factura (1 = factura).
+	// CodigoTipoFactura es el override opcional del tipoFacturaDocumento
+	// (catálogo del SIN: 1 = con crédito fiscal, 2 = sin derecho, 3 = nota de
+	// ajuste). Si es 0 se deriva del perfil del documento-sector.
 	CodigoTipoFactura int `json:"codigoTipoFactura"`
-	// NombreEstudiante y PeriodoFacturado son obligatorios solo para el
-	// documento-sector 11 (FACTURA SECTORES EDUCATIVOS).
+	// DatosSector contiene los campos específicos del documento-sector
+	// (nombreEstudiante/periodoFacturado para el 11, montos y referencia para
+	// notas, pasajero para boletos aéreos, etc.), validados contra el registro
+	// de perfiles antes de construir el XML.
+	DatosSector json.RawMessage `json:"datosSector,omitempty"`
+	// NombreEstudiante y PeriodoFacturado son la forma legada de los campos
+	// específicos del documento-sector 11 (FACTURA SECTORES EDUCATIVOS);
+	// siguen aceptándose pero se mapean a datosSector.
 	NombreEstudiante string `json:"nombreEstudiante,omitempty"`
 	PeriodoFacturado string `json:"periodoFacturado,omitempty"`
 
@@ -114,22 +122,6 @@ type SolicitudDocumento struct {
 	CodigoTipoFactura     int `json:"codigoTipoFactura"`
 }
 
-// SectorEducativo es el código de documento-sector del SIAT para la factura de
-// sectores educativos (FSEDU), asociado a actividades de enseñanza (p.ej. 8549100).
-const SectorEducativo = 11
-
-// SectorCompraVenta es el documento-sector de la factura de compra y venta.
-const SectorCompraVenta = 1
-
-// SectorTasaCero es el código de documento-sector del SIAT para facturas con
-// tasa cero (productos exentos de IVA). La cabecera es idéntica a CompraVenta
-// pero el XML usa la raíz facturaElectronicaTasaCero y MontoTotalSujetoIva=0.
-const SectorTasaCero = 8
-
-// SectorNotaCreditoDebito es el código de documento-sector del SIAT para notas
-// de crédito y débito (documento de ajuste, sector 24).
-const SectorNotaCreditoDebito = 24
-
 // ResultadoDocumento es la respuesta procesada del SIAT para una operación
 // sobre un documento ya emitido (verificar estado, anular o revertir).
 type ResultadoDocumento struct {
@@ -139,61 +131,12 @@ type ResultadoDocumento struct {
 	Mensajes        []Mensaje `json:"mensajes,omitempty"`
 }
 
-// SolicitudNotaCreditoDebito contiene los datos para emitir una nota de crédito
-// o débito (documento de ajuste, sector 24) ante el SIAT. Extiende los datos
-// base de facturación con los campos específicos del XSD de notas.
-type SolicitudNotaCreditoDebito struct {
-	CodigoAmbiente   int       `json:"codigoAmbiente"`
-	CodigoSistema    string    `json:"codigoSistema"`
-	Nit              string    `json:"nit"`
-	Modalidad        int       `json:"modalidad"`
-	NumeroFactura    int64     `json:"numeroFactura"`
-	CodigoSucursal   int       `json:"codigoSucursal"`
-	CodigoPuntoVenta int       `json:"codigoPuntoVenta"`
-	Cuis             string    `json:"cuis"`
-	Cufd             string    `json:"cufd"`
-	CodigoControl    string    `json:"codigoControl"`
-	FechaEmision     time.Time `json:"fechaEmision"`
-	Usuario          string    `json:"usuario"`
-
-	// Datos del emisor
-	RazonSocialEmisor string  `json:"razonSocialEmisor"`
-	Municipio         string  `json:"municipio"`
-	Direccion         string  `json:"direccion"`
-	Telefono          *string `json:"telefono,omitempty"`
-
-	// Datos del receptor
-	Cliente ClienteFactura `json:"cliente"`
-
-	// Datos de pago
-	CodigoMetodoPago int     `json:"codigoMetodoPago"`
-	CodigoMoneda     int     `json:"codigoMoneda"`
-	TipoCambio       float64 `json:"tipoCambio"`
-	Leyenda          string  `json:"leyenda"`
-
-	// Referencia a la factura original que se está ajustando
-	CufFacturaOriginal  string    `json:"cufFacturaOriginal"`
-	FechaEmisionFactura time.Time `json:"fechaEmisionFactura"`
-	MontoTotalOriginal  float64   `json:"montoTotalOriginal"`
-	MontoTotalDevuelto  float64   `json:"montoTotalDevuelto"`
-	MontoDescuento      *float64  `json:"montoDescuento,omitempty"`
-	MontoEfectivoNota   float64   `json:"montoEfectivoNota"`
-
-	// Tipo de nota: 1 = crédito, 2 = débito
-	TipoNota TipoNota `json:"tipoNota"`
-
-	// CodigoDocumentoSector y CodigoTipoFactura del documento original
-	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
-	CodigoTipoFactura     int `json:"codigoTipoFactura"`
-
-	Items []ItemFactura `json:"items"`
-}
-
-// EmitirFactura construye, firma (si corresponde) y envía una factura al SIAT
-// usando el SDK go-siat. Soporta el documento-sector 1 (compraventa) y el 11
-// (sector educativo/FSEDU). El SDK serializa el XML, lo firma con XMLDSig cuando
-// la modalidad es electrónica, lo comprime en gzip y calcula el hash SHA-256
-// automáticamente (WithFactura).
+// EmitirFactura construye, firma (si corresponde) y envía un documento al SIAT
+// usando el SDK go-siat, para cualquier documento-sector registrado en el
+// catálogo de perfiles (sectores.go). Las facturas van por recepcionFactura de
+// su fachada; los documentos de ajuste (24/29/47/48) por
+// recepcionDocumentoAjuste. El SDK serializa el XML, lo firma con XMLDSig cuando
+// la modalidad es electrónica, lo comprime en gzip y calcula el hash SHA-256.
 func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*ResultadoEmision, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -202,34 +145,19 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		return nil, fmt.Errorf("siat emision: servicio SIAT no inicializado")
 	}
 
-	sector := req.CodigoDocumentoSector
-	if sector <= 0 {
-		sector = 1
-	}
-	tipoFactura := req.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
+	perfil, err := PerfilSector(req.CodigoDocumentoSector)
+	if err != nil {
+		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 
-	// CUF: debe usar el MISMO timestamp de la cabecera y el MISMO correlativo.
-	// En la emisión individual el CUF se compone siempre con emisión en línea.
-	factura, cuf, err := buildFacturaSDK(req, goSiat.EmisionOnline)
+	// CUF: debe usar el MISMO timestamp de la cabecera y el MISMO correlativo,
+	// y el tipoFacturaDocumento derivado del perfil (mismo valor que viajará en
+	// la solicitud de recepción). En la emisión individual el CUF se compone
+	// siempre con emisión en línea.
+	factura, cuf, tipoDoc, err := buildFacturaSDK(req, goSiat.EmisionOnline)
 	if err != nil {
 		return nil, err
 	}
-
-	// La recepción (recepcionFactura) es el mismo método web del SIAT para todos
-	// los sectores; el documento-sector se envía en la cabecera y en la solicitud.
-	rcpBuilder := models.NewRecepcionFacturaBuilder().
-		WithCodigoModalidad(req.Modalidad).
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(sector).
-		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(tipoFactura).
-		WithCuis(req.Cuis).
-		WithCufd(req.Cufd).
-		WithFechaEnvio(time.Now().In(LaPaz))
 
 	// Firma única: serializamos, firmamos (si modalidad electrónica) y
 	// empaquetamos una sola vez. El mismo XML firmado se usa tanto para el
@@ -254,11 +182,38 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 
-	rcpBuilder.WithArchivo(archivo).WithHashArchivo(hash)
-
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
-	resp, err := s.recepcionFacturaEnvio(ctx, sector, req.Modalidad, rcpBuilder.Build())
+	var resp any
+	if perfil.EsAjuste() {
+		rcp := models.NewRecepcionDocumentoAjusteBuilder().
+			WithCodigoModalidad(req.Modalidad).
+			WithCodigoSucursal(req.CodigoSucursal).
+			WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+			WithCodigoDocumentoSector(perfil.Codigo).
+			WithCodigoEmision(goSiat.EmisionOnline).
+			WithTipoFacturaDocumento(tipoDoc).
+			WithCuis(req.Cuis).
+			WithCufd(req.Cufd).
+			WithFechaEnvio(time.Now().In(LaPaz)).
+			WithArchivo(archivo).
+			WithHashArchivo(hash)
+		resp, err = s.recepcionDocumentoAjusteEnvio(ctx, rcp.Build())
+	} else {
+		rcp := models.NewRecepcionFacturaBuilder().
+			WithCodigoModalidad(req.Modalidad).
+			WithCodigoSucursal(req.CodigoSucursal).
+			WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+			WithCodigoDocumentoSector(perfil.Codigo).
+			WithCodigoEmision(goSiat.EmisionOnline).
+			WithTipoFacturaDocumento(tipoDoc).
+			WithCuis(req.Cuis).
+			WithCufd(req.Cufd).
+			WithFechaEnvio(time.Now().In(LaPaz)).
+			WithArchivo(archivo).
+			WithHashArchivo(hash)
+		resp, err = s.recepcionFacturaParaPerfil(ctx, perfil, req.Modalidad, rcp.Build())
+	}
 	if err != nil {
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
@@ -346,9 +301,10 @@ func optionalStringPtr(value *string) *string {
 }
 
 func removeEmptyOptionalFacturaFields(data []byte) []byte {
-	for _, field := range []string{"complemento", "cafc"} {
-		data = regexp.MustCompile(`<`+field+`(?:\\s+[^>]*)?>\\s*</`+field+`>`).ReplaceAll(data, nil)
-		data = regexp.MustCompile(`<`+field+`(?:\\s+[^>]*)?\\s*/>`).ReplaceAll(data, nil)
+	for _, field := range []string{"telefono", "complemento", "cafc", "montoDescuentoCreditoDebito"} {
+		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?></`+field+`>`).ReplaceAll(data, nil)
+		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?/>`).ReplaceAll(data, nil)
+		data = regexp.MustCompile(`(?s)<`+field+`(?:\s[^>]*)?>\s*</`+field+`>`).ReplaceAll(data, nil)
 	}
 	return data
 }
@@ -361,233 +317,35 @@ func descuentoPtr(v *float64) *float64 {
 	return v
 }
 
-// buildFacturaSDK construye el struct de factura del SDK (compraventa o sector
-// educativo) para una SolicitudFactura, junto con el CUF generado con el mismo
-// timestamp y correlativo de la cabecera. codigoEmision define cómo se compone
-// el CUF: EmisionOnline para la emisión individual y EmisionOffline para las
-// facturas emitidas fuera de línea que luego viajan en un paquete.
-func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf string, err error) {
-	nit := parseNit(req.Nit)
-	sector := req.CodigoDocumentoSector
-	if sector <= 0 {
-		sector = 1
-	}
-	tipoFactura := req.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
-	}
-
-	cuf, err = utils.NewCUF().
-		WithNit(nit).
-		WithFechaHora(req.FechaEmision).
-		WithSucursal(req.CodigoSucursal).
-		WithModalidad(req.Modalidad).
-		WithTipoEmision(codigoEmision).
-		WithTipoFactura(tipoFactura).
-		WithTipoDocumentoSector(sector).
-		WithNumeroFactura(req.NumeroFactura).
-		WithPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoControl(req.CodigoControl).
-		Generate()
+// buildFacturaSDK construye el documento del SDK para una SolicitudFactura de
+// CUALQUIER documento-sector registrado, junto con el CUF generado (con el
+// timestamp y correlativo de la cabecera) y el tipoFacturaDocumento derivado
+// del perfil. codigoEmision define cómo se compone el CUF: EmisionOnline para
+// la emisión individual y EmisionOffline para facturas que viajan en paquete o
+// emisión masiva.
+func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf string, tipoDoc int, err error) {
+	defer func() {
+		// La capa reflexiva (builder_reflex.go) reporta incompatibilidades de
+		// campos con panics: se convierten en errores normales aquí.
+		if r := recover(); r != nil {
+			factura, cuf, tipoDoc, err = nil, "", 0, fmt.Errorf("siat sectores %d: %v", req.CodigoDocumentoSector, r)
+		}
+	}()
+	perfil, err := PerfilSector(req.CodigoDocumentoSector)
 	if err != nil {
-		return nil, "", fmt.Errorf("siat emision cuf: %w", err)
+		return nil, "", 0, err
 	}
-	puntoVenta := req.CodigoPuntoVenta
-	nombreCliente := req.Cliente.NombreRazonSocial
-	complementoPtr := optionalStringPtr(req.Cliente.Complemento)
-	telefonoPtr := optionalStringPtr(req.Telefono)
+	if err := perfil.ValidarModalidad(req.Modalidad); err != nil {
+		return nil, "", 0, err
+	}
+	tipoDoc = perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
 
-	if sector == SectorEducativo {
-		// FACTURA SECTORES EDUCATIVOS (documento-sector 11): estructura XSD
-		// facturaElectronicaSectorEducativo con campos específicos del estudiante.
-		cabecera := invoices.NewSectorEducativoCabeceraBuilder().
-			WithNitEmisor(nit).
-			WithRazonSocialEmisor(req.RazonSocialEmisor).
-			WithMunicipio(req.Municipio).
-			WithTelefono(telefonoPtr).
-			WithNumeroFactura(req.NumeroFactura).
-			WithCuf(cuf).
-			WithCufd(req.Cufd).
-			WithCodigoSucursal(req.CodigoSucursal).
-			WithDireccion(req.Direccion).
-			WithCodigoPuntoVenta(&puntoVenta).
-			WithFechaEmision(req.FechaEmision).
-			WithNombreRazonSocial(&nombreCliente).
-			WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
-			WithNumeroDocumento(req.Cliente.NumeroDocumento).
-			WithComplemento(complementoPtr).
-			WithCodigoCliente(req.Cliente.CodigoCliente).
-			WithNumeroTarjeta(&zeroInt64).
-			WithMontoGiftCard(&zeroFloat).
-			WithDescuentoAdicional(&zeroFloat).
-			WithCodigoExcepcion(&zeroInt).
-			WithCafc(nil).
-			WithNombreEstudiante(req.NombreEstudiante).
-			WithPeriodoFacturado(req.PeriodoFacturado).
-			WithCodigoMetodoPago(req.CodigoMetodoPago).
-			WithMontoTotal(req.MontoTotal).
-			WithMontoTotalSujetoIva(req.MontoTotal).
-			WithCodigoMoneda(req.CodigoMoneda).
-			WithTipoCambio(req.TipoCambio).
-			WithMontoTotalMoneda(req.MontoTotal).
-			WithLeyenda(req.Leyenda).
-			WithUsuario(req.Usuario).
-			WithCodigoDocumentoSector(sector).
-			Build()
-
-		facturaBuilder := invoices.NewSectorEducativoBuilder().
-			WithModalidad(req.Modalidad).
-			WithCabecera(cabecera)
-		for i := range req.Items {
-			item := req.Items[i]
-			detalle := invoices.NewSectorEducativoDetalleBuilder().
-				WithActividadEconomica(item.ActividadEconomica).
-				WithCodigoProductoSin(item.CodigoProductoSin).
-				WithCodigoProducto(item.CodigoProducto).
-				WithDescripcion(item.Descripcion).
-				WithCantidad(item.Cantidad).
-				WithUnidadMedida(item.UnidadMedida).
-				WithPrecioUnitario(item.PrecioUnitario).
-				WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
-				WithSubTotal(item.SubTotal).
-				Build()
-			facturaBuilder.AddDetalle(detalle)
-		}
-		return facturaBuilder.Build(), cuf, nil
+	doc, err := perfil.adapter.Prepare(perfil, req)
+	if err != nil {
+		return nil, "", 0, err
 	}
 
-	if sector == SectorTasaCero {
-		// FACTURA TASA CERO (documento-sector 8): misma estructura que CompraVenta
-		// pero con raíz XML facturaElectronicaTasaCero y MontoTotalSujetoIva=0.
-		cabecera := invoices.NewTasaCeroCabeceraBuilder().
-			WithNitEmisor(nit).
-			WithRazonSocialEmisor(req.RazonSocialEmisor).
-			WithMunicipio(req.Municipio).
-			WithTelefono(telefonoPtr).
-			WithNumeroFactura(req.NumeroFactura).
-			WithCuf(cuf).
-			WithCufd(req.Cufd).
-			WithCodigoSucursal(req.CodigoSucursal).
-			WithDireccion(req.Direccion).
-			WithCodigoPuntoVenta(&puntoVenta).
-			WithFechaEmision(req.FechaEmision).
-			WithNombreRazonSocial(&nombreCliente).
-			WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
-			WithNumeroDocumento(req.Cliente.NumeroDocumento).
-			WithComplemento(complementoPtr).
-			WithCodigoCliente(req.Cliente.CodigoCliente).
-			WithNumeroTarjeta(&zeroInt64).
-			WithMontoGiftCard(&zeroFloat).
-			WithDescuentoAdicional(&zeroFloat).
-			WithCodigoExcepcion(&zeroInt).
-			WithCafc(nil).
-			WithCodigoMetodoPago(req.CodigoMetodoPago).
-			WithMontoTotal(req.MontoTotal).
-			WithMontoTotalSujetoIva(0).
-			WithCodigoMoneda(req.CodigoMoneda).
-			WithTipoCambio(req.TipoCambio).
-			WithMontoTotalMoneda(req.MontoTotal).
-			WithLeyenda(req.Leyenda).
-			WithUsuario(req.Usuario).
-			WithCodigoDocumentoSector(sector).
-			Build()
-
-		facturaBuilder := invoices.NewTasaCeroBuilder().
-			WithModalidad(req.Modalidad).
-			WithCabecera(cabecera)
-		for i := range req.Items {
-			item := req.Items[i]
-			detalle := invoices.NewTasaCeroDetalleBuilder().
-				WithActividadEconomica(item.ActividadEconomica).
-				WithCodigoProductoSin(item.CodigoProductoSin).
-				WithCodigoProducto(item.CodigoProducto).
-				WithDescripcion(item.Descripcion).
-				WithCantidad(item.Cantidad).
-				WithUnidadMedida(item.UnidadMedida).
-				WithPrecioUnitario(item.PrecioUnitario).
-				WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
-				WithSubTotal(item.SubTotal).
-				Build()
-			facturaBuilder.AddDetalle(detalle)
-		}
-		return facturaBuilder.Build(), cuf, nil
-	}
-
-	// FACTURA COMPRAVENTA (documento-sector 1).
-	cabecera := invoices.NewCompraVentaCabeceraBuilder().
-		WithNitEmisor(nit).
-		WithRazonSocialEmisor(req.RazonSocialEmisor).
-		WithMunicipio(req.Municipio).
-		WithTelefono(telefonoPtr).
-		WithNumeroFactura(req.NumeroFactura).
-		WithCuf(cuf).
-		WithCufd(req.Cufd).
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithDireccion(req.Direccion).
-		WithCodigoPuntoVenta(&puntoVenta).
-		WithFechaEmision(req.FechaEmision).
-		WithNombreRazonSocial(&nombreCliente).
-		WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
-		WithNumeroDocumento(req.Cliente.NumeroDocumento).
-		WithComplemento(complementoPtr).
-		WithCodigoCliente(req.Cliente.CodigoCliente).
-		WithNumeroTarjeta(&zeroInt64).
-		WithMontoGiftCard(&zeroFloat).
-		WithDescuentoAdicional(&zeroFloat).
-		WithCodigoExcepcion(&zeroInt64).
-		WithCafc(nil).
-		WithCodigoMetodoPago(req.CodigoMetodoPago).
-		WithMontoTotal(req.MontoTotal).
-		WithMontoTotalSujetoIva(req.MontoTotal).
-		WithCodigoMoneda(req.CodigoMoneda).
-		WithTipoCambio(req.TipoCambio).
-		WithMontoTotalMoneda(req.MontoTotal).
-		WithLeyenda(req.Leyenda).
-		WithUsuario(req.Usuario).
-		WithCodigoDocumentoSector(sector).
-		Build()
-
-	facturaBuilder := invoices.NewCompraVentaBuilder().
-		WithModalidad(req.Modalidad).
-		WithCabecera(cabecera)
-	for i := range req.Items {
-		item := req.Items[i]
-		detalle := invoices.NewCompraVentaDetalleBuilder().
-			WithActividadEconomica(item.ActividadEconomica).
-			WithCodigoProductoSin(item.CodigoProductoSin).
-			WithCodigoProducto(item.CodigoProducto).
-			WithDescripcion(item.Descripcion).
-			WithCantidad(item.Cantidad).
-			WithUnidadMedida(item.UnidadMedida).
-			WithPrecioUnitario(item.PrecioUnitario).
-			WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
-			WithSubTotal(item.SubTotal).
-			Build()
-		facturaBuilder.AddDetalle(detalle)
-	}
-	return facturaBuilder.Build(), cuf, nil
-}
-
-// buildNotaCreditoDebito construye el struct de nota de crédito/débito del SDK
-// (sector 24) para una SolicitudNotaCreditoDebito, junto con el CUF generado.
-// El CUF usa TipoFactura=3 para NC y TipoFactura=4 para ND.
-func buildNotaCreditoDebito(req SolicitudNotaCreditoDebito, codigoEmision int) (factura any, cuf string, err error) {
 	nit := parseNit(req.Nit)
-	sector := SectorNotaCreditoDebito
-	if req.CodigoDocumentoSector > 0 {
-		sector = req.CodigoDocumentoSector
-	}
-	tipoFactura := req.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
-	}
-
-	// Tipo de documento para el CUF: 3 = Nota de Crédito, 4 = Nota de Débito
-	tipoDoc := 3
-	if req.TipoNota == TipoNotaDebito {
-		tipoDoc = 4
-	}
-
 	cuf, err = utils.NewCUF().
 		WithNit(nit).
 		WithFechaHora(req.FechaEmision).
@@ -595,73 +353,49 @@ func buildNotaCreditoDebito(req SolicitudNotaCreditoDebito, codigoEmision int) (
 		WithModalidad(req.Modalidad).
 		WithTipoEmision(codigoEmision).
 		WithTipoFactura(tipoDoc).
-		WithTipoDocumentoSector(sector).
+		WithTipoDocumentoSector(perfil.Codigo).
 		WithNumeroFactura(req.NumeroFactura).
 		WithPuntoVenta(req.CodigoPuntoVenta).
 		WithCodigoControl(req.CodigoControl).
 		Generate()
 	if err != nil {
-		return nil, "", fmt.Errorf("siat nota credito/debito cuf: %w", err)
+		return nil, "", 0, fmt.Errorf("siat sectores %d: cuf: %w", perfil.Codigo, err)
 	}
 
-	puntoVenta := req.CodigoPuntoVenta
-	nombreCliente := req.Cliente.NombreRazonSocial
-	complementoPtr := optionalStringPtr(req.Cliente.Complemento)
-	telefonoPtr := optionalStringPtr(req.Telefono)
+	return perfil.adapter.Build(perfil, doc, cuf), cuf, tipoDoc, nil
+}
 
-	cabecera := invoices.NewNotaCreditoDebitoCabeceraBuilder().
-		WithNitEmisor(nit).
-		WithRazonSocialEmisor(req.RazonSocialEmisor).
-		WithMunicipio(req.Municipio).
-		WithTelefono(telefonoPtr).
-		WithNumeroNotaCreditoDebito(req.NumeroFactura).
-		WithCuf(cuf).
-		WithCufd(req.Cufd).
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithDireccion(req.Direccion).
-		WithCodigoPuntoVenta(&puntoVenta).
-		WithFechaEmision(req.FechaEmision).
-		WithNombreRazonSocial(&nombreCliente).
-		WithCodigoTipoDocumentoIdentidad(req.Cliente.CodigoTipoDocumentoIdentidad).
-		WithNumeroDocumento(req.Cliente.NumeroDocumento).
-		WithComplemento(complementoPtr).
-		WithCodigoCliente(req.Cliente.CodigoCliente).
-		WithNumeroFactura(req.NumeroFactura).
-		WithNumeroAutorizacionCuf(req.CufFacturaOriginal).
-		WithFechaEmisionFactura(req.FechaEmisionFactura).
-		WithMontoTotalOriginal(req.MontoTotalOriginal).
-		WithMontoTotalDevuelto(req.MontoTotalDevuelto).
-		WithMontoDescuentoCreditoDebito(req.MontoDescuento).
-		WithMontoEfectivoCreditoDebito(req.MontoEfectivoNota).
-		WithCodigoExcepcion(&zeroInt).
-		WithLeyenda(req.Leyenda).
-		WithUsuario(req.Usuario).
-		Build()
-
-	notaBuilder := invoices.NewNotaCreditoDebitoBuilder().
-		WithModalidad(req.Modalidad).
-		WithCabecera(cabecera)
-	for i := range req.Items {
-		item := req.Items[i]
-		detalle := invoices.NewNotaDetalleCreditoDebitoBuilder().
-			WithActividadEconomica(item.ActividadEconomica).
-			WithCodigoProductoSin(item.CodigoProductoSin).
-			WithCodigoProducto(item.CodigoProducto).
-			WithDescripcion(item.Descripcion).
-			WithCantidad(item.Cantidad).
-			WithUnidadMedida(item.UnidadMedida).
-			WithPrecioUnitario(item.PrecioUnitario).
-			WithMontoDescuento(descuentoPtr(item.MontoDescuento)).
-			WithSubTotal(item.SubTotal).
-			WithCodigoDetalleTransaccion(i + 1).
-			Build()
-		notaBuilder.AddDetalle(detalle)
+// fusionarCamposLegados mapea los campos legados nombreEstudiante/periodoFacturado
+// a datos_sector cuando el perfil es educativo (11/46) y no vinieron en él. Se
+// ejecuta ANTES de ValidarDatosSector para que la validación vea los campos ya
+// fusionados.
+func fusionarCamposLegados(perfil *SectorProfile, req SolicitudFactura) []byte {
+	if (perfil.Codigo != SectorEducativo && perfil.Codigo != 46) ||
+		(req.NombreEstudiante == "" && req.PeriodoFacturado == "") {
+		return req.DatosSector
 	}
-	return notaBuilder.Build(), cuf, nil
+	base := map[string]any{}
+	if len(req.DatosSector) > 0 {
+		if err := json.Unmarshal(req.DatosSector, &base); err != nil {
+			return req.DatosSector // el error real lo reportará ValidarDatosSector
+		}
+	}
+	if _, ok := base["nombre_estudiante"]; !ok && req.NombreEstudiante != "" {
+		base["nombre_estudiante"] = strings.TrimSpace(req.NombreEstudiante)
+	}
+	if _, ok := base["periodo_facturado"]; !ok && req.PeriodoFacturado != "" {
+		base["periodo_facturado"] = strings.TrimSpace(req.PeriodoFacturado)
+	}
+	fusionado, err := json.Marshal(base)
+	if err != nil {
+		return req.DatosSector
+	}
+	return fusionado
 }
 
 // VerificarEstado consulta al SIAT el estado real de un documento ya emitido
-// (verificacionEstadoFactura) usando la fachada compraventa del SDK.
+// (verificacionEstadoFactura) en la fachada que atiende a su documento-sector;
+// los documentos de ajuste van por el servicio DocumentoAjuste.
 func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (*ResultadoDocumento, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -669,13 +403,38 @@ func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat verificacion: servicio SIAT no inicializado")
 	}
+	perfil, err := PerfilSector(req.sector())
+	if err != nil {
+		return nil, fmt.Errorf("siat verificacion: %w", err)
+	}
+	tipoDoc := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	if perfil.EsAjuste() {
+		request := models.NewVerificacionEstadoDocumentoAjusteBuilder().
+			WithCodigoSucursal(req.CodigoSucursal).
+			WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+			WithCodigoDocumentoSector(perfil.Codigo).
+			WithCodigoEmision(goSiat.EmisionOnline).
+			WithTipoFacturaDocumento(tipoDoc).
+			WithCuf(req.Cuf).
+			WithCuis(req.Cuis).
+			WithCufd(req.Cufd).
+			Build()
+		resp, err := s.sdk.DocumentoAjuste().VerificacionEstadoDocumentoAjuste(ctx, request)
+		if err != nil {
+			return nil, fmt.Errorf("siat verificacion: %w", err)
+		}
+		return resultadoDocumento(resp, "siat verificacion")
+	}
 
 	request := models.NewVerificacionEstadoFacturaBuilder().
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(req.sector()).
+		WithCodigoDocumentoSector(perfil.Codigo).
 		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(req.tipoFactura()).
+		WithTipoFacturaDocumento(tipoDoc).
 		WithCuf(req.Cuf).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
@@ -683,9 +442,7 @@ func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (
 		WithNit(parseNit(req.Nit)).
 		Build()
 
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.verificacionEstadoEnvio(ctx, req.sector(), req.Modalidad, request)
+	resp, err := s.verificacionEstadoParaPerfil(ctx, perfil, req.Modalidad, request)
 	if err != nil {
 		return nil, fmt.Errorf("siat verificacion: %w", err)
 	}
@@ -702,8 +459,9 @@ func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (
 	}, nil
 }
 
-// AnularFactura anula un documento ya emitido ante el SIAT (anulacionFactura)
-// indicando el motivo del catálogo sincronizado motivoAnulacion.
+// AnularFactura anula un documento ya emitido ante el SIAT (anulacionFactura o
+// anulacionDocumentoAjuste) indicando el motivo del catálogo sincronizado
+// motivoAnulacion.
 func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, codigoMotivo int) (*ResultadoDocumento, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -711,13 +469,39 @@ func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, cod
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat anulacion: servicio SIAT no inicializado")
 	}
+	perfil, err := PerfilSector(req.sector())
+	if err != nil {
+		return nil, fmt.Errorf("siat anulacion: %w", err)
+	}
+	tipoDoc := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	if perfil.EsAjuste() {
+		request := models.NewAnulacionDocumentoAjusteBuilder().
+			WithCodigoSucursal(req.CodigoSucursal).
+			WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+			WithCodigoDocumentoSector(perfil.Codigo).
+			WithCodigoEmision(goSiat.EmisionOnline).
+			WithTipoFacturaDocumento(tipoDoc).
+			WithCuf(req.Cuf).
+			WithCuis(req.Cuis).
+			WithCufd(req.Cufd).
+			WithCodigoMotivo(codigoMotivo).
+			Build()
+		resp, err := s.sdk.DocumentoAjuste().AnulacionDocumentoAjuste(ctx, request)
+		if err != nil {
+			return nil, fmt.Errorf("siat anulacion: %w", err)
+		}
+		return resultadoDocumento(resp, "siat anulacion")
+	}
 
 	request := models.NewAnulacionFacturaBuilder().
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(req.sector()).
+		WithCodigoDocumentoSector(perfil.Codigo).
 		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(req.tipoFactura()).
+		WithTipoFacturaDocumento(tipoDoc).
 		WithCuf(req.Cuf).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
@@ -728,9 +512,7 @@ func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, cod
 		WithNit(parseNit(req.Nit)).
 		Build()
 
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.anulacionFacturaEnvio(ctx, req.sector(), req.Modalidad, request)
+	resp, err := s.anulacionParaPerfil(ctx, perfil, req.Modalidad, request)
 	if err != nil {
 		return nil, fmt.Errorf("siat anulacion: %w", err)
 	}
@@ -748,7 +530,8 @@ func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, cod
 }
 
 // RevertirAnulacion revierte una anulación previamente aceptada por el SIAT
-// (reversionAnulacionFactura), devolviendo el documento a su estado anterior.
+// (reversionAnulacionFactura / reversionAnulacionDocumentoAjuste), devolviendo
+// el documento a su estado anterior.
 func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento) (*ResultadoDocumento, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -756,13 +539,38 @@ func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento)
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat reversion anulacion: servicio SIAT no inicializado")
 	}
+	perfil, err := PerfilSector(req.sector())
+	if err != nil {
+		return nil, fmt.Errorf("siat reversion anulacion: %w", err)
+	}
+	tipoDoc := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
+
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+
+	if perfil.EsAjuste() {
+		request := models.NewReversionAnulacionDocumentoAjusteBuilder().
+			WithCodigoSucursal(req.CodigoSucursal).
+			WithCodigoPuntoVenta(req.CodigoPuntoVenta).
+			WithCodigoDocumentoSector(perfil.Codigo).
+			WithCodigoEmision(goSiat.EmisionOnline).
+			WithTipoFacturaDocumento(tipoDoc).
+			WithCuf(req.Cuf).
+			WithCuis(req.Cuis).
+			WithCufd(req.Cufd).
+			Build()
+		resp, err := s.sdk.DocumentoAjuste().ReversionAnulacionDocumentoAjuste(ctx, request)
+		if err != nil {
+			return nil, fmt.Errorf("siat reversion anulacion: %w", err)
+		}
+		return resultadoDocumento(resp, "siat reversion anulacion")
+	}
 
 	request := models.NewReversionAnulacionFacturaBuilder().
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(req.sector()).
+		WithCodigoDocumentoSector(perfil.Codigo).
 		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(req.tipoFactura()).
+		WithTipoFacturaDocumento(tipoDoc).
 		WithCuf(req.Cuf).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
@@ -772,9 +580,7 @@ func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento)
 		WithNit(parseNit(req.Nit)).
 		Build()
 
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.reversionAnulacionEnvio(ctx, req.sector(), req.Modalidad, request)
+	resp, err := s.reversionParaPerfil(ctx, perfil, req.Modalidad, request)
 	if err != nil {
 		return nil, fmt.Errorf("siat reversion anulacion: %w", err)
 	}
@@ -789,58 +595,6 @@ func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento)
 		CodigoRecepcion: codigoRecepcion,
 		Mensajes:        mensajes,
 	}, nil
-}
-
-// envioFactura ejecuta una operación de facturación en el servicio del SDK
-// adecuado para el documento-sector y la modalidad: CompraVenta() atiende los
-// sectores 1, 35 y 41; el resto (p.ej. sector 11 educativo) se enruta por
-// modalidad a Electronica() o Computarizada().
-func (s *Service) recepcionFacturaEnvio(ctx context.Context, sector, modalidad int, req models.RecepcionFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().RecepcionFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.RecepcionFactura(ctx, req)
-}
-
-func (s *Service) verificacionEstadoEnvio(ctx context.Context, sector, modalidad int, req models.VerificacionEstadoFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().VerificacionEstadoFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.VerificacionEstadoFactura(ctx, req)
-}
-
-func (s *Service) anulacionFacturaEnvio(ctx context.Context, sector, modalidad int, req models.AnulacionFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().AnulacionFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.AnulacionFactura(ctx, req)
-}
-
-func (s *Service) reversionAnulacionEnvio(ctx context.Context, sector, modalidad int, req models.ReversionAnulacionFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().ReversionAnulacionFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.ReversionAnulacionFactura(ctx, req)
 }
 
 // extraerResultadoFacturacion lee Transaccion, CodigoEstado, CodigoRecepcion y
@@ -877,6 +631,20 @@ func extraerResultadoFacturacion(resp any) (transaccion bool, codigoEstado int, 
 		mensajes = toMensajes(f.Interface())
 	}
 	return transaccion, codigoEstado, codigoRecepcion, mensajes, nil
+}
+
+// resultadoDocumento convierte una respuesta cruda del SIAT en ResultadoDocumento.
+func resultadoDocumento(resp any, contexto string) (*ResultadoDocumento, error) {
+	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", contexto, err)
+	}
+	return &ResultadoDocumento{
+		Transaccion:     transaccion,
+		CodigoEstado:    codigoEstado,
+		CodigoRecepcion: codigoRecepcion,
+		Mensajes:        mensajes,
+	}, nil
 }
 
 // empaquetaArchivo comprime los datos en GZip, los codifica en Base64 y calcula
@@ -959,14 +727,6 @@ func (s SolicitudFactura) validate() error {
 	if len(s.Items) == 0 {
 		return fmt.Errorf("siat emision: la factura debe tener al menos un ítem")
 	}
-	if s.CodigoDocumentoSector == SectorEducativo {
-		if strings.TrimSpace(s.NombreEstudiante) == "" {
-			return fmt.Errorf("siat emision: nombreEstudiante es obligatorio para el documento-sector educativo")
-		}
-		if strings.TrimSpace(s.PeriodoFacturado) == "" {
-			return fmt.Errorf("siat emision: periodoFacturado es obligatorio para el documento-sector educativo")
-		}
-	}
 	for i := range s.Items {
 		item := s.Items[i]
 		if strings.TrimSpace(item.ActividadEconomica) == "" {
@@ -1012,97 +772,6 @@ func (s SolicitudDocumento) validate() error {
 	}
 	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" {
 		return fmt.Errorf("siat documento: cuis y cufd son obligatorios")
-	}
-	return nil
-}
-
-func (s SolicitudNotaCreditoDebito) validate() error {
-	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
-		return fmt.Errorf("siat nota credito/debito: codigoAmbiente inválido")
-	}
-	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat nota credito/debito: codigoSistema es obligatorio")
-	}
-	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat nota credito/debito: nit es obligatorio")
-	}
-	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
-		return fmt.Errorf("siat nota credito/debito: modalidad inválida (%d)", s.Modalidad)
-	}
-	if s.NumeroFactura <= 0 {
-		return fmt.Errorf("siat nota credito/debito: numeroFactura debe ser mayor a cero")
-	}
-	if s.CodigoSucursal < 0 || s.CodigoPuntoVenta < 0 {
-		return fmt.Errorf("siat nota credito/debito: codigoSucursal y codigoPuntoVenta deben ser >= 0")
-	}
-	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" || strings.TrimSpace(s.CodigoControl) == "" {
-		return fmt.Errorf("siat nota credito/debito: cuis, cufd y codigoControl son obligatorios")
-	}
-	if s.FechaEmision.IsZero() {
-		return fmt.Errorf("siat nota credito/debito: fechaEmision es obligatoria")
-	}
-	if strings.TrimSpace(s.CufFacturaOriginal) == "" {
-		return fmt.Errorf("siat nota credito/debito: cufFacturaOriginal es obligatorio")
-	}
-	if s.FechaEmisionFactura.IsZero() {
-		return fmt.Errorf("siat nota credito/debito: fechaEmisionFactura es obligatoria")
-	}
-	if s.MontoTotalOriginal < 0 {
-		return fmt.Errorf("siat nota credito/debito: montoTotalOriginal no puede ser negativo")
-	}
-	if s.MontoEfectivoNota < 0 {
-		return fmt.Errorf("siat nota credito/debito: montoEfectivoNota no puede ser negativo")
-	}
-	if s.TipoNota != TipoNotaCredito && s.TipoNota != TipoNotaDebito {
-		return fmt.Errorf("siat nota credito/debito: tipoNota debe ser 1 (crédito) o 2 (débito)")
-	}
-	if strings.TrimSpace(s.Leyenda) == "" {
-		return fmt.Errorf("siat nota credito/debito: leyenda es obligatoria")
-	}
-	if strings.TrimSpace(s.RazonSocialEmisor) == "" {
-		return fmt.Errorf("siat nota credito/debito: razonSocialEmisor es obligatoria")
-	}
-	if strings.TrimSpace(s.Municipio) == "" {
-		return fmt.Errorf("siat nota credito/debito: municipio es obligatorio")
-	}
-	if strings.TrimSpace(s.Direccion) == "" {
-		return fmt.Errorf("siat nota credito/debito: direccion es obligatoria")
-	}
-	if s.CodigoMetodoPago <= 0 || s.CodigoMoneda <= 0 || s.TipoCambio <= 0 {
-		return fmt.Errorf("siat nota credito/debito: codigoMetodoPago, codigoMoneda y tipoCambio deben ser mayores a cero")
-	}
-	if strings.TrimSpace(s.Cliente.NombreRazonSocial) == "" {
-		return fmt.Errorf("siat nota credito/debito: nombre del cliente es obligatorio")
-	}
-	if s.Cliente.CodigoTipoDocumentoIdentidad <= 0 {
-		return fmt.Errorf("siat nota credito/debito: codigoTipoDocumentoIdentidad debe ser mayor a cero")
-	}
-	if strings.TrimSpace(s.Cliente.NumeroDocumento) == "" {
-		return fmt.Errorf("siat nota credito/debito: numeroDocumento del cliente es obligatorio")
-	}
-	if len(s.Items) == 0 {
-		return fmt.Errorf("siat nota credito/debito: la nota debe tener al menos un ítem")
-	}
-	for i := range s.Items {
-		item := s.Items[i]
-		if strings.TrimSpace(item.ActividadEconomica) == "" {
-			return fmt.Errorf("siat nota credito/debito: actividadEconomica del ítem %d es obligatoria", i+1)
-		}
-		if item.CodigoProductoSin <= 0 {
-			return fmt.Errorf("siat nota credito/debito: codigoProductoSin del ítem %d debe ser mayor a cero", i+1)
-		}
-		if strings.TrimSpace(item.Descripcion) == "" {
-			return fmt.Errorf("siat nota credito/debito: descripcion del ítem %d es obligatoria", i+1)
-		}
-		if item.Cantidad <= 0 {
-			return fmt.Errorf("siat nota credito/debito: cantidad del ítem %d debe ser mayor a cero", i+1)
-		}
-		if item.UnidadMedida <= 0 {
-			return fmt.Errorf("siat nota credito/debito: unidadMedida del ítem %d debe ser mayor a cero", i+1)
-		}
-		if item.PrecioUnitario < 0 || item.SubTotal < 0 {
-			return fmt.Errorf("siat nota credito/debito: precio y subtotal del ítem %d no pueden ser negativos", i+1)
-		}
 	}
 	return nil
 }

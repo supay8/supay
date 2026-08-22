@@ -2,14 +2,16 @@ package siat
 
 import (
 	"context"
-	"encoding/xml"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
-
-	goSiat "github.com/ron86i/go-siat/v2"
-	"github.com/ron86i/go-siat/v2/pkg/models"
 )
+
+// DEPRECATED: el flujo de notas de crédito/débito vive ahora en el pipeline
+// general de emisión (/invoices con codigoDocumentoSector 24/29/47/48 y
+// datos_sector); EmitirFactura enruta internamente por recepcionDocumentoAjuste.
+// Estas funciones se mantienen por compatibilidad de API y delegan en él.
 
 // TipoNota define el tipo de nota de ajuste según el catálogo del SIAT.
 type TipoNota int
@@ -93,8 +95,9 @@ type SolicitudAnulacionDocumentoAjuste struct {
 	CodigoTipoFactura     int    `json:"codigoTipoFactura"`
 }
 
-// EmitirDocumentoAjuste construye, firma y envía un documento de ajuste
-// (nota de crédito o nota de débito) al SIAT.
+// EmitirDocumentoAjuste construye, firma y envía un documento de ajuste al SIAT.
+// Es un wrapper sobre EmitirFactura con los datos específicos del sector 24
+// mapeados a datos_sector.
 func (s *Service) EmitirDocumentoAjuste(ctx context.Context, req SolicitudDocumentoAjuste) (*ResultadoDocumentoAjuste, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -103,17 +106,18 @@ func (s *Service) EmitirDocumentoAjuste(ctx context.Context, req SolicitudDocume
 		return nil, fmt.Errorf("siat documento ajuste: servicio SIAT no inicializado")
 	}
 
-	sector := req.CodigoDocumentoSector
-	if sector <= 0 {
-		sector = 1
-	}
-	tipoFactura := req.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
+	datos, err := json.Marshal(map[string]any{
+		"numero_autorizacion_cuf":       strings.TrimSpace(req.CufFacturaOriginal),
+		"fecha_emision_factura":         req.FechaEmision.Format("2006-01-02"),
+		"monto_total_original":          req.MontoTotal,
+		"monto_total_devuelto":          req.MontoTotal,
+		"monto_efectivo_credito_debito": req.MontoTotal,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("siat documento ajuste: %w", err)
 	}
 
-	// Construir el XML usando los builders del SDK
-	xmlData, _, err := buildNotaCreditoDebito(SolicitudNotaCreditoDebito{
+	solicitud := SolicitudFactura{
 		CodigoAmbiente:        req.CodigoAmbiente,
 		CodigoSistema:         req.CodigoSistema,
 		Nit:                   req.Nit,
@@ -135,232 +139,99 @@ func (s *Service) EmitirDocumentoAjuste(ctx context.Context, req SolicitudDocume
 		CodigoMoneda:          req.CodigoMoneda,
 		TipoCambio:            req.TipoCambio,
 		Leyenda:               req.Leyenda,
-		CufFacturaOriginal:    req.CufFacturaOriginal,
-		FechaEmisionFactura:   req.FechaEmision,
-		MontoTotalOriginal:    req.MontoTotal,
-		MontoTotalDevuelto:    req.MontoTotal,
-		MontoEfectivoNota:     req.MontoTotal,
-		TipoNota:              req.TipoNota,
-		CodigoDocumentoSector: sector,
-		CodigoTipoFactura:     tipoFactura,
+		CodigoDocumentoSector: req.CodigoDocumentoSector,
+		CodigoTipoFactura:     req.CodigoTipoFactura,
+		DatosSector:           datos,
 		Items:                 req.Items,
-	}, goSiat.EmisionOnline)
+	}
+	if solicitud.CodigoDocumentoSector <= 0 {
+		solicitud.CodigoDocumentoSector = SectorNotaCreditoDebito
+	}
+
+	res, err := s.EmitirFactura(ctx, solicitud)
 	if err != nil {
-		return nil, fmt.Errorf("siat documento ajuste: %w", err)
+		return nil, err
 	}
-
-	// Serializar y firmar
-	xmlBytes, err := xml.Marshal(xmlData)
-	if err != nil {
-		return nil, fmt.Errorf("siat documento ajuste: no se pudo serializar el documento: %w", err)
-	}
-	xmlToSend := xmlBytes
-	if req.Modalidad == ModalidadElectronica {
-		xmlToSend, err = s.sdk.Config().SignXML(xmlBytes)
-		if err != nil {
-			return nil, fmt.Errorf("siat documento ajuste: no se pudo firmar el XML: %w", err)
-		}
-	}
-
-	archivo, hash, err := empaquetaArchivo(xmlToSend)
-	if err != nil {
-		return nil, fmt.Errorf("siat documento ajuste: %w", err)
-	}
-
-	rcpBuilder := models.NewRecepcionDocumentoAjusteBuilder().
-		WithCodigoModalidad(req.Modalidad).
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(sector).
-		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(tipoFactura).
-		WithCuis(req.Cuis).
-		WithCufd(req.Cufd).
-		WithFechaEnvio(time.Now().In(LaPaz)).
-		WithArchivo(archivo).
-		WithHashArchivo(hash)
-
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.sdk.DocumentoAjuste().RecepcionDocumentoAjuste(ctx, rcpBuilder.Build())
-	if err != nil {
-		return nil, fmt.Errorf("siat documento ajuste: %w", err)
-	}
-
-	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
-	if err != nil {
-		return nil, fmt.Errorf("siat documento ajuste: %w", err)
-	}
-
 	return &ResultadoDocumentoAjuste{
-		Transaccion:     transaccion,
-		CodigoEstado:    codigoEstado,
-		CodigoRecepcion: codigoRecepcion,
-		Mensajes:        mensajes,
-		Xml:             string(xmlToSend),
-		XmlHash:         hash,
+		Transaccion:     res.Transaccion,
+		CodigoEstado:    res.CodigoEstado,
+		CodigoRecepcion: res.CodigoRecepcion,
+		Mensajes:        res.Mensajes,
+		Cuf:             res.Cuf,
+		Xml:             res.Xml,
+		XmlHash:         res.XmlHash,
 	}, nil
 }
 
 // AnularDocumentoAjuste anula un documento de ajuste ya emitido ante el SIAT.
+// Wrapper sobre AnularFactura con routing por perfil.
 func (s *Service) AnularDocumentoAjuste(ctx context.Context, req SolicitudAnulacionDocumentoAjuste, codigoMotivo int) (*ResultadoDocumentoAjuste, error) {
-	if s.sdk == nil {
-		return nil, fmt.Errorf("siat anulacion documento ajuste: servicio SIAT no inicializado")
-	}
-
-	sector := req.CodigoDocumentoSector
-	if sector <= 0 {
-		sector = 1
-	}
-	tipoFactura := req.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
-	}
-
-	request := models.NewAnulacionDocumentoAjusteBuilder().
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(sector).
-		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(tipoFactura).
-		WithCuf(req.Cuf).
-		WithCuis(req.Cuis).
-		WithCufd(req.Cufd).
-		WithCodigoMotivo(codigoMotivo).
-		Build()
-
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.sdk.DocumentoAjuste().AnulacionDocumentoAjuste(ctx, request)
+	res, err := s.AnularFactura(ctx, req.solicitudDocumento(), codigoMotivo)
 	if err != nil {
-		return nil, fmt.Errorf("siat anulacion documento ajuste: %w", err)
+		return nil, err
 	}
-
-	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
-	if err != nil {
-		return nil, fmt.Errorf("siat anulacion documento ajuste: %w", err)
-	}
-
 	return &ResultadoDocumentoAjuste{
-		Transaccion:     transaccion,
-		CodigoEstado:    codigoEstado,
-		CodigoRecepcion: codigoRecepcion,
-		Mensajes:        mensajes,
+		Transaccion:     res.Transaccion,
+		CodigoEstado:    res.CodigoEstado,
+		CodigoRecepcion: res.CodigoRecepcion,
+		Mensajes:        res.Mensajes,
 	}, nil
 }
 
 // RevertirAnulacionDocumentoAjuste revierte una anulación de documento de ajuste.
+// Wrapper sobre RevertirAnulacion con routing por perfil.
 func (s *Service) RevertirAnulacionDocumentoAjuste(ctx context.Context, req SolicitudAnulacionDocumentoAjuste) (*ResultadoDocumentoAjuste, error) {
-	if s.sdk == nil {
-		return nil, fmt.Errorf("siat reversion documento ajuste: servicio SIAT no inicializado")
-	}
-
-	sector := req.CodigoDocumentoSector
-	if sector <= 0 {
-		sector = 1
-	}
-	tipoFactura := req.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
-	}
-
-	request := models.NewReversionAnulacionDocumentoAjusteBuilder().
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(sector).
-		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(tipoFactura).
-		WithCuf(req.Cuf).
-		WithCuis(req.Cuis).
-		WithCufd(req.Cufd).
-		Build()
-
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.sdk.DocumentoAjuste().ReversionAnulacionDocumentoAjuste(ctx, request)
+	res, err := s.RevertirAnulacion(ctx, req.solicitudDocumento())
 	if err != nil {
-		return nil, fmt.Errorf("siat reversion documento ajuste: %w", err)
+		return nil, err
 	}
-
-	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
-	if err != nil {
-		return nil, fmt.Errorf("siat reversion documento ajuste: %w", err)
-	}
-
 	return &ResultadoDocumentoAjuste{
-		Transaccion:     transaccion,
-		CodigoEstado:    codigoEstado,
-		CodigoRecepcion: codigoRecepcion,
-		Mensajes:        mensajes,
+		Transaccion:     res.Transaccion,
+		CodigoEstado:    res.CodigoEstado,
+		CodigoRecepcion: res.CodigoRecepcion,
+		Mensajes:        res.Mensajes,
 	}, nil
 }
 
 // VerificarEstadoDocumentoAjuste consulta el estado de un documento de ajuste.
+// Wrapper sobre VerificarEstado con routing por perfil.
 func (s *Service) VerificarEstadoDocumentoAjuste(ctx context.Context, req SolicitudAnulacionDocumentoAjuste) (*ResultadoDocumentoAjuste, error) {
-	if s.sdk == nil {
-		return nil, fmt.Errorf("siat verificacion documento ajuste: servicio SIAT no inicializado")
-	}
-
-	sector := req.CodigoDocumentoSector
-	if sector <= 0 {
-		sector = 1
-	}
-	tipoFactura := req.CodigoTipoFactura
-	if tipoFactura <= 0 {
-		tipoFactura = 1
-	}
-
-	request := models.NewVerificacionEstadoDocumentoAjusteBuilder().
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(sector).
-		WithCodigoEmision(goSiat.EmisionOnline).
-		WithTipoFacturaDocumento(tipoFactura).
-		WithCuf(req.Cuf).
-		WithCuis(req.Cuis).
-		WithCufd(req.Cufd).
-		Build()
-
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.sdk.DocumentoAjuste().VerificacionEstadoDocumentoAjuste(ctx, request)
+	res, err := s.VerificarEstado(ctx, req.solicitudDocumento())
 	if err != nil {
-		return nil, fmt.Errorf("siat verificacion documento ajuste: %w", err)
+		return nil, err
 	}
-
-	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
-	if err != nil {
-		return nil, fmt.Errorf("siat verificacion documento ajuste: %w", err)
-	}
-
 	return &ResultadoDocumentoAjuste{
-		Transaccion:     transaccion,
-		CodigoEstado:    codigoEstado,
-		CodigoRecepcion: codigoRecepcion,
-		Mensajes:        mensajes,
+		Transaccion:     res.Transaccion,
+		CodigoEstado:    res.CodigoEstado,
+		CodigoRecepcion: res.CodigoRecepcion,
+		Mensajes:        res.Mensajes,
 	}, nil
 }
 
-// buildDocumentoAjusteXML genera el XML del documento de ajuste según el XSD del SIAT.
-// Por ahora genera una estructura simplificada; se debe ajustar al XSD exacto
-// cuando se implemente la homologación.
-func buildDocumentoAjusteXML(req SolicitudDocumentoAjuste, sector, tipoFactura, tipoDoc int) ([]byte, error) {
-	// Nota: La serialización XML real debe seguir el XSD del SIAT para
-	// documento de ajuste. Por ahora se genera una estructura básica que
-	// será validada contra el XSD durante la homologación.
-	nit := parseNit(req.Nit)
-	cuf := "" // El CUF del documento de ajuste se genera en la emisión
-
-	// TODO: Implementar builders específicos de NC/ND del SDK cuando estén
-	// disponibles para todos los sectores. Por ahora se usa una estructura
-	// genérica que será reemplazada.
-	_ = nit
-	_ = cuf
-	_ = sector
-	_ = tipoFactura
-	_ = tipoDoc
-
-	return nil, fmt.Errorf("siat documento ajuste: la generación de XML para documentos de ajuste requiere implementación específica por sector; consulte al equipo de desarrollo")
+// solicitudDocumento adapta la solicitud de anulación/verificación al tipo
+// genérico usado por las operaciones por perfil.
+func (s SolicitudAnulacionDocumentoAjuste) solicitudDocumento() SolicitudDocumento {
+	sector := s.CodigoDocumentoSector
+	if sector <= 0 {
+		sector = SectorNotaCreditoDebito
+	}
+	tipo := s.CodigoTipoFactura
+	if tipo <= 0 {
+		tipo = TipoDocumentoNotaCreditoDebito
+	}
+	return SolicitudDocumento{
+		CodigoAmbiente:        s.CodigoAmbiente,
+		CodigoSistema:         s.CodigoSistema,
+		Nit:                   s.Nit,
+		Modalidad:             s.Modalidad,
+		Cuf:                   s.Cuf,
+		CodigoSucursal:        s.CodigoSucursal,
+		CodigoPuntoVenta:      s.CodigoPuntoVenta,
+		Cuis:                  s.Cuis,
+		Cufd:                  s.Cufd,
+		CodigoDocumentoSector: sector,
+		CodigoTipoFactura:     tipo,
+	}
 }
 
 func (s SolicitudDocumentoAjuste) validate() error {

@@ -65,14 +65,17 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
 	}
 
-	sector := req.sector()
-	tipoFactura := req.tipoFactura()
+	perfil, err := PerfilSector(req.sector())
+	if err != nil {
+		return nil, fmt.Errorf("siat masiva: %w", err)
+	}
+	tipoFactura := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
 	codigoEmision := req.codigoEmision()
 
 	facturas := make([]any, 0, len(req.Facturas))
 	cufs := make([]string, 0, len(req.Facturas))
 	for i := range req.Facturas {
-		factura, cuf, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
+		factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
 		if err != nil {
 			return nil, fmt.Errorf("siat masiva factura %d: %w", i+1, err)
 		}
@@ -84,7 +87,7 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 		WithCodigoModalidad(req.Modalidad).
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(sector).
+		WithCodigoDocumentoSector(perfil.Codigo).
 		WithCodigoEmision(codigoEmision).
 		WithTipoFacturaDocumento(tipoFactura).
 		WithCuis(req.Cuis).
@@ -103,7 +106,7 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
-	resp, err := s.recepcionMasivaEnvio(ctx, sector, req.Modalidad, built)
+	resp, err := s.masivaParaPerfil(ctx, perfil, req.Modalidad, built)
 	if err != nil {
 		return nil, fmt.Errorf("siat masiva: %w", err)
 	}
@@ -140,12 +143,16 @@ func (s *Service) ValidarMasivaFacturas(ctx context.Context, req SolicitudMasiva
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
 	}
+	perfil, err := PerfilSector(req.sector())
+	if err != nil {
+		return nil, fmt.Errorf("siat masiva: %w", err)
+	}
 	request := models.NewValidacionRecepcionMasivaFacturaBuilder().
 		WithCodigoSucursal(req.CodigoSucursal).
 		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoDocumentoSector(req.sector()).
+		WithCodigoDocumentoSector(perfil.Codigo).
 		WithCodigoEmision(req.codigoEmision()).
-		WithTipoFacturaDocumento(req.tipoFactura()).
+		WithTipoFacturaDocumento(perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)).
 		WithCuis(req.Cuis).
 		WithCufd(req.Cufd).
 		WithCodigoRecepcion(codigoRecepcion).
@@ -154,7 +161,7 @@ func (s *Service) ValidarMasivaFacturas(ctx context.Context, req SolicitudMasiva
 
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
-	resp, err := s.validacionMasivaEnvio(ctx, req.sector(), req.Modalidad, request)
+	resp, err := s.validacionMasivaParaPerfil(ctx, perfil, req.Modalidad, request)
 	if err != nil {
 		return nil, fmt.Errorf("siat masiva: %w", err)
 	}
@@ -170,34 +177,6 @@ func (s *Service) ValidarMasivaFacturas(ctx context.Context, req SolicitudMasiva
 		CodigoRecepcion: codigoRecepcionResp,
 		Mensajes:        mensajes,
 	}, nil
-}
-
-// recepcionMasivaEnvio ejecuta recepcionMasivaFactura en el servicio del SDK
-// adecuado para el documento-sector y la modalidad: CompraVenta() atiende los
-// sectores 1, 35 y 41; el resto (p.ej. sector 11 educativo) se enruta por
-// modalidad a Electronica() o Computarizada().
-func (s *Service) recepcionMasivaEnvio(ctx context.Context, sector, modalidad int, req models.RecepcionMasivaFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().RecepcionMasivaFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.RecepcionMasivaFactura(ctx, req)
-}
-
-func (s *Service) validacionMasivaEnvio(ctx context.Context, sector, modalidad int, req models.ValidacionRecepcionMasivaFactura) (any, error) {
-	switch sector {
-	case SectorCompraVenta, 35, 41:
-		return s.sdk.CompraVenta().ValidacionRecepcionMasivaFactura(ctx, req)
-	}
-	envio := s.sdk.Electronica()
-	if modalidad == ModalidadComputarizada {
-		envio = s.sdk.Computarizada()
-	}
-	return envio.ValidacionRecepcionMasivaFactura(ctx, req)
 }
 
 // normalized devuelve una copia de la solicitud en la que cada factura hereda
@@ -285,13 +264,6 @@ func (s SolicitudMasivaFactura) sector() int {
 		return SectorCompraVenta
 	}
 	return s.CodigoDocumentoSector
-}
-
-func (s SolicitudMasivaFactura) tipoFactura() int {
-	if s.CodigoTipoFactura <= 0 {
-		return 1
-	}
-	return s.CodigoTipoFactura
 }
 
 func (s SolicitudMasivaFactura) codigoEmision() int {

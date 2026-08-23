@@ -70,6 +70,11 @@ func ConnectDB() {
 		&models.Cufd{},
 		&models.Cuis{},
 		&models.Catalog{},
+		&models.SinProduct{},
+		&models.SiatActividad{},
+		&models.SiatLeyendaFactura{},
+		&models.SiatActividadDocSector{},
+		&models.CatalogSyncState{},
 		&models.Product{},
 		&models.ProductMapping{},
 		&models.ContingencyEvent{},
@@ -90,6 +95,23 @@ func ConnectDB() {
 		// UTC, por lo que los valid_to históricos quedaron 4 horas antes del
 		// instante real. Se reajustan a la hora local de Bolivia (UTC-4).
 		return tx.Exec("UPDATE cufds SET valid_to = valid_to + interval '4 hours'").Error
+	})
+
+	runDataMigration("migrate_productos_servicios_to_sin_products", func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+            INSERT INTO sin_products (id, company_id, codigo_actividad, codigo_producto_sin, descripcion, active, synced_at, created_at, updated_at)
+            SELECT DISTINCT ON (company_id, codigo)
+                gen_random_uuid(), company_id, 0, codigo, descripcion, true, synced_at, created_at, now()
+            FROM catalogs
+            WHERE tipo = 'productosServicios'
+            ORDER BY company_id, codigo, created_at DESC
+            ON CONFLICT (company_id, codigo_actividad, codigo_producto_sin) DO UPDATE
+            SET descripcion = EXCLUDED.descripcion, synced_at = EXCLUDED.synced_at, active = true, updated_at = now()
+        `).Error; err != nil {
+			return err
+		}
+		// Desde esta migración, productosServicios tiene una única fuente oficial.
+		return tx.Exec("DELETE FROM catalogs WHERE tipo = 'productosServicios'").Error
 	})
 
 	// Los índices únicos compuestos declarados con el patrón "_ struct{}" no los crea

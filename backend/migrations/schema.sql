@@ -77,6 +77,46 @@ CREATE TABLE IF NOT EXISTS catalogs (
 );
 CREATE INDEX IF NOT EXISTS idx_catalog_company_tipo ON catalogs (company_id, tipo);
 
+-- Catálogo de actividades económicas (sincronizarActividades). codigo_caeb es
+-- VARCHAR porque el SIAT lo transmite como texto; tipo_actividad distingue
+-- actividades principales ("P") de secundarias.
+CREATE TABLE IF NOT EXISTS siat_actividades (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id     UUID NOT NULL REFERENCES companies(id),
+    codigo_caeb    VARCHAR(20) NOT NULL,
+    descripcion    TEXT NOT NULL,
+    tipo_actividad VARCHAR(10) NOT NULL DEFAULT '',
+    synced_at      TIMESTAMPTZ NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_company_caeb UNIQUE (company_id, codigo_caeb)
+);
+
+-- Leyendas de factura por actividad económica
+-- (sincronizarListaLeyendasFactura).
+CREATE TABLE IF NOT EXISTS siat_leyendas_factura (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id          UUID NOT NULL REFERENCES companies(id),
+    codigo_actividad    VARCHAR(20) NOT NULL,
+    descripcion_leyenda TEXT NOT NULL,
+    synced_at           TIMESTAMPTZ NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_company_leyenda_act ON siat_leyendas_factura (company_id, codigo_actividad);
+
+-- Relación actividad ↔ documento-sector
+-- (sincronizarListaActividadesDocumentoSector). Resuelve el documento-sector a
+-- usar para emitir según la actividad del contribuyente.
+CREATE TABLE IF NOT EXISTS siat_actividades_doc_sector (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id              UUID NOT NULL REFERENCES companies(id),
+    codigo_actividad        VARCHAR(20) NOT NULL,
+    codigo_documento_sector INTEGER NOT NULL,
+    tipo_documento_sector   VARCHAR(20) NOT NULL DEFAULT '',
+    synced_at               TIMESTAMPTZ NOT NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_company_act_sector UNIQUE (company_id, codigo_actividad, codigo_documento_sector)
+);
+
 CREATE TABLE IF NOT EXISTS cufds (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     point_of_sale_id UUID NOT NULL REFERENCES point_of_sales(id),

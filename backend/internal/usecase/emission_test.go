@@ -282,6 +282,50 @@ func newTestUsecase(repo *fakeInvoiceRepo, catalog *fakeCatalogRepo, svc SiatEmi
 	return NewInvoiceUsecase(repo, nil, nil, nil, catalog, nil, svc, siat.ModalidadElectronica)
 }
 
+type fakeDocSectorRepo struct {
+	items []*domain.SiatActividadDocSector
+}
+
+func (f *fakeDocSectorRepo) Replace(string, []domain.SiatActividadDocSector, time.Time) error {
+	return nil
+}
+
+func (f *fakeDocSectorRepo) List(string) ([]*domain.SiatActividadDocSector, error) {
+	return f.items, nil
+}
+
+func (f *fakeDocSectorRepo) ListByActividad(_ string, codigoActividad string) ([]*domain.SiatActividadDocSector, error) {
+	out := make([]*domain.SiatActividadDocSector, 0)
+	for _, item := range f.items {
+		if item.CodigoActividad == codigoActividad {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+type fakeLeyendaRepo struct {
+	items []*domain.SiatLeyenda
+}
+
+func (f *fakeLeyendaRepo) Replace(string, []domain.SiatLeyenda, time.Time) error {
+	return nil
+}
+
+func (f *fakeLeyendaRepo) List(string) ([]*domain.SiatLeyenda, error) {
+	return f.items, nil
+}
+
+func (f *fakeLeyendaRepo) ListByActividad(_ string, codigoActividad string) ([]*domain.SiatLeyenda, error) {
+	out := make([]*domain.SiatLeyenda, 0)
+	for _, item := range f.items {
+		if item.CodigoActividad == codigoActividad {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
 // ---- Tests ----
 
 func TestCodigoTipoDocumentoIdentidad(t *testing.T) {
@@ -310,12 +354,11 @@ func TestCodigoTipoDocumentoIdentidad(t *testing.T) {
 }
 
 func TestResolveLeyenda(t *testing.T) {
-	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
-		"leyendasFactura": {
-			{Codigo: 1, Descripcion: "101010: Leyenda oficial de prueba", Tipo: "leyendasFactura"},
-		},
+	leyendas := &fakeLeyendaRepo{items: []*domain.SiatLeyenda{
+		{CodigoActividad: "101010", DescripcionLeyenda: "Leyenda oficial de prueba"},
 	}}
-	uc := newTestUsecase(newFakeInvoiceRepo(), catalog, nil)
+	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
+	uc.leyendaRepo = leyendas
 
 	got, err := uc.resolveLeyenda("comp-1", "101010")
 	if err != nil {
@@ -868,26 +911,25 @@ func TestSiatEstadoToDomain(t *testing.T) {
 }
 
 func TestResolveDocumentoSector(t *testing.T) {
-	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
-		"actividadesDocumentoSector": {
-			{Codigo: 1, Descripcion: "8549910|FCV", Tipo: "actividadesDocumentoSector"},
-			{Codigo: 1, Descripcion: "8550100|FCV", Tipo: "actividadesDocumentoSector"},
-			{Codigo: 11, Descripcion: "8549100|FSEDU", Tipo: "actividadesDocumentoSector"},
-			{Codigo: 24, Descripcion: "8549100|NCD", Tipo: "actividadesDocumentoSector"},
-			{Codigo: 47, Descripcion: "8549100|NCDDE", Tipo: "actividadesDocumentoSector"},
-		},
+	sectores := &fakeDocSectorRepo{items: []*domain.SiatActividadDocSector{
+		{CodigoActividad: "8549910", CodigoDocumentoSector: 1, TipoDocumentoSector: "FCV"},
+		{CodigoActividad: "8550100", CodigoDocumentoSector: 1, TipoDocumentoSector: "FCV"},
+		{CodigoActividad: "8549100", CodigoDocumentoSector: 11, TipoDocumentoSector: "FSEDU"},
+		{CodigoActividad: "8549100", CodigoDocumentoSector: 24, TipoDocumentoSector: "NCD"},
+		{CodigoActividad: "8549100", CodigoDocumentoSector: 47, TipoDocumentoSector: "NCDDE"},
 	}}
-	uc := newTestUsecase(newFakeInvoiceRepo(), catalog, nil)
+	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
+	uc.docSectorRepo = sectores
 
-	if got := uc.resolveDocumentoSector("comp-1", "8549100"); got != 11 {
-		t.Errorf("resolveDocumentoSector(8549100)=%d, se esperaba 11 (FSEDU)", got)
+	if got, err := uc.resolveDocumentoSector("comp-1", "8549100"); err != nil || got != 11 {
+		t.Errorf("resolveDocumentoSector(8549100)=%d/%v, se esperaba 11 (FSEDU)", got, err)
 	}
-	if got := uc.resolveDocumentoSector("comp-1", "8549910"); got != 1 {
-		t.Errorf("resolveDocumentoSector(8549910)=%d, se esperaba 1 (FCV)", got)
+	if got, err := uc.resolveDocumentoSector("comp-1", "8549910"); err != nil || got != 1 {
+		t.Errorf("resolveDocumentoSector(8549910)=%d/%v, se esperaba 1 (FCV)", got, err)
 	}
-	// Actividad sin asociación: cae a compraventa.
-	if got := uc.resolveDocumentoSector("comp-1", "9999999"); got != 1 {
-		t.Errorf("resolveDocumentoSector(9999999)=%d, se esperaba 1", got)
+	// Actividad sin asociación: no se permite un fallback estático.
+	if _, err := uc.resolveDocumentoSector("comp-1", "9999999"); err == nil {
+		t.Fatal("se esperaba error para actividad no sincronizada")
 	}
 }
 

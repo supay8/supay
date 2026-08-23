@@ -51,8 +51,13 @@ func main() {
 	contingencyRepo := postgres.NewPostgresContingencyEventRepository(database.DB)
 	tipoPVRepo := postgres.NewPostgresTipoPuntoVentaRepository(database.DB)
 	catalogRepo := postgres.NewPostgresCatalogRepository(database.DB)
+	sinProductRepo := postgres.NewPostgresSinProductRepository(database.DB)
+	syncStateRepo := postgres.NewPostgresCatalogSyncStateRepository(database.DB)
+	siatActividadRepo := postgres.NewPostgresSiatActividadRepository(database.DB)
+	siatLeyendaRepo := postgres.NewPostgresSiatLeyendaRepository(database.DB)
+	siatDocSectorRepo := postgres.NewPostgresSiatActividadDocSectorRepository(database.DB)
 	productRepo := postgres.NewPostgresProductRepository(database.DB)
-	productUsecase := usecase.NewProductUsecase(productRepo, companyRepo, catalogRepo)
+	productUsecase := usecase.NewProductUsecase(productRepo, companyRepo, catalogRepo, sinProductRepo, siatDocSectorRepo)
 	productHandler := deliveryHttp.NewProductHandler(productUsecase)
 	branchRepo := postgres.NewPostgresBranchRepository(database.DB)
 	sentPackageRepo := postgres.NewPostgresSentPackageRepository(database.DB)
@@ -83,10 +88,10 @@ func main() {
 	if siatService != nil {
 		emissionService = siatService
 	}
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo)
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
-	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad)
+	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo)
 	siatHandler := deliveryHttp.NewSiatHandler(siatUsecase, pdf.NewService(database.DB))
 
 	// 4. Router

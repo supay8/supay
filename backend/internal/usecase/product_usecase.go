@@ -11,13 +11,24 @@ import (
 )
 
 type ProductUsecase struct {
-	productRepo domain.ProductRepository
-	companyRepo domain.CompanyRepository
-	catalogRepo domain.CatalogRepository
+	productRepo    domain.ProductRepository
+	companyRepo    domain.CompanyRepository
+	catalogRepo    domain.CatalogRepository
+	sinProductRepo domain.SinProductRepository
+	docSectorRepo  domain.SiatActividadDocSectorRepository
 }
 
-func NewProductUsecase(productRepo domain.ProductRepository, companyRepo domain.CompanyRepository, catalogRepo domain.CatalogRepository) *ProductUsecase {
-	return &ProductUsecase{productRepo: productRepo, companyRepo: companyRepo, catalogRepo: catalogRepo}
+func NewProductUsecase(productRepo domain.ProductRepository, companyRepo domain.CompanyRepository, catalogRepo domain.CatalogRepository, extras ...any) *ProductUsecase {
+	uc := &ProductUsecase{productRepo: productRepo, companyRepo: companyRepo, catalogRepo: catalogRepo}
+	for _, extra := range extras {
+		switch typed := extra.(type) {
+		case domain.SinProductRepository:
+			uc.sinProductRepo = typed
+		case domain.SiatActividadDocSectorRepository:
+			uc.docSectorRepo = typed
+		}
+	}
+	return uc
 }
 
 type ProductMappingRequest struct {
@@ -43,14 +54,19 @@ func (uc *ProductUsecase) Create(req CreateProductRequest) (*domain.Product, err
 		return nil, errors.New("empresa no encontrada")
 	}
 	product := &domain.Product{CompanyID: req.CompanyID, SKU: strings.TrimSpace(req.SKU), Name: strings.TrimSpace(req.Name), Active: true}
-	if err := uc.productRepo.Create(product); err != nil {
-		return nil, err
-	}
+	validatedMappings := make([]domain.ProductMapping, 0, len(req.Mappings))
 	for _, input := range req.Mappings {
-		mapping, err := uc.validateMapping(req.CompanyID, product.ID, input)
+		mapping, err := uc.validateMapping(req.CompanyID, "", input)
 		if err != nil {
 			return nil, err
 		}
+		validatedMappings = append(validatedMappings, mapping)
+	}
+	if err := uc.productRepo.Create(product); err != nil {
+		return nil, err
+	}
+	for _, mapping := range validatedMappings {
+		mapping.ProductID = product.ID
 		if err := uc.productRepo.UpsertMapping(req.CompanyID, mapping); err != nil {
 			return nil, err
 		}
@@ -78,7 +94,14 @@ func (uc *ProductUsecase) validateMapping(companyID, productID string, req Produ
 	if req.CodigoProductoSin <= 0 || strings.TrimSpace(req.CodigoActividad) == "" || req.CodigoDocumentoSector <= 0 || req.UnidadMedida <= 0 {
 		return domain.ProductMapping{}, errors.New("codigo_producto_sin, codigo_actividad, codigo_documento_sector y unidad_medida son obligatorios")
 	}
-	if !uc.catalogContains(companyID, "productosServicios", int(req.CodigoProductoSin)) {
+	var sinProduct *domain.SinProduct
+	if uc.sinProductRepo != nil {
+		var err error
+		sinProduct, err = uc.sinProductRepo.GetByCode(companyID, req.CodigoProductoSin)
+		if err != nil || sinProduct == nil {
+			return domain.ProductMapping{}, fmt.Errorf("codigo_producto_sin %d no existe en el catálogo SIN sincronizado", req.CodigoProductoSin)
+		}
+	} else if !uc.catalogContains(companyID, "productosServicios", int(req.CodigoProductoSin)) {
 		return domain.ProductMapping{}, fmt.Errorf("codigo_producto_sin %d no existe en el catálogo sincronizado", req.CodigoProductoSin)
 	}
 	if !uc.catalogContains(companyID, "actividades", parseInt(req.CodigoActividad)) {
@@ -87,13 +110,16 @@ func (uc *ProductUsecase) validateMapping(companyID, productID string, req Produ
 	if !uc.catalogContains(companyID, "unidadMedida", req.UnidadMedida) {
 		return domain.ProductMapping{}, fmt.Errorf("unidad_medida %d no existe en el catálogo sincronizado", req.UnidadMedida)
 	}
-	sectorItems, err := uc.catalogRepo.List(companyID, "actividadesDocumentoSector")
+	if uc.docSectorRepo == nil {
+		return domain.ProductMapping{}, errors.New("no se pudo consultar actividadesDocumentoSector; sincronice los catálogos")
+	}
+	sectorItems, err := uc.docSectorRepo.ListByActividad(companyID, strings.TrimSpace(req.CodigoActividad))
 	if err != nil {
 		return domain.ProductMapping{}, errors.New("no se pudo consultar actividadesDocumentoSector; sincronice los catálogos")
 	}
 	compatible := false
 	for _, item := range sectorItems {
-		if item.Codigo == req.CodigoDocumentoSector && strings.HasPrefix(item.Descripcion, strings.TrimSpace(req.CodigoActividad)+"|") {
+		if item.CodigoDocumentoSector == req.CodigoDocumentoSector {
 			compatible = true
 			break
 		}
@@ -101,7 +127,11 @@ func (uc *ProductUsecase) validateMapping(companyID, productID string, req Produ
 	if !compatible {
 		return domain.ProductMapping{}, fmt.Errorf("la actividad %s no está habilitada para el sector %d", req.CodigoActividad, req.CodigoDocumentoSector)
 	}
-	return domain.ProductMapping{ProductID: productID, CodigoProductoSin: req.CodigoProductoSin, CodigoActividad: strings.TrimSpace(req.CodigoActividad), CodigoDocumentoSector: req.CodigoDocumentoSector, UnidadMedida: req.UnidadMedida, IsDefault: req.IsDefault, Active: true, SyncedAt: time.Now()}, nil
+	var sinProductID *string
+	if sinProduct != nil {
+		sinProductID = &sinProduct.ID
+	}
+	return domain.ProductMapping{ProductID: productID, SinProductID: sinProductID, CodigoProductoSin: req.CodigoProductoSin, CodigoActividad: strings.TrimSpace(req.CodigoActividad), CodigoDocumentoSector: req.CodigoDocumentoSector, UnidadMedida: req.UnidadMedida, IsDefault: req.IsDefault, Active: true, SyncedAt: time.Now()}, nil
 }
 
 func (uc *ProductUsecase) catalogContains(companyID, tipo string, code int) bool {

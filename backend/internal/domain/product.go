@@ -16,6 +16,7 @@ type Product struct {
 type ProductMapping struct {
 	ID                    string    `json:"id"`
 	ProductID             string    `json:"product_id"`
+	SinProductID          *string   `json:"sin_product_id,omitempty"`
 	CodigoProductoSin     int64     `json:"codigo_producto_sin"`
 	CodigoActividad       string    `json:"codigo_actividad"`
 	CodigoDocumentoSector int       `json:"codigo_documento_sector"`

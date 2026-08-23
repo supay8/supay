@@ -47,6 +47,7 @@ type Invoice struct {
 	CodigoMoneda          int             `json:"codigo_moneda"`
 	TipoCambio            float64         `json:"tipo_cambio"`
 	CodigoDocumentoSector int             `json:"codigo_documento_sector"`
+	Layout                string          `json:"layout,omitempty"`
 	CodigoTipoFactura     int             `json:"codigo_tipo_factura"`
 	NombreEstudiante      *string         `json:"nombre_estudiante,omitempty"`
 	PeriodoFacturado      *string         `json:"periodo_facturado,omitempty"`

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -94,8 +93,7 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		rollback()
 		return nil, err
 	}
-	log.Println("viendo la factura")
-	log.Println(req)
+
 	result, err := uc.siatService.EmitirFactura(ctx, *req)
 	if err != nil {
 		rollback()
@@ -126,13 +124,10 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	} else {
 		inv.Status = domain.InvoiceRejected
 	}
-	log.Println("bloque 2")
 
 	if err := uc.persistResultadoConReintentos(inv, result); err != nil {
 		return nil, err
 	}
-	log.Println("bloque 3")
-	log.Println(result)
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
 			CodigoEstado:    result.CodigoEstado,
@@ -140,7 +135,6 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 			Mensajes:        result.Mensajes,
 		}
 	}
-	log.Println("bloque 4")
 
 	return inv, nil
 }
@@ -560,7 +554,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 	if sector <= 0 {
 		sector = 1
 	}
-	perfil, err := siat.PerfilSector(sector)
+	perfil, err := siat.PerfilSectorLayout(sector, inv.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("factura %s: %w", inv.ID, err)
 	}
@@ -604,6 +598,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		TipoCambio:            inv.TipoCambio,
 		MontoTotal:            inv.Total,
 		CodigoDocumentoSector: sector,
+		Layout:                inv.Layout,
 		CodigoTipoFactura:     tipoFactura,
 		NombreEstudiante:      nombreEstudiante,
 		PeriodoFacturado:      periodoFacturado,
@@ -638,17 +633,17 @@ func codigoTipoDocumentoIdentidad(documentType string) (int, error) {
 	}
 }
 
-// resolveLeyenda busca en el catálogo sincronizado leyendasFactura la leyenda
-// oficial del SIAT para la actividad económica de la empresa. Si el catálogo no
-// está sincronizado o no contiene la actividad, usa la leyenda genérica de la
-// Ley 453.
+// resolveLeyenda busca en el catálogo sincronizado leyendasFactura (tabla
+// siat_leyendas_factura) la leyenda oficial del SIAT para la actividad
+// económica de la empresa. Si el catálogo no está sincronizado o no contiene
+// la actividad, usa la leyenda genérica de la Ley 453.
 func (uc *InvoiceUsecase) resolveLeyenda(companyID, actividad string) (string, error) {
-	if uc.catalogRepo != nil {
-		if items, err := uc.catalogRepo.List(companyID, "leyendasFactura"); err == nil {
-			prefix := actividad + ":"
+	if uc.leyendaRepo != nil && strings.TrimSpace(actividad) != "" {
+		if items, err := uc.leyendaRepo.ListByActividad(companyID, strings.TrimSpace(actividad)); err == nil {
 			for _, item := range items {
-				if strings.HasPrefix(item.Descripcion, prefix) {
-					return strings.TrimSpace(strings.TrimPrefix(item.Descripcion, prefix)), nil
+				leyenda := strings.TrimSpace(item.DescripcionLeyenda)
+				if leyenda != "" {
+					return leyenda, nil
 				}
 			}
 		}

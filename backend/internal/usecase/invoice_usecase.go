@@ -15,18 +15,21 @@ import (
 )
 
 type InvoiceUsecase struct {
-	invoiceRepo  domain.InvoiceRepository
-	productRepo  domain.ProductRepository
-	customerRepo domain.CustomerRepository
-	companyRepo  domain.CompanyRepository
-	posRepo      domain.PointOfSaleRepository
-	catalogRepo  domain.CatalogRepository
-	cufdRepo     domain.CufdRepository
-	siatService  SiatEmissionService
-	modalidad    int
+	invoiceRepo   domain.InvoiceRepository
+	productRepo   domain.ProductRepository
+	syncStateRepo domain.CatalogSyncStateRepository
+	customerRepo  domain.CustomerRepository
+	companyRepo   domain.CompanyRepository
+	posRepo       domain.PointOfSaleRepository
+	catalogRepo   domain.CatalogRepository
+	cufdRepo      domain.CufdRepository
+	leyendaRepo   domain.SiatLeyendaRepository
+	docSectorRepo domain.SiatActividadDocSectorRepository
+	siatService   SiatEmissionService
+	modalidad     int
 }
 
-func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository, catalogRepo domain.CatalogRepository, cufdRepo domain.CufdRepository, siatService SiatEmissionService, modalidad int, productRepos ...domain.ProductRepository) *InvoiceUsecase {
+func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository, catalogRepo domain.CatalogRepository, cufdRepo domain.CufdRepository, siatService SiatEmissionService, modalidad int, extras ...any) *InvoiceUsecase {
 	uc := &InvoiceUsecase{
 		invoiceRepo:  invoiceRepo,
 		customerRepo: customerRepo,
@@ -37,8 +40,17 @@ func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain
 		siatService:  siatService,
 		modalidad:    modalidad,
 	}
-	if len(productRepos) > 0 {
-		uc.productRepo = productRepos[0]
+	for _, extra := range extras {
+		switch typed := extra.(type) {
+		case domain.ProductRepository:
+			uc.productRepo = typed
+		case domain.CatalogSyncStateRepository:
+			uc.syncStateRepo = typed
+		case domain.SiatLeyendaRepository:
+			uc.leyendaRepo = typed
+		case domain.SiatActividadDocSectorRepository:
+			uc.docSectorRepo = typed
+		}
 	}
 	return uc
 }
@@ -68,6 +80,7 @@ type CreateInvoiceRequest struct {
 	// educativo, 24 nota crédito/débito, ...). Si se omite se resuelve desde la
 	// actividad económica de la empresa.
 	CodigoDocumentoSector int                        `json:"codigo_documento_sector,omitempty"`
+	Layout                string                     `json:"layout,omitempty"`
 	CodigoTipoFactura     int                        `json:"codigo_tipo_factura,omitempty"`
 	NombreEstudiante      *string                    `json:"nombre_estudiante,omitempty"`
 	PeriodoFacturado      *string                    `json:"periodo_facturado,omitempty"`
@@ -119,6 +132,9 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 	}
 	if !pos.IsActive {
 		return nil, errors.New("el punto de venta está inactivo")
+	}
+	if err := uc.ensureCatalogReadiness(req.CompanyId, req.PointOfSaleId); err != nil {
+		return nil, err
 	}
 
 	customer, err := uc.customerRepo.GetByID(req.CustomerId)
@@ -177,7 +193,7 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 	// El perfil del documento-sector valida datos_sector (fail-fast, antes de
 	// tocar la base) y deriva el tipoFacturaDocumento real (1 con crédito, 2 sin
 	// crédito, 3 nota crédito/débito).
-	perfil, err := siat.PerfilSector(sector)
+	perfil, err := siat.PerfilSectorLayout(sector, req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("documento-sector %d no soportado: %w", sector, err)
 	}
@@ -233,6 +249,7 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		CodigoMoneda:          moneda,
 		TipoCambio:            tipoCambio,
 		CodigoDocumentoSector: sector,
+		Layout:                req.Layout,
 		CodigoTipoFactura:     tipoFactura,
 		NombreEstudiante:      req.NombreEstudiante,
 		PeriodoFacturado:      req.PeriodoFacturado,
@@ -298,6 +315,26 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 	}
 
 	return inv, nil
+}
+
+func (uc *InvoiceUsecase) ensureCatalogReadiness(companyID, pointOfSaleID string) error {
+	if uc.syncStateRepo == nil {
+		return nil
+	}
+	states, err := uc.syncStateRepo.List(companyID, pointOfSaleID)
+	if err != nil {
+		return fmt.Errorf("no se pudo verificar readiness de catálogos: %w", err)
+	}
+	ready := make(map[string]bool, len(states))
+	for _, state := range states {
+		ready[state.Operation] = state.Status == "SUCCESS" && state.SyncedAt != nil && time.Since(*state.SyncedAt) <= catalogSyncMaxAge
+	}
+	for _, required := range []string{"actividades", "productosServicios", "actividadesDocumentoSector", "unidadMedida", "tipoMoneda", "tipoMetodoPago", "leyendasFactura"} {
+		if !ready[required] {
+			return fmt.Errorf("catálogos SIAT incompletos; sincronice %s antes de crear la factura", required)
+		}
+	}
+	return nil
 }
 
 func (uc *InvoiceUsecase) GetByID(id string) (*domain.Invoice, error) {
@@ -405,7 +442,7 @@ func (uc *InvoiceUsecase) resolveInvoiceSector(invoiceType string, candidates ma
 		if company != nil && company.CodigoActividad != nil {
 			actividad = strings.TrimSpace(*company.CodigoActividad)
 		}
-		return uc.resolveDocumentoSector(company.ID, actividad), nil
+		return uc.resolveDocumentoSector(company.ID, actividad)
 	default:
 		return 0, fmt.Errorf("invoice_type %q no soportado", invoiceType)
 	}
@@ -417,30 +454,32 @@ func (uc *InvoiceUsecase) ListByPointOfSale(pointOfSaleID string) ([]*domain.Inv
 
 // resolveDocumentoSector determina el documento-sector del SIAT para la
 // actividad económica de la empresa consultando el catálogo sincronizado
-// actividadesDocumentoSector (descripción "actividad|FCV|FSEDU|NCD|NCDDE").
-// Prefiere la factura de compraventa (FCV); si la actividad solo está asociada
-// a sectores educativos (p.ej. 8549100 -> FSEDU), usa ese sector.
-func (uc *InvoiceUsecase) resolveDocumentoSector(companyID, actividad string) int {
-	if uc.catalogRepo != nil {
-		if items, err := uc.catalogRepo.List(companyID, "actividadesDocumentoSector"); err == nil {
-			found := 0
-			for _, item := range items {
-				fields := strings.Split(item.Descripcion, "|")
-				if len(fields) < 2 || strings.TrimSpace(fields[0]) != actividad {
-					continue
-				}
-				tipo := strings.TrimSpace(fields[1])
-				if tipo == "FCV" {
-					return item.Codigo
-				}
-				if tipo == "FSEDU" {
-					found = item.Codigo
-				}
-			}
-			if found > 0 {
-				return found
-			}
+// actividadesDocumentoSector (tabla siat_actividades_doc_sector). Prefiere la
+// factura de compraventa (FCV); si la actividad solo está asociada a sectores
+// educativos (p.ej. 8549100 -> FSEDU), usa ese sector.
+func (uc *InvoiceUsecase) resolveDocumentoSector(companyID, actividad string) (int, error) {
+	actividad = strings.TrimSpace(actividad)
+	if actividad == "" {
+		return 0, errors.New("no se puede resolver documento-sector: falta codigo de actividad económica; sincronice actividadesDocumentoSector")
+	}
+	if uc.docSectorRepo == nil {
+		return 0, errors.New("no se puede resolver documento-sector: sincronice actividadesDocumentoSector")
+	}
+	items, err := uc.docSectorRepo.ListByActividad(companyID, actividad)
+	if err != nil {
+		return 0, fmt.Errorf("no se pudo consultar actividadesDocumentoSector: %w", err)
+	}
+	found := 0
+	for _, item := range items {
+		switch strings.TrimSpace(item.TipoDocumentoSector) {
+		case "FCV":
+			return item.CodigoDocumentoSector, nil
+		case "FSEDU":
+			found = item.CodigoDocumentoSector
 		}
 	}
-	return 1
+	if found > 0 {
+		return found, nil
+	}
+	return 0, fmt.Errorf("la actividad %s no tiene documento-sector sincronizado; ejecute SincronizarListaActividadesDocumentoSector", actividad)
 }

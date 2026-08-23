@@ -83,6 +83,13 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 			r.Get("/invoice/{invoiceId}/pdf", h.Siat.DownloadPDF)
 		})
 
+		r.Route("/catalogs", func(r chi.Router) {
+			r.Get("/products", h.Siat.ListSinProducts)
+			r.Get("/readiness", h.Siat.CatalogReadiness)
+			r.Get("/{companyId}", h.Siat.GetCatalog)
+			r.Get("/{companyId}/{tipo}", h.Siat.GetCatalog)
+		})
+
 		r.Route("/customers", func(r chi.Router) {
 			r.Post("/", h.Customer.Create)
 			r.Get("/", h.Customer.List)

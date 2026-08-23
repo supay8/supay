@@ -337,7 +337,7 @@ func optionalStringPtr(value *string) *string {
 }
 
 func removeEmptyOptionalFacturaFields(data []byte) []byte {
-	for _, field := range []string{"telefono", "complemento", "cafc", "montoDescuentoCreditoDebito"} {
+	for _, field := range []string{"telefono", "complemento", "montoDescuentoCreditoDebito"} {
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?></`+field+`>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?/>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`(?s)<`+field+`(?:\s[^>]*)?>\s*</`+field+`>`).ReplaceAll(data, nil)

@@ -210,7 +210,6 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithMontoGiftCard", zeroFloat},
 		{"WithDescuentoAdicional", zeroFloat},
 		{"WithCodigoExcepcion", zeroInt},
-		{"WithCafc", nil},
 		{"WithCodigoMetodoPago", req.CodigoMetodoPago},
 		{"WithMontoTotal", req.MontoTotal},
 		{"WithMontoTotalSujetoIva", montoTotalSujetoIva(p, req)},
@@ -223,8 +222,8 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 	}
 	for _, c := range comunes {
 		if esPunteroNil(c.valor) || !tieneMetodo(cab, c.metodo) {
-			// Campos opcionales vacíos (cafc) y campos que el XSD del sector no
-			// define (montoTotal en notas, municipio en boletos) se omiten: el
+			// Campos opcionales vacíos y campos que el XSD del sector no define
+			// (montoTotal en notas, municipio en boletos) se omiten: el
 			// constructor ya dejó esos punteros en nil / el nodo fuera del XML.
 			continue
 		}

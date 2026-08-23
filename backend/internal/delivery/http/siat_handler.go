@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -197,6 +198,38 @@ func (h *SiatHandler) Sincronizar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *SiatHandler) ListSinProducts(w http.ResponseWriter, r *http.Request) {
+	limit := parseQueryInt(r.URL.Query().Get("limit"), 50)
+	offset := parseQueryInt(r.URL.Query().Get("offset"), 0)
+	items, total, err := h.siatUC.ListSinProducts(r.URL.Query().Get("companyId"), r.URL.Query().Get("query"), limit, offset)
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit, "offset": offset, "total": total})
+}
+
+func (h *SiatHandler) CatalogReadiness(w http.ResponseWriter, r *http.Request) {
+	readiness, err := h.siatUC.CatalogReadiness(r.URL.Query().Get("companyId"), r.URL.Query().Get("pointOfSaleId"))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, readiness)
+}
+
+// GetCatalog sirve los catálogos sincronizados desde la BD. Con
+// GET /catalogs/{companyId}/{tipo} devuelve ese catálogo; con
+// GET /catalogs/{companyId} o tipo=all los devuelve todos agrupados.
+func (h *SiatHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
+	res, err := h.siatUC.ListCatalog(chi.URLParam(r, "companyId"), chi.URLParam(r, "tipo"))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 func (h *SiatHandler) EmitirDocumentoAjuste(w http.ResponseWriter, r *http.Request) {
 	var body usecase.DocumentoAjusteInput
 	if !h.decodeBody(w, r, &body) {
@@ -231,6 +264,13 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func parseQueryInt(raw string, fallback int) int {
+	if value, err := strconv.Atoi(raw); err == nil && value >= 0 {
+		return value
+	}
+	return fallback
 }
 
 // DownloadPDF genera y descarga el PDF de la factura indicada.

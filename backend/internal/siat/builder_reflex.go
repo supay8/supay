@@ -219,6 +219,7 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithMontoTotalMoneda", req.MontoTotal},
 		{"WithLeyenda", req.Leyenda},
 		{"WithUsuario", req.Usuario},
+		{"WithCodigoDocumentoSector", p.Codigo},
 	}
 	for _, c := range comunes {
 		if esPunteroNil(c.valor) || !tieneMetodo(cab, c.metodo) {

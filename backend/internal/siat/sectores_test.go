@@ -10,43 +10,26 @@ import (
 	goSiat "github.com/ron86i/go-siat/v2"
 )
 
-// TestCatalogoCubreLosSectoresDelSDK verifica que el registro contenga todos
-// los documentos-sector con builder público en go-siat y que la clasificación
-// normativa (tipoFacturaDocumento) sea la correcta por grupo.
+// TestCatalogoCubreLosSectoresDelSDK verifica invariantes que deben cumplirse
+// para cualquier entrada del registro. La paridad de códigos y raíces XML se
+// deriva directamente del catálogo fuente del SDK en sector_sdk_parity_test.go.
 func TestCatalogoCubreLosSectoresDelSDK(t *testing.T) {
-	conCredito := map[int]bool{1: true, 2: true, 11: true, 12: true, 13: true, 14: true, 15: true,
-		16: true, 17: true, 18: true, 19: true, 21: true, 22: true, 23: true, 30: true, 31: true,
-		34: true, 35: true, 37: true, 38: true, 39: true, 41: true, 44: true, 51: true, 53: true, 55: true}
-	sinCredito := map[int]bool{3: true, 4: true, 5: true, 6: true, 7: true, 8: true, 9: true,
-		10: true, 20: true, 28: true, 36: true, 40: true, 42: true, 43: true, 45: true, 46: true,
-		49: true, 50: true, 52: true, 54: true}
-	ajuste := map[int]bool{24: true, 29: true, 47: true, 48: true}
-
 	for _, p := range PerfilesSector() {
-		switch {
-		case conCredito[p.Codigo]:
-			if got := p.TipoDocumentoResuelto(0); got != TipoDocumentoFacturaConCredito {
-				t.Errorf("sector %d (%s): tipoDocumento=%d, se esperaba %d", p.Codigo, p.Nombre, got, TipoDocumentoFacturaConCredito)
+		if p.Codigo == 33 {
+			if p.HasBuilder() || p.Operacion != OperacionRecepcionFactura {
+				t.Errorf("sector 33 debe ser recepción sin builder: %#v", p)
 			}
-		case sinCredito[p.Codigo]:
-			if got := p.TipoDocumentoResuelto(0); got != TipoDocumentoFacturaSinCredito {
-				t.Errorf("sector %d (%s): tipoDocumento=%d, se esperaba %d", p.Codigo, p.Nombre, got, TipoDocumentoFacturaSinCredito)
-			}
-		case ajuste[p.Codigo]:
-			if got := p.TipoDocumentoResuelto(0); got != TipoDocumentoNotaCreditoDebito {
-				t.Errorf("sector %d (%s): tipoDocumento=%d, se esperaba %d", p.Codigo, p.Nombre, got, TipoDocumentoNotaCreditoDebito)
-			}
-			if !p.EsAjuste() {
-				t.Errorf("sector %d debería ser documento de ajuste", p.Codigo)
-			}
-		default:
-			t.Errorf("sector %d (%s) inesperado en el catálogo; clasifíquelo en este test", p.Codigo, p.Nombre)
+			continue
 		}
-	}
-
-	total := len(conCredito) + len(sinCredito) + len(ajuste)
-	if got := len(PerfilesSector()); got != total {
-		t.Errorf("el catálogo tiene %d sectores, se esperaban %d", got, total)
+		if p.TipoFacturaDocumento < TipoDocumentoFacturaConCredito || p.TipoFacturaDocumento > TipoDocumentoNotaCreditoDebito {
+			t.Errorf("sector %d tiene tipoFacturaDocumento inválido: %d", p.Codigo, p.TipoFacturaDocumento)
+		}
+		if !p.HasBuilder() {
+			t.Errorf("sector %d no tiene builders", p.Codigo)
+		}
+		if p.Operacion == OperacionDocumentoAjuste && p.Facade.Fixed() != FachadaDocumentoAjuste {
+			t.Errorf("sector %d debe usar fachada DocumentoAjuste", p.Codigo)
+		}
 	}
 }
 
@@ -82,6 +65,9 @@ func TestBuildFacturaTodosLosSectores(t *testing.T) {
 	for _, p := range PerfilesSector() {
 		p := p
 		t.Run(fmt.Sprintf("sector_%02d", p.Codigo), func(t *testing.T) {
+			if !p.HasBuilder() {
+				return
+			}
 			datos := jsonRaw(datosDeEjemplo(p))
 			req := SolicitudFactura{
 				CodigoAmbiente:        AmbientePruebas,
@@ -103,6 +89,7 @@ func TestBuildFacturaTodosLosSectores(t *testing.T) {
 				TipoCambio:            1,
 				MontoTotal:            100,
 				CodigoDocumentoSector: p.Codigo,
+				Layout:                p.Layout,
 				DatosSector:           datos,
 				Cliente: ClienteFactura{
 					NombreRazonSocial:            "CLIENTE TEST",

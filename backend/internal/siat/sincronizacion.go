@@ -111,12 +111,47 @@ type ParametricaDto struct {
 	Descripcion        string `json:"descripcion"`
 }
 
+type SinProductDto struct {
+	CodigoProductoSin int64  `json:"codigoProductoSin"`
+	CodigoActividad   int64  `json:"codigoActividad"`
+	Descripcion       string `json:"descripcion"`
+}
+
+// ActividadDto es una actividad económica del catálogo CAEB (sincronizarActividades).
+type ActividadDto struct {
+	CodigoCaeb    string `json:"codigoCaeb"`
+	Descripcion   string `json:"descripcion"`
+	TipoActividad string `json:"tipoActividad"`
+}
+
+// LeyendaDto es una leyenda oficial asociada a una actividad económica
+// (sincronizarListaLeyendasFactura).
+type LeyendaDto struct {
+	CodigoActividad    string `json:"codigoActividad"`
+	DescripcionLeyenda string `json:"descripcionLeyenda"`
+}
+
+// ActividadDocSectorDto es la relación entre una actividad económica y un
+// documento-sector (sincronizarListaActividadesDocumentoSector).
+type ActividadDocSectorDto struct {
+	CodigoActividad       string `json:"codigoActividad"`
+	CodigoDocumentoSector int    `json:"codigoDocumentoSector"`
+	TipoDocumentoSector   string `json:"tipoDocumentoSector"`
+}
+
 // RespuestaSincronizacion es la respuesta normalizada de una sincronización.
+// Los catálogos complejos (actividades, productos, leyendas, relación
+// actividad-documento sector) se transportan con todos sus campos; las
+// paramétricas simples solo tienen codigoClasificador + descripcion.
 type RespuestaSincronizacion struct {
-	Transaccion bool             `json:"transaccion"`
-	FechaHora   time.Time        `json:"fechaHora,omitempty"`
-	Codigos     []ParametricaDto `json:"codigos,omitempty"`
-	Mensajes    []Mensaje        `json:"mensajes,omitempty"`
+	Transaccion          bool                    `json:"transaccion"`
+	FechaHora            time.Time               `json:"fechaHora,omitempty"`
+	Codigos              []ParametricaDto        `json:"codigos,omitempty"`
+	Productos            []SinProductDto         `json:"productos,omitempty"`
+	Actividades          []ActividadDto          `json:"actividades,omitempty"`
+	Leyendas             []LeyendaDto            `json:"leyendas,omitempty"`
+	ActividadesDocSector []ActividadDocSectorDto `json:"actividadesDocSector,omitempty"`
+	Mensajes             []Mensaje               `json:"mensajes,omitempty"`
 }
 
 // Sincronizar ejecuta la operación de sincronización indicada contra el SIAT
@@ -288,13 +323,19 @@ func (s *Service) sincronizarActividades(ctx context.Context, req SolicitudSincr
 		return nil, errSincronizacionRechazada(OpActividades)
 	}
 	out := make([]ParametricaDto, 0, len(r.ListaActividades))
+	actividades := make([]ActividadDto, 0, len(r.ListaActividades))
 	for _, a := range r.ListaActividades {
 		out = append(out, ParametricaDto{
 			CodigoClasificador: parseCodigoInt(a.CodigoCaeb),
 			Descripcion:        a.Descripcion,
 		})
+		actividades = append(actividades, ActividadDto{
+			CodigoCaeb:    a.CodigoCaeb,
+			Descripcion:   a.Descripcion,
+			TipoActividad: a.TipoActividad,
+		})
 	}
-	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out}, nil
+	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out, Actividades: actividades}, nil
 }
 
 // sincronizarProductosServicios baja el catálogo de productos y servicios homologados.
@@ -315,13 +356,15 @@ func (s *Service) sincronizarProductosServicios(ctx context.Context, req Solicit
 		return nil, errSincronizacionRechazada(OpProductosServicios)
 	}
 	out := make([]ParametricaDto, 0, len(r.ListaCodigos))
+	productos := make([]SinProductDto, 0, len(r.ListaCodigos))
 	for _, p := range r.ListaCodigos {
+		productos = append(productos, SinProductDto{CodigoProductoSin: int64(p.CodigoProducto), CodigoActividad: int64(p.CodigoActividad), Descripcion: p.DescripcionProducto})
 		out = append(out, ParametricaDto{
 			CodigoClasificador: int(p.CodigoProducto),
 			Descripcion:        p.DescripcionProducto,
 		})
 	}
-	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out}, nil
+	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out, Productos: productos}, nil
 }
 
 // sincronizarLeyendasFactura baja las leyendas asociadas a actividades económicas.
@@ -342,15 +385,22 @@ func (s *Service) sincronizarLeyendasFactura(ctx context.Context, req SolicitudS
 		return nil, errSincronizacionRechazada(OpLeyendasFactura)
 	}
 	var out []ParametricaDto
+	var leyendas []LeyendaDto
 	if r.ListaLeyendas != nil {
 		out = make([]ParametricaDto, 0, len(*r.ListaLeyendas))
+		leyendas = make([]LeyendaDto, 0, len(*r.ListaLeyendas))
 		for _, l := range *r.ListaLeyendas {
 			out = append(out, ParametricaDto{
-				Descripcion: l.CodigoActividad + ": " + l.DescripcionLeyenda,
+				CodigoClasificador: parseCodigoInt(l.CodigoActividad),
+				Descripcion:        l.CodigoActividad + ": " + l.DescripcionLeyenda,
+			})
+			leyendas = append(leyendas, LeyendaDto{
+				CodigoActividad:    l.CodigoActividad,
+				DescripcionLeyenda: l.DescripcionLeyenda,
 			})
 		}
 	}
-	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out}, nil
+	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out, Leyendas: leyendas}, nil
 }
 
 // sincronizarActividadesDocumentoSector baja la relación actividad/documento sector.
@@ -371,13 +421,19 @@ func (s *Service) sincronizarActividadesDocumentoSector(ctx context.Context, req
 		return nil, errSincronizacionRechazada(OpActividadesDocumentoSector)
 	}
 	out := make([]ParametricaDto, 0, len(r.ListaActividadesDocumentoSector))
+	relaciones := make([]ActividadDocSectorDto, 0, len(r.ListaActividadesDocumentoSector))
 	for _, a := range r.ListaActividadesDocumentoSector {
 		out = append(out, ParametricaDto{
 			CodigoClasificador: int(a.CodigoDocumentoSector),
 			Descripcion:        a.CodigoActividad + "|" + a.TipoDocumentoSector,
 		})
+		relaciones = append(relaciones, ActividadDocSectorDto{
+			CodigoActividad:       a.CodigoActividad,
+			CodigoDocumentoSector: int(a.CodigoDocumentoSector),
+			TipoDocumentoSector:   a.TipoDocumentoSector,
+		})
 	}
-	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out}, nil
+	return &RespuestaSincronizacion{Transaccion: r.Transaccion, Codigos: out, ActividadesDocSector: relaciones}, nil
 }
 
 // sincronizarFechaHora obtiene la fecha y hora oficial del servidor del SIAT.

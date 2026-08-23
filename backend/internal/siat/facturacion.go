@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -70,6 +71,9 @@ type SolicitudFactura struct {
 	// CodigoDocumentoSector identifica el diseño de factura del SIAT (1 =
 	// compraventa, 11 = sector educativo). 0 se interpreta como compraventa.
 	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
+	// Layout selecciona una variante cuando un mismo código tiene más de un
+	// builder, como ocurre con el sector 24.
+	Layout string `json:"layout,omitempty"`
 	// CodigoTipoFactura es el override opcional del tipoFacturaDocumento
 	// (catálogo del SIN: 1 = con crédito fiscal, 2 = sin derecho, 3 = nota de
 	// ajuste). Si es 0 se deriva del perfil del documento-sector.
@@ -84,6 +88,11 @@ type SolicitudFactura struct {
 	// siguen aceptándose pero se mapean a datosSector.
 	NombreEstudiante string `json:"nombreEstudiante,omitempty"`
 	PeriodoFacturado string `json:"periodoFacturado,omitempty"`
+	// Archivo y HashArchivo se usan directamente para sectores sin builder,
+	// actualmente el sector 33.
+	Archivo     string `json:"archivo,omitempty"`
+	HashArchivo string `json:"hashArchivo,omitempty"`
+	Cuf         string `json:"cuf,omitempty"`
 
 	Cliente ClienteFactura `json:"cliente"`
 	Items   []ItemFactura  `json:"items"`
@@ -118,8 +127,9 @@ type SolicitudDocumento struct {
 	Cufd             string `json:"cufd"`
 	// CodigoDocumentoSector debe coincidir con el usado al emitir (1 =
 	// compraventa, 11 = sector educativo).
-	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
-	CodigoTipoFactura     int `json:"codigoTipoFactura"`
+	CodigoDocumentoSector int    `json:"codigoDocumentoSector"`
+	CodigoTipoFactura     int    `json:"codigoTipoFactura"`
+	Layout                string `json:"layout,omitempty"`
 }
 
 // ResultadoDocumento es la respuesta procesada del SIAT para una operación
@@ -138,14 +148,17 @@ type ResultadoDocumento struct {
 // recepcionDocumentoAjuste. El SDK serializa el XML, lo firma con XMLDSig cuando
 // la modalidad es electrónica, lo comprime en gzip y calcula el hash SHA-256.
 func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*ResultadoEmision, error) {
-	if err := req.validate(); err != nil {
-		return nil, err
-	}
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat emision: servicio SIAT no inicializado")
 	}
+	if err := s.applyIdentity(&req); err != nil {
+		return nil, err
+	}
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
 
-	perfil, err := PerfilSector(req.CodigoDocumentoSector)
+	perfil, err := PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
@@ -154,35 +167,41 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	// y el tipoFacturaDocumento derivado del perfil (mismo valor que viajará en
 	// la solicitud de recepción). En la emisión individual el CUF se compone
 	// siempre con emisión en línea.
-	factura, cuf, tipoDoc, err := buildFacturaSDK(req, goSiat.EmisionOnline)
-	if err != nil {
-		return nil, err
-	}
-
-	// Firma única: serializamos, firmamos (si modalidad electrónica) y
-	// empaquetamos una sola vez. El mismo XML firmado se usa tanto para el
-	// envío al SIAT como para persistencia en base de datos (auditoría).
-	xmlData, err := xml.Marshal(factura)
-	if err != nil {
-		return nil, fmt.Errorf("siat emision: no se pudo serializar la factura: %w", err)
-	}
-	// go-siat representa campos opcionales sin valor con xsi:nil. El XSD de
-	// facturas del SIAT no acepta esos nodos para complemento/cafc, por lo que
-	// se eliminan antes de firmar y empaquetar el XML.
-	xmlData = removeEmptyOptionalFacturaFields(xmlData)
-	xmlToSend := xmlData
-	if req.Modalidad == ModalidadElectronica {
-		xmlToSend, err = s.sdk.Config().SignXML(xmlData)
+	var factura any
+	var cuf string
+	var tipoDoc int
+	var archivo, hash string
+	var xmlSent []byte
+	tipoDoc = perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
+	if perfil.HasBuilder() {
+		factura, cuf, tipoDoc, err = buildFacturaSDK(req, goSiat.EmisionOnline)
 		if err != nil {
-			return nil, fmt.Errorf("siat emision: no se pudo firmar el XML: %w", err)
+			return nil, err
 		}
-	}
-	archivo, hash, err := empaquetaArchivo(xmlToSend)
-	if err != nil {
-		return nil, fmt.Errorf("siat emision: %w", err)
+		xmlData, marshalErr := xml.Marshal(factura)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("siat emision: no se pudo serializar la factura: %w", marshalErr)
+		}
+		xmlData = removeEmptyOptionalFacturaFields(xmlData)
+		xmlToSend := xmlData
+		if req.Modalidad == ModalidadElectronica {
+			xmlToSend, err = s.sdk.Config().SignXML(xmlData)
+			if err != nil {
+				return nil, fmt.Errorf("siat emision: no se pudo firmar el XML: %w", err)
+			}
+		}
+		archivo, hash, err = empaquetaArchivo(xmlToSend)
+		if err != nil {
+			return nil, fmt.Errorf("siat emision: %w", err)
+		}
+		xmlSent = xmlToSend
+	} else {
+		archivo = strings.TrimSpace(req.Archivo)
+		hash = strings.TrimSpace(req.HashArchivo)
+		cuf = strings.TrimSpace(req.Cuf)
 	}
 
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
+	ctx = withDynamicConfig(ctx, s.sdk.Config(), 0, "", "")
 
 	var resp any
 	if perfil.EsAjuste() {
@@ -217,7 +236,6 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	if err != nil {
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
-
 	// Nota: RespuestaRecepcion no implementa common.Result, por lo que
 	// goSiat.Verify no aplica; la verificación es manual (Transaccion/CodigoEstado).
 	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
@@ -230,7 +248,7 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		CodigoEstado:    codigoEstado,
 		CodigoRecepcion: codigoRecepcion,
 		Mensajes:        mensajes,
-		Xml:             string(xmlToSend),
+		Xml:             string(xmlSent),
 		XmlHash:         hash,
 		Archivo:         archivo,
 	}, nil
@@ -331,12 +349,18 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 			factura, cuf, tipoDoc, err = nil, "", 0, fmt.Errorf("siat sectores %d: %v", req.CodigoDocumentoSector, r)
 		}
 	}()
-	perfil, err := PerfilSector(req.CodigoDocumentoSector)
+	perfil, err := PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
 	if err != nil {
 		return nil, "", 0, err
 	}
 	if err := perfil.ValidarModalidad(req.Modalidad); err != nil {
 		return nil, "", 0, err
+	}
+	if req.CodigoDocumentoSector != perfil.Codigo {
+		return nil, "", 0, fmt.Errorf("siat sectores: código de solicitud %d no coincide con cabecera %d", req.CodigoDocumentoSector, perfil.Codigo)
+	}
+	if !perfil.HasBuilder() {
+		return nil, "", 0, fmt.Errorf("siat sectores %d: no tiene builder; use Archivo y HashArchivo", perfil.Codigo)
 	}
 	tipoDoc = perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
 
@@ -362,7 +386,51 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 		return nil, "", 0, fmt.Errorf("siat sectores %d: cuf: %w", perfil.Codigo, err)
 	}
 
-	return perfil.adapter.Build(perfil, doc, cuf), cuf, tipoDoc, nil
+	factura = perfil.adapter.Build(perfil, doc, cuf)
+	if err := validarCodigoDocumentoSectorFactura(req.CodigoDocumentoSector, perfil.Codigo, factura); err != nil {
+		return nil, "", 0, err
+	}
+	return factura, cuf, tipoDoc, nil
+}
+
+// validarCodigoDocumentoSectorFactura protege la correspondencia entre el
+// código solicitado, el perfil seleccionado y el código que terminó en la
+// cabecera XML. El SIAT rechaza cualquier discrepancia con el código 932.
+func validarCodigoDocumentoSectorFactura(codigoSolicitud, codigoPerfil int, factura any) error {
+	if codigoSolicitud != codigoPerfil {
+		return fmt.Errorf("siat sectores: código de solicitud %d no coincide con el perfil %d", codigoSolicitud, codigoPerfil)
+	}
+	codigoCabecera, err := codigoDocumentoSectorXML(factura)
+	if err != nil {
+		return fmt.Errorf("siat sectores %d: no se pudo verificar codigoDocumentoSector de la cabecera: %w", codigoPerfil, err)
+	}
+	if codigoCabecera != codigoPerfil {
+		return fmt.Errorf("siat sectores: código de cabecera %d no coincide con el perfil %d", codigoCabecera, codigoPerfil)
+	}
+	return nil
+}
+
+func codigoDocumentoSectorXML(factura any) (int, error) {
+	data, err := xml.Marshal(factura)
+	if err != nil {
+		return 0, err
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return 0, fmt.Errorf("campo ausente: %w", err)
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || start.Name.Local != "codigoDocumentoSector" {
+			continue
+		}
+		var codigo int
+		if err := decoder.DecodeElement(&codigo, &start); err != nil {
+			return 0, err
+		}
+		return codigo, nil
+	}
 }
 
 // fusionarCamposLegados mapea los campos legados nombreEstudiante/periodoFacturado
@@ -397,13 +465,16 @@ func fusionarCamposLegados(perfil *SectorProfile, req SolicitudFactura) []byte {
 // (verificacionEstadoFactura) en la fachada que atiende a su documento-sector;
 // los documentos de ajuste van por el servicio DocumentoAjuste.
 func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (*ResultadoDocumento, error) {
-	if err := req.validate(); err != nil {
-		return nil, err
-	}
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat verificacion: servicio SIAT no inicializado")
 	}
-	perfil, err := PerfilSector(req.sector())
+	if err := s.applyDocumentIdentity(&req); err != nil {
+		return nil, err
+	}
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat verificacion: %w", err)
 	}
@@ -463,13 +534,16 @@ func (s *Service) VerificarEstado(ctx context.Context, req SolicitudDocumento) (
 // anulacionDocumentoAjuste) indicando el motivo del catálogo sincronizado
 // motivoAnulacion.
 func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, codigoMotivo int) (*ResultadoDocumento, error) {
-	if err := req.validate(); err != nil {
-		return nil, err
-	}
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat anulacion: servicio SIAT no inicializado")
 	}
-	perfil, err := PerfilSector(req.sector())
+	if err := s.applyDocumentIdentity(&req); err != nil {
+		return nil, err
+	}
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat anulacion: %w", err)
 	}
@@ -533,13 +607,16 @@ func (s *Service) AnularFactura(ctx context.Context, req SolicitudDocumento, cod
 // (reversionAnulacionFactura / reversionAnulacionDocumentoAjuste), devolviendo
 // el documento a su estado anterior.
 func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento) (*ResultadoDocumento, error) {
-	if err := req.validate(); err != nil {
-		return nil, err
-	}
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat reversion anulacion: servicio SIAT no inicializado")
 	}
-	perfil, err := PerfilSector(req.sector())
+	if err := s.applyDocumentIdentity(&req); err != nil {
+		return nil, err
+	}
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat reversion anulacion: %w", err)
 	}
@@ -602,6 +679,8 @@ func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento)
 // facturación del SDK (recepción, verificación, anulación y reversión). Se usa
 // reflexión porque los tipos de respuesta viven en paquetes internos del SDK.
 func extraerResultadoFacturacion(resp any) (transaccion bool, codigoEstado int, codigoRecepcion string, mensajes []Mensaje, err error) {
+	log.Println("[LOG] extraerResultadoFacturacion")
+	log.Println(resp)
 	v := reflect.ValueOf(resp)
 	if !v.IsValid() || v.Kind() != reflect.Pointer {
 		return false, 0, "", nil, fmt.Errorf("respuesta del SIAT inválida")
@@ -673,17 +752,24 @@ func (s SolicitudDocumento) tipoFactura() int {
 }
 
 func (s SolicitudFactura) validate() error {
-	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+	if s.CodigoAmbiente != 0 && s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
 		return fmt.Errorf("siat emision: codigoAmbiente inválido")
-	}
-	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat emision: codigoSistema es obligatorio")
-	}
-	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat emision: nit es obligatorio")
 	}
 	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
 		return fmt.Errorf("siat emision: modalidad inválida (%d)", s.Modalidad)
+	}
+	perfil, err := PerfilSectorLayout(s.CodigoDocumentoSector, s.Layout)
+	if err != nil {
+		return fmt.Errorf("siat emision: %w", err)
+	}
+	if err := perfil.ValidarModalidad(s.Modalidad); err != nil {
+		return err
+	}
+	if !perfil.HasBuilder() {
+		if strings.TrimSpace(s.Archivo) == "" || strings.TrimSpace(s.HashArchivo) == "" {
+			return fmt.Errorf("siat emision sector %d: archivo y hashArchivo son obligatorios porque no existe builder", perfil.Codigo)
+		}
+		return nil
 	}
 	if s.NumeroFactura <= 0 {
 		return fmt.Errorf("siat emision: numeroFactura debe ser mayor a cero")
@@ -752,14 +838,8 @@ func (s SolicitudFactura) validate() error {
 }
 
 func (s SolicitudDocumento) validate() error {
-	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+	if s.CodigoAmbiente != 0 && s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
 		return fmt.Errorf("siat documento: codigoAmbiente inválido")
-	}
-	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat documento: codigoSistema es obligatorio")
-	}
-	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat documento: nit es obligatorio")
 	}
 	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
 		return fmt.Errorf("siat documento: modalidad inválida (%d)", s.Modalidad)

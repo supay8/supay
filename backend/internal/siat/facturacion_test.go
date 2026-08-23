@@ -645,6 +645,7 @@ func buildSolicitudNota(t *testing.T, numeroFactura int64, cufOriginal string, f
 		TipoCambio:            1,
 		Leyenda:               "Ley N° 453",
 		CodigoDocumentoSector: SectorNotaCreditoDebito,
+		Layout:                string(LayoutNotaCreditoDebito),
 		DatosSector:           datos,
 		Cliente:               cliente,
 		Items:                 items,

@@ -27,8 +27,13 @@ type SiatUsecase struct {
 	cufdRepo        domain.CufdRepository
 	tipoPVRepo      domain.TipoPuntoVentaRepository
 	catalogRepo     domain.CatalogRepository
+	sinProductRepo  domain.SinProductRepository
+	syncStateRepo   domain.CatalogSyncStateRepository
 	contingencyRepo domain.ContingencyEventRepository
 	sentPackageRepo domain.SentPackageRepository
+	actividadRepo   domain.SiatActividadRepository
+	leyendaRepo     domain.SiatLeyendaRepository
+	docSectorRepo   domain.SiatActividadDocSectorRepository
 	siatService     *siat.Service
 	modalidad       int
 }
@@ -43,8 +48,9 @@ func NewSiatUsecase(
 	sentPackageRepo domain.SentPackageRepository,
 	siatService *siat.Service,
 	modalidad int,
+	extraRepos ...any,
 ) *SiatUsecase {
-	return &SiatUsecase{
+	uc := &SiatUsecase{
 		companyRepo:     companyRepo,
 		pointOfSaleRepo: pointOfSaleRepo,
 		cufdRepo:        cufdRepo,
@@ -55,6 +61,21 @@ func NewSiatUsecase(
 		siatService:     siatService,
 		modalidad:       modalidad,
 	}
+	for _, repo := range extraRepos {
+		switch typed := repo.(type) {
+		case domain.SinProductRepository:
+			uc.sinProductRepo = typed
+		case domain.CatalogSyncStateRepository:
+			uc.syncStateRepo = typed
+		case domain.SiatActividadRepository:
+			uc.actividadRepo = typed
+		case domain.SiatLeyendaRepository:
+			uc.leyendaRepo = typed
+		case domain.SiatActividadDocSectorRepository:
+			uc.docSectorRepo = typed
+		}
+	}
+	return uc
 }
 
 func (uc *SiatUsecase) requireService() error {
@@ -699,6 +720,8 @@ type SincronizacionOpResult struct {
 	Operation   string `json:"operation"`
 	Transaccion bool   `json:"transaccion"`
 	Codigos     int    `json:"codigos"`
+	Status      string `json:"status"`
+	RowsSaved   int    `json:"rows_saved"`
 	FechaHora   string `json:"fechaHora,omitempty"`
 }
 
@@ -713,6 +736,8 @@ type SincronizacionResultado struct {
 	Operations  []SincronizacionOpResult
 	Errors      []SincronizacionOpError
 }
+
+const catalogSyncMaxAge = 24 * time.Hour
 
 // Sincronizar baja catálogos del SIAT. Con opRaw vacío sincroniza todas las
 // operaciones del SDK; con ?operation=X solo esa.
@@ -748,9 +773,10 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 		}
 		result, err := uc.siatService.Sincronizar(ctx, req, op)
 		if err != nil {
+			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: company.ID, PointOfSaleID: pointOfSale.ID, Operation: string(op), Status: "FAILED", Error: err.Error()})
 			return nil, err
 		}
-		if perr := uc.PersistSincronizacion(company.ID, op, result); perr != nil {
+		if perr := uc.PersistSincronizacionAt(company.ID, pointOfSale.ID, op, result); perr != nil {
 			return nil, perr
 		}
 		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
@@ -760,10 +786,11 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 	for _, op := range siat.SincronizacionOperations {
 		result, err := uc.siatService.Sincronizar(ctx, req, op)
 		if err != nil {
+			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: company.ID, PointOfSaleID: pointOfSale.ID, Operation: string(op), Status: "FAILED", Error: err.Error()})
 			out.Errors = append(out.Errors, SincronizacionOpError{Operation: string(op), Error: err.Error()})
 			continue
 		}
-		if perr := uc.PersistSincronizacion(company.ID, op, result); perr != nil {
+		if perr := uc.PersistSincronizacionAt(company.ID, pointOfSale.ID, op, result); perr != nil {
 			out.Errors = append(out.Errors, SincronizacionOpError{Operation: string(op), Error: "persistencia: " + perr.Error()})
 		}
 		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
@@ -776,6 +803,8 @@ func toSincronizacionOpResult(op siat.SincronizacionOp, res *siat.RespuestaSincr
 		Operation:   string(op),
 		Transaccion: res.Transaccion,
 		Codigos:     len(res.Codigos),
+		Status:      syncStatus(op, res),
+		RowsSaved:   syncRows(op, res),
 	}
 	if !res.FechaHora.IsZero() {
 		out.FechaHora = res.FechaHora.Format(time.RFC3339Nano)
@@ -783,14 +812,87 @@ func toSincronizacionOpResult(op siat.SincronizacionOp, res *siat.RespuestaSincr
 	return out
 }
 
-// PersistSincronizacion guarda el catálogo sincronizado: tipos de punto de
-// venta en tipo_punto_ventas y el resto en catalogs. FechaHora y
-// VerificarComunicacion no son catálogos y no se persisten.
+func syncRows(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) int {
+	switch op {
+	case siat.OpActividades:
+		if len(res.Actividades) > 0 {
+			return len(res.Actividades)
+		}
+	case siat.OpLeyendasFactura:
+		if len(res.Leyendas) > 0 {
+			return len(res.Leyendas)
+		}
+	case siat.OpActividadesDocumentoSector:
+		if len(res.ActividadesDocSector) > 0 {
+			return len(res.ActividadesDocSector)
+		}
+	case siat.OpProductosServicios:
+		if len(res.Productos) > 0 {
+			return len(res.Productos)
+		}
+		return len(res.Codigos)
+	}
+	return len(res.Codigos)
+}
+
+func syncStatus(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) string {
+	if !res.Transaccion {
+		return "FAILED"
+	}
+	if isCriticalSyncOperation(op) && syncRows(op, res) == 0 {
+		return "EMPTY"
+	}
+	return "SUCCESS"
+}
+
+func isCriticalSyncOperation(op siat.SincronizacionOp) bool {
+	switch op {
+	case siat.OpActividades, siat.OpProductosServicios, siat.OpActividadesDocumentoSector, siat.OpUnidadMedida, siat.OpTipoMoneda, siat.OpTipoMetodoPago, siat.OpLeyendasFactura:
+		return true
+	default:
+		return false
+	}
+}
+
+// PersistSincronizacion guarda el resultado de una operación. Los productos
+// SIN se guardan en sin_products; los catálogos paramétricos siguen en
+// catalogs y los tipos de punto de venta tienen su repositorio dedicado.
 func (uc *SiatUsecase) PersistSincronizacion(companyID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) error {
+	return uc.PersistSincronizacionAt(companyID, "", op, res)
+}
+
+func (uc *SiatUsecase) PersistSincronizacionAt(companyID, pointOfSaleID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) error {
 	if res == nil || !res.Transaccion {
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: "FAILED", Error: "SIAT no confirmó la sincronización"})
 		return nil
 	}
 	now := time.Now().In(siat.LaPaz)
+	status := syncStatus(op, res)
+	rowsSaved := syncRows(op, res)
+	if op == siat.OpProductosServicios {
+		if uc.sinProductRepo == nil {
+			err := errors.New("repositorio de productos SIN no configurado")
+			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+			return err
+		}
+		products := make([]domain.SinProduct, 0, len(res.Productos))
+		for _, p := range res.Productos {
+			products = append(products, domain.SinProduct{CompanyID: companyID, CodigoProductoSin: p.CodigoProductoSin, CodigoActividad: p.CodigoActividad, Descripcion: p.Descripcion, Active: true, SyncedAt: now})
+		}
+		// Compatibilidad con respuestas construidas por integraciones antiguas
+		// que solo llenaban Codigos.
+		if len(products) == 0 {
+			for _, p := range res.Codigos {
+				products = append(products, domain.SinProduct{CompanyID: companyID, CodigoProductoSin: int64(p.CodigoClasificador), Descripcion: p.Descripcion, Active: true, SyncedAt: now})
+			}
+			rowsSaved = len(products)
+		}
+		if err := uc.sinProductRepo.Replace(companyID, products, now); err != nil {
+			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+			return err
+		}
+		return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
+	}
 
 	if op == siat.OpTipoPuntoVenta {
 		tipos := make([]domain.TipoPuntoVenta, 0, len(res.Codigos))
@@ -800,12 +902,22 @@ func (uc *SiatUsecase) PersistSincronizacion(companyID string, op siat.Sincroniz
 				Descripcion:        c.Descripcion,
 			})
 		}
-		return uc.tipoPVRepo.Replace(companyID, tipos, now)
+		if err := uc.tipoPVRepo.Replace(companyID, tipos, now); err != nil {
+			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+			return err
+		}
+		return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
 	}
 
 	switch op {
 	case siat.OpFechaHora, siat.OpVerificarComunicacion:
-		return nil
+		return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
+	case siat.OpActividades:
+		return uc.persistActividades(companyID, pointOfSaleID, op, res, status, rowsSaved, now)
+	case siat.OpLeyendasFactura:
+		return uc.persistLeyendas(companyID, pointOfSaleID, op, res, status, rowsSaved, now)
+	case siat.OpActividadesDocumentoSector:
+		return uc.persistActividadesDocSector(companyID, pointOfSaleID, op, res, status, rowsSaved, now)
 	}
 
 	items := make([]domain.CatalogItem, 0, len(res.Codigos))
@@ -816,37 +928,290 @@ func (uc *SiatUsecase) PersistSincronizacion(companyID string, op siat.Sincroniz
 			Tipo:        string(op),
 		})
 	}
-	return uc.catalogRepo.Replace(companyID, string(op), items, now)
+	if err := uc.catalogRepo.Replace(companyID, string(op), items, now); err != nil {
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+		return err
+	}
+	return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
+}
+
+// persistActividades guarda el catálogo CAEB completo (código + descripción +
+// tipo de actividad) en su tabla dedicada.
+func (uc *SiatUsecase) persistActividades(companyID, posID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion, status string, rowsSaved int, now time.Time) error {
+	if uc.actividadRepo == nil {
+		err := errors.New("repositorio de actividades no configurado")
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+		return err
+	}
+	items := make([]domain.SiatActividad, 0, len(res.Actividades))
+	for _, a := range res.Actividades {
+		items = append(items, domain.SiatActividad{
+			CodigoCaeb:    strings.TrimSpace(a.CodigoCaeb),
+			Descripcion:   a.Descripcion,
+			TipoActividad: a.TipoActividad,
+		})
+	}
+	if err := uc.actividadRepo.Replace(companyID, items, now); err != nil {
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+		return err
+	}
+	return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
+}
+
+// persistLeyendas guarda las leyendas de factura asociadas por actividad en su
+// tabla dedicada.
+func (uc *SiatUsecase) persistLeyendas(companyID, posID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion, status string, rowsSaved int, now time.Time) error {
+	if uc.leyendaRepo == nil {
+		err := errors.New("repositorio de leyendas no configurado")
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+		return err
+	}
+	items := make([]domain.SiatLeyenda, 0, len(res.Leyendas))
+	for _, l := range res.Leyendas {
+		items = append(items, domain.SiatLeyenda{
+			CodigoActividad:    l.CodigoActividad,
+			DescripcionLeyenda: l.DescripcionLeyenda,
+		})
+	}
+	if err := uc.leyendaRepo.Replace(companyID, items, now); err != nil {
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+		return err
+	}
+	return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
+}
+
+// persistActividadesDocSector guarda la relación actividad ↔ documento-sector
+// con sus columnas reales; es la fuente para resolver el sector de emisión.
+func (uc *SiatUsecase) persistActividadesDocSector(companyID, posID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion, status string, rowsSaved int, now time.Time) error {
+	if uc.docSectorRepo == nil {
+		err := errors.New("repositorio actividadesDocumentoSector no configurado")
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+		return err
+	}
+	items := make([]domain.SiatActividadDocSector, 0, len(res.ActividadesDocSector))
+	for _, r := range res.ActividadesDocSector {
+		items = append(items, domain.SiatActividadDocSector{
+			CodigoActividad:       strings.TrimSpace(r.CodigoActividad),
+			CodigoDocumentoSector: r.CodigoDocumentoSector,
+			TipoDocumentoSector:   r.TipoDocumentoSector,
+		})
+	}
+	if err := uc.docSectorRepo.Replace(companyID, items, now); err != nil {
+		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
+		return err
+	}
+	return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
+}
+
+func (uc *SiatUsecase) saveSyncState(state domain.CatalogSyncState) error {
+	if uc.syncStateRepo == nil || state.PointOfSaleID == "" {
+		return nil
+	}
+	return uc.syncStateRepo.Upsert(state)
+}
+
+func (uc *SiatUsecase) CatalogReadiness(companyID, pointOfSaleID string) (*domain.CatalogReadiness, error) {
+	if uc.syncStateRepo == nil {
+		return nil, errors.New("repositorio de estado de sincronización no configurado")
+	}
+	states, err := uc.syncStateRepo.List(companyID, pointOfSaleID)
+	if err != nil {
+		return nil, err
+	}
+	required := []siat.SincronizacionOp{siat.OpActividades, siat.OpProductosServicios, siat.OpActividadesDocumentoSector, siat.OpUnidadMedida, siat.OpTipoMoneda, siat.OpTipoMetodoPago, siat.OpLeyendasFactura}
+	byOperation := make(map[string]domain.CatalogSyncState, len(states))
+	outStates := make([]domain.CatalogSyncState, 0, len(states))
+	for _, state := range states {
+		if state.Status == "SUCCESS" && (state.SyncedAt == nil || time.Since(*state.SyncedAt) > catalogSyncMaxAge) {
+			state.Status = "STALE"
+		}
+		byOperation[state.Operation] = *state
+		outStates = append(outStates, *state)
+	}
+	missing := make([]string, 0)
+	for _, operation := range required {
+		state, ok := byOperation[string(operation)]
+		if !ok || state.Status != "SUCCESS" {
+			missing = append(missing, string(operation))
+		}
+	}
+	return &domain.CatalogReadiness{Ready: len(missing) == 0, Missing: missing, States: outStates}, nil
+}
+
+func (uc *SiatUsecase) ListSinProducts(companyID, query string, limit, offset int) ([]*domain.SinProduct, int64, error) {
+	if uc.sinProductRepo == nil {
+		return nil, 0, errors.New("repositorio de productos SIN no configurado")
+	}
+	return uc.sinProductRepo.List(companyID, query, limit, offset)
+}
+
+// --- Lectura de catálogos sincronizados ---
+
+// CatalogoResultado agrupa los elementos de un catálogo sincronizado para el
+// endpoint de lectura. Items es polimórfico: paramétricas devuelven
+// {codigo, descripcion}, actividades {codigo_caeb, descripcion,
+// tipo_actividad}, etc., fiel a la estructura que entrega el SIAT.
+type CatalogoResultado struct {
+	Tipo     string `json:"tipo"`
+	Cantidad int    `json:"cantidad"`
+	Items    []any  `json:"items"`
+}
+
+func toCatalogoResultado(tipo string, items []any) *CatalogoResultado {
+	return &CatalogoResultado{Tipo: tipo, Cantidad: len(items), Items: items}
+}
+
+// ListCatalog devuelve el catálogo sincronizado de la empresa para el tipo
+// indicado (p.ej. "actividades", "leyendasFactura", "tipoMoneda"). Con tipo
+// vacío o "all" devuelve todos los catálogos almacenados agrupados por tipo.
+func (uc *SiatUsecase) ListCatalog(companyID, tipo string) (any, error) {
+	if strings.TrimSpace(companyID) == "" {
+		return nil, domain.NewBadRequestError("companyId es obligatorio")
+	}
+	tipo = strings.TrimSpace(tipo)
+	if tipo == "" || strings.EqualFold(tipo, "all") {
+		return uc.ListAllCatalogs(companyID)
+	}
+	items, err := uc.listCatalogByTipo(companyID, tipo)
+	if err != nil {
+		return nil, err
+	}
+	return toCatalogoResultado(tipo, items), nil
+}
+
+// ListAllCatalogs consulta cada catálogo almacenado; un catálogo sin repos
+// configurado o con error se omite (la respuesta incluye lo disponible).
+func (uc *SiatUsecase) ListAllCatalogs(companyID string) (any, error) {
+	out := make(map[string]*CatalogoResultado)
+	for _, op := range siat.SincronizacionOperations {
+		switch op {
+		case siat.OpFechaHora, siat.OpVerificarComunicacion:
+			continue // operativos, no almacenan catálogo
+		}
+		items, err := uc.listCatalogByTipo(companyID, string(op))
+		if err != nil {
+			continue
+		}
+		out[string(op)] = toCatalogoResultado(string(op), items)
+	}
+	return out, nil
+}
+
+func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) {
+	op := siat.SincronizacionOp(tipo)
+	switch op {
+	case siat.OpActividades:
+		if uc.actividadRepo == nil {
+			return nil, errors.New("catálogo de actividades no disponible")
+		}
+		items, err := uc.actividadRepo.List(companyID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]any, len(items))
+		for i, item := range items {
+			out[i] = item
+		}
+		return out, nil
+
+	case siat.OpLeyendasFactura:
+		if uc.leyendaRepo == nil {
+			return nil, errors.New("catálogo de leyendas no disponible")
+		}
+		items, err := uc.leyendaRepo.List(companyID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]any, len(items))
+		for i, item := range items {
+			out[i] = item
+		}
+		return out, nil
+
+	case siat.OpActividadesDocumentoSector:
+		if uc.docSectorRepo == nil {
+			return nil, errors.New("catálogo actividadesDocumentoSector no disponible")
+		}
+		items, err := uc.docSectorRepo.List(companyID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]any, len(items))
+		for i, item := range items {
+			out[i] = item
+		}
+		return out, nil
+
+	case siat.OpProductosServicios:
+		if uc.sinProductRepo == nil {
+			return nil, errors.New("catálogo de productos SIN no disponible")
+		}
+		items, err := uc.sinProductRepo.ListAll(companyID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]any, len(items))
+		for i, item := range items {
+			out[i] = item
+		}
+		return out, nil
+
+	case siat.OpTipoPuntoVenta:
+		if uc.tipoPVRepo == nil {
+			return nil, errors.New("catálogo de tipos de punto de venta no disponible")
+		}
+		items, err := uc.tipoPVRepo.List(companyID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]any, len(items))
+		for i, item := range items {
+			out[i] = item
+		}
+		return out, nil
+	}
+
+	if _, ok := siat.ParseSincronizacionOp(tipo); !ok {
+		return nil, domain.NewBadRequestError("Catálogo desconocido: " + tipo)
+	}
+	if op == siat.OpFechaHora || op == siat.OpVerificarComunicacion {
+		return nil, domain.NewBadRequestError("La operación " + tipo + " no almacena catálogo")
+	}
+	parametricas, err := uc.catalogRepo.List(companyID, tipo)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]any, len(parametricas))
+	for i, item := range parametricas {
+		out[i] = item
+	}
+	return out, nil
 }
 
 // ResolveDocumentoSector determina el documento-sector del SIAT para la
 // actividad económica de la empresa consultando el catálogo sincronizado
-// actividadesDocumentoSector. Prefiere la factura de compraventa (FCV); si la
-// actividad solo está asociada a sectores educativos (FSEDU), usa ese sector.
+// actividadesDocumentoSector (tabla siat_actividades_doc_sector). Prefiere la
+// factura de compraventa (FCV); si la actividad solo está asociada a sectores
+// educativos (FSEDU), usa ese sector.
 func (uc *SiatUsecase) ResolveDocumentoSector(company *domain.Company) int {
-	if uc.catalogRepo == nil || company.CodigoActividad == nil {
+	if uc.docSectorRepo == nil || company.CodigoActividad == nil {
 		return siat.SectorCompraVenta
 	}
 	actividad := strings.TrimSpace(*company.CodigoActividad)
 	if actividad == "" {
 		return siat.SectorCompraVenta
 	}
-	items, err := uc.catalogRepo.List(company.ID, "actividadesDocumentoSector")
+	items, err := uc.docSectorRepo.ListByActividad(company.ID, actividad)
 	if err != nil || len(items) == 0 {
 		return siat.SectorCompraVenta
 	}
 	found := 0
 	for _, item := range items {
-		fields := strings.Split(item.Descripcion, "|")
-		if len(fields) < 2 || strings.TrimSpace(fields[0]) != actividad {
-			continue
-		}
-		tipo := strings.TrimSpace(fields[1])
-		if tipo == "FCV" {
-			return item.Codigo
-		}
-		if tipo == "FSEDU" {
-			found = item.Codigo
+		switch strings.TrimSpace(item.TipoDocumentoSector) {
+		case "FCV":
+			return item.CodigoDocumentoSector
+		case "FSEDU":
+			found = item.CodigoDocumentoSector
 		}
 	}
 	if found > 0 {
@@ -861,6 +1226,7 @@ type DocumentoAjusteInput struct {
 	NumeroFactura         int64               `json:"numeroFactura"`
 	CufFacturaOriginal    string              `json:"cufFacturaOriginal"`
 	CodigoDocumentoSector int                 `json:"codigoDocumentoSector"`
+	Layout                string              `json:"layout,omitempty"`
 	CodigoTipoFactura     int                 `json:"codigoTipoFactura"`
 	TipoNota              int                 `json:"tipoNota"`
 	Motivo                string              `json:"motivo"`
@@ -927,6 +1293,7 @@ func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, pos
 		TipoNota:              siat.TipoNota(body.TipoNota),
 		CufFacturaOriginal:    body.CufFacturaOriginal,
 		CodigoDocumentoSector: body.CodigoDocumentoSector,
+		Layout:                body.Layout,
 		CodigoTipoFactura:     body.CodigoTipoFactura,
 		RazonSocialEmisor:     company.BusinessName,
 		Municipio:             company.Municipio,

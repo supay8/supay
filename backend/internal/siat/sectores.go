@@ -40,6 +40,14 @@ func (o OperacionDocumento) String() string {
 	return "recepcion_factura"
 }
 
+// SectorLayout identifies the XML model when a document-sector has variants.
+type SectorLayout string
+
+const (
+	LayoutNotaCreditoDebito       SectorLayout = "nota_credito_debito"
+	LayoutNotaFiscalCreditoDebito SectorLayout = "nota_fiscal_credito_debito"
+)
+
 // FachadaSDK identifica la fachada del SDK go-siat que atiende al sector. Cada
 // fachada es un endpoint SOAP distinto del SIAT; enviar un sector por la fachada
 // equivocada produce el rechazo 932 (CODIGO DOCUMENTO SECTOR NO CORRESPONDE AL
@@ -59,6 +67,8 @@ func (f FachadaSDK) String() string {
 		return "entidad_financiera"
 	case FachadaBoletoAereo:
 		return "boleto_aereo"
+	case FachadaDocumentoAjuste:
+		return "documento_ajuste"
 	default:
 		return "por_modalidad"
 	}
@@ -71,6 +81,7 @@ const (
 	FachadaServicioBasico                       // sectores 13, 40
 	FachadaEntidadFinanciera                    // sector 15
 	FachadaBoletoAereo                          // sector 30 (sin recepción individual ni paquetes)
+	FachadaDocumentoAjuste                      // sectores 24, 29, 47 y 48
 )
 
 // Códigos de documento-sector con tratamiento especial en el flujo de Supay.
@@ -98,6 +109,7 @@ type CampoSector struct {
 type SectorProfile struct {
 	Codigo               int                `json:"codigo_documento_sector"`
 	Nombre               string             `json:"nombre"`
+	Layout               string             `json:"layout,omitempty"`
 	TipoFacturaDocumento int                `json:"tipo_factura_documento"`
 	Operacion            OperacionDocumento `json:"operacion"`
 	Fachada              FachadaSDK         `json:"-"`
@@ -112,7 +124,8 @@ type SectorProfile struct {
 	Campos             []CampoSector `json:"campos_especificos"`
 	// Modalidades limita las modalidades habilitadas para el sector. Un perfil
 	// vacío acepta ambas modalidades, que es el comportamiento del SDK actual.
-	Modalidades []int `json:"modalidades,omitempty"`
+	Modalidades []int          `json:"modalidades,omitempty"`
+	Facade      FacadeSelector `json:"-"`
 
 	builders buildersSector `json:"-"`
 	adapter  SectorAdapter  `json:"-"`
@@ -147,21 +160,81 @@ type buildersSector struct {
 	detalle  func() any
 }
 
+// FacadeSelector makes the endpoint choice visible while keeping modality
+// selection as a separate decision.
+type FacadeSelector struct {
+	name        string
+	fixed       FachadaSDK
+	byModalidad bool
+}
+
+func FacadeFija(nombre string) FacadeSelector {
+	for _, fachada := range []FachadaSDK{
+		FachadaCompraVenta, FachadaTelecomunicaciones, FachadaServicioBasico,
+		FachadaEntidadFinanciera, FachadaBoletoAereo, FachadaDocumentoAjuste,
+	} {
+		if fachada.String() == nombre {
+			return FacadeSelector{name: nombre, fixed: fachada}
+		}
+	}
+	return FacadeSelector{name: nombre}
+}
+
+func FacadePorModalidad() FacadeSelector {
+	return FacadeSelector{name: "por_modalidad", fixed: FachadaPorModalidad, byModalidad: true}
+}
+
+func (f FacadeSelector) String() string {
+	if f.name != "" {
+		return f.name
+	}
+	return f.fixed.String()
+}
+
+func (f FacadeSelector) IsByModalidad() bool { return f.byModalidad }
+
+func (f FacadeSelector) Fixed() FachadaSDK { return f.fixed }
+
+type SectorKey struct {
+	Codigo int
+	Layout string
+}
+
+// SectorRegistry stores opaque SDK builder factories. Layout is part of the
+// key because sector 24 intentionally has two document models.
+type SectorRegistry struct {
+	entries map[SectorKey]*SectorProfile
+}
+
+var sectorRegistry *SectorRegistry
 var registroSectores map[int]*SectorProfile
 
 func init() {
+	sectorRegistry = &SectorRegistry{entries: make(map[SectorKey]*SectorProfile, len(catalogoSectores))}
 	registroSectores = make(map[int]*SectorProfile, len(catalogoSectores))
 	for _, p := range catalogoSectores {
-		if _, duplicado := registroSectores[p.Codigo]; duplicado {
-			panic(fmt.Sprintf("siat sectores: código %d registrado dos veces", p.Codigo))
+		key := SectorKey{Codigo: p.Codigo, Layout: p.Layout}
+		if _, duplicado := sectorRegistry.entries[key]; duplicado {
+			panic(fmt.Sprintf("siat sectores: código %d layout %q registrado dos veces", p.Codigo, p.Layout))
 		}
 		if p.Codigo == SectorCompraVenta {
 			p.adapter = compraVentaAdapter{}
 		} else if p.adapter == nil {
 			p.adapter = genericSectorAdapter{}
 		}
-		registroSectores[p.Codigo] = p
+		p.Facade = facadeSelectorFor(p.Fachada)
+		sectorRegistry.entries[key] = p
+		if _, exists := registroSectores[p.Codigo]; !exists {
+			registroSectores[p.Codigo] = p
+		}
 	}
+}
+
+func facadeSelectorFor(fachada FachadaSDK) FacadeSelector {
+	if fachada == FachadaPorModalidad {
+		return FacadePorModalidad()
+	}
+	return FacadeFija(fachada.String())
 }
 
 func (p *SectorProfile) ValidarModalidad(modalidad int) error {
@@ -183,12 +256,27 @@ func (p *SectorProfile) ValidarModalidad(modalidad int) error {
 // registrado (p.ej. los inexistentes 25-27, 32 o el 33 sin builder) produce
 // error antes de llegar al SIAT (que lo rechazaría con 931).
 func PerfilSector(codigo int) (*SectorProfile, error) {
+	if codigo == SectorNotaCreditoDebito {
+		return nil, fmt.Errorf("el sector %d tiene múltiples layouts; especifique uno de %q o %q", codigo, LayoutNotaCreditoDebito, LayoutNotaFiscalCreditoDebito)
+	}
+	return PerfilSectorLayout(codigo, "")
+}
+
+func PerfilSectorLayout(codigo int, layout string) (*SectorProfile, error) {
 	if codigo <= 0 {
 		codigo = SectorCompraVenta
 	}
-	p, ok := registroSectores[codigo]
+	if codigo == SectorNotaCreditoDebito && strings.TrimSpace(layout) == "" {
+		return nil, fmt.Errorf("el sector %d tiene múltiples layouts; especifique uno de %q o %q", codigo, LayoutNotaCreditoDebito, LayoutNotaFiscalCreditoDebito)
+	}
+	if layout == "" {
+		if p, ok := registroSectores[codigo]; ok {
+			return p, nil
+		}
+	}
+	p, ok := sectorRegistry.entries[SectorKey{Codigo: codigo, Layout: layout}]
 	if !ok {
-		return nil, fmt.Errorf("siat sectores: el documento-sector %d no está soportado; consulte los perfiles disponibles", codigo)
+		return nil, fmt.Errorf("siat sectores: el documento-sector %d layout %q no está soportado; consulte los perfiles disponibles", codigo, layout)
 	}
 	return p, nil
 }
@@ -196,11 +284,16 @@ func PerfilSector(codigo int) (*SectorProfile, error) {
 // PerfilesSector lista todos los perfiles registrados ordenados por código
 // (metadata para GET /invoices/sectores).
 func PerfilesSector() []*SectorProfile {
-	out := make([]*SectorProfile, 0, len(registroSectores))
-	for _, p := range registroSectores {
+	out := make([]*SectorProfile, 0, len(sectorRegistry.entries))
+	for _, p := range sectorRegistry.entries {
 		out = append(out, p)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Codigo < out[j].Codigo })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Codigo == out[j].Codigo {
+			return out[i].Layout < out[j].Layout
+		}
+		return out[i].Codigo < out[j].Codigo
+	})
 	return out
 }
 
@@ -220,6 +313,10 @@ func (p *SectorProfile) TipoDocumentoResuelto(override int) int {
 // el servicio DocumentoAjuste del SIAT.
 func (p *SectorProfile) EsAjuste() bool {
 	return p.Operacion == OperacionDocumentoAjuste
+}
+
+func (p *SectorProfile) HasBuilder() bool {
+	return p.builders.factura != nil && p.builders.cabecera != nil
 }
 
 // PrepararDatosSector es el punto de entrada para las capas superiores: valida

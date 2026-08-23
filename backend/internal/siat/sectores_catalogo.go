@@ -111,6 +111,10 @@ var catalogoSectores = []*SectorProfile{
 		invoices.NewNotaCreditoDebitoBuilder, invoices.NewNotaCreditoDebitoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoBuilder,
 		notasCampos()...),
 
+	notaLayout(24, "Nota Fiscal de Crédito-Débito", "nota_fiscal_credito_debito",
+		invoices.NewNotaFiscalCreditoDebitoBuilder, invoices.NewNotaFiscalCreditoDebitoCabeceraBuilder, invoices.NewNotaDetalleFiscalCreditoDebitoBuilder,
+		notasCampos()...),
+
 	sector(28, "Comercial de Exportación de Servicios", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
 		b(invoices.NewComercialExportacionServicioBuilder, invoices.NewComercialExportacionServicioCabeceraBuilder, invoices.NewComercialExportacionServicioDetalleBuilder)),
 
@@ -137,6 +141,9 @@ var catalogoSectores = []*SectorProfile{
 
 	sector(31, "Suministro de Energía", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
 		b(invoices.NewSuministroEnergiaBuilder, invoices.NewSuministroEnergiaCabeceraBuilder, invoices.NewSuministroEnergiaDetalleBuilder)),
+
+	sector(33, "Tasa Cero IVA Ley N° 1613", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
+		buildersSector{}),
 
 	sector(34, "Seguros", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
 		b(invoices.NewSegurosBuilder, invoices.NewSegurosCabeceraBuilder, invoices.NewSegurosDetalleBuilder)),
@@ -235,7 +242,7 @@ func sector(codigo int, nombre string, tipoDoc int, fachada FachadaSDK, bs build
 // sectorAjuste crea el perfil de un documento de ajuste (notas): se envía por el
 // servicio DocumentoAjuste del SIAT en lugar de recepcionFactura.
 func sectorAjuste(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
-	p := sector(codigo, nombre, TipoDocumentoNotaCreditoDebito, FachadaPorModalidad, b(facturaCtor, cabeceraCtor, detalleCtor), campos...)
+	p := sector(codigo, nombre, TipoDocumentoNotaCreditoDebito, FachadaDocumentoAjuste, b(facturaCtor, cabeceraCtor, detalleCtor), campos...)
 	p.Operacion = OperacionDocumentoAjuste
 	return p
 }
@@ -243,7 +250,17 @@ func sectorAjuste(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleC
 // nota crea un documento de ajuste con los campos estándar de las notas de
 // crédito/débito (24, 47, 48).
 func nota(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
-	return sectorAjuste(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
+	p := sectorAjuste(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
+	if codigo == SectorNotaCreditoDebito {
+		p.Layout = string(LayoutNotaCreditoDebito)
+	}
+	return p
+}
+
+func notaLayout(codigo int, nombre, layout string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
+	p := nota(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
+	p.Layout = layout
+	return p
 }
 
 // experimental marca los sectores sin homologación interna aún: se emiten con su
@@ -251,6 +268,9 @@ func nota(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any,
 func experimental(codigo int, nombre string, tipoDoc int, bs buildersSector) *SectorProfile {
 	p := sector(codigo, nombre, tipoDoc, FachadaPorModalidad, bs)
 	p.Experimental = true
+	if codigo == 52 {
+		p.Modalidades = []int{ModalidadElectronica}
+	}
 	return p
 }
 

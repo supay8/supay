@@ -81,6 +81,10 @@ type CreateInvoiceRequest struct {
 	// actividad económica de la empresa.
 	CodigoDocumentoSector int                        `json:"codigo_documento_sector,omitempty"`
 	Layout                string                     `json:"layout,omitempty"`
+	Modalidad             int                        `json:"modalidad,omitempty"`
+	Archivo               string                     `json:"archivo,omitempty"`
+	HashArchivo           string                     `json:"hash_archivo,omitempty"`
+	Cuf                   string                     `json:"cuf,omitempty"`
 	CodigoTipoFactura     int                        `json:"codigo_tipo_factura,omitempty"`
 	NombreEstudiante      *string                    `json:"nombre_estudiante,omitempty"`
 	PeriodoFacturado      *string                    `json:"periodo_facturado,omitempty"`
@@ -197,6 +201,19 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 	if err != nil {
 		return nil, fmt.Errorf("documento-sector %d no soportado: %w", sector, err)
 	}
+	modalidad := req.Modalidad
+	if modalidad <= 0 {
+		modalidad = uc.modalidad
+	}
+	if modalidad <= 0 {
+		modalidad = siat.ModalidadElectronica
+	}
+	if err := perfil.ValidarModalidad(modalidad); err != nil {
+		return nil, err
+	}
+	if !perfil.HasBuilder() && (strings.TrimSpace(req.Archivo) == "" || strings.TrimSpace(req.HashArchivo) == "" || strings.TrimSpace(req.Cuf) == "") {
+		return nil, fmt.Errorf("el sector %d requiere archivo, hash_archivo y cuf", sector)
+	}
 	valoresSector, err := perfil.PrepararDatosSector(siat.SolicitudFactura{
 		DatosSector:      req.DatosSector,
 		NombreEstudiante: cadenaOpcional(req.NombreEstudiante),
@@ -228,6 +245,9 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		if ref.Cuf == nil || *ref.Cuf == "" {
 			return nil, errors.New("la factura referenciada aún no tiene CUF; emítala antes de ajustarla")
 		}
+		if ref.InvoiceNumber <= 0 {
+			return nil, errors.New("la factura referenciada no tiene número correlativo válido; no se puede crear el ajuste")
+		}
 		ajustaFacturaId = &ref.ID
 	}
 
@@ -250,6 +270,9 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		TipoCambio:            tipoCambio,
 		CodigoDocumentoSector: sector,
 		Layout:                req.Layout,
+		Modalidad:             modalidad,
+		Archivo:               strings.TrimSpace(req.Archivo),
+		HashArchivo:           strings.TrimSpace(req.HashArchivo),
 		CodigoTipoFactura:     tipoFactura,
 		NombreEstudiante:      req.NombreEstudiante,
 		PeriodoFacturado:      req.PeriodoFacturado,
@@ -257,6 +280,10 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		AjustaFacturaId:       ajustaFacturaId,
 		IssueDate:             issueDate,
 		Status:                domain.InvoicePending,
+	}
+	if strings.TrimSpace(req.Cuf) != "" {
+		cuf := strings.TrimSpace(req.Cuf)
+		inv.Cuf = &cuf
 	}
 
 	var subtotal float64

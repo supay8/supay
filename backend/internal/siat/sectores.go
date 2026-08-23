@@ -327,6 +327,14 @@ func (p *SectorProfile) PrepararDatosSector(req SolicitudFactura) (map[string]an
 	if err != nil {
 		return nil, err
 	}
+	// El XSD de las notas exige que el nodo descuento preceda al monto
+	// efectivo, incluso cuando no existe descuento. El SDK omite el nodo si
+	// recibe nil, por lo que normalizamos el valor ausente a cero.
+	if p.EsAjuste() {
+		if _, ok := doc.Values["monto_descuento_credito_debito"]; !ok {
+			doc.Values["monto_descuento_credito_debito"] = float64(0)
+		}
+	}
 	return doc.Values, nil
 }
 

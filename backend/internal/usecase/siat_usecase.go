@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -334,11 +335,15 @@ type PaqueteInput struct {
 	CodigoEvento  int                     `json:"codigoEvento"`
 	Descripcion   string                  `json:"descripcion"`
 	CodigoEmision int                     `json:"codigoEmision"`
+	Archivo       string                  `json:"archivo,omitempty"`
+	HashArchivo   string                  `json:"hashArchivo,omitempty"`
 	Facturas      []siat.SolicitudFactura `json:"facturas"`
 }
 
 type MasivaInput struct {
 	CodigoEmision int                     `json:"codigoEmision"`
+	Archivo       string                  `json:"archivo,omitempty"`
+	HashArchivo   string                  `json:"hashArchivo,omitempty"`
 	Facturas      []siat.SolicitudFactura `json:"facturas"`
 }
 
@@ -428,7 +433,10 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		codigoTipoFact = facturasProcesadas[0].CodigoTipoFactura
 	}
 	if codigoDocSector <= 0 {
-		codigoDocSector = uc.ResolveDocumentoSector(company)
+		codigoDocSector, err = uc.ResolveDocumentoSector(company)
+		if err != nil {
+			return nil, nil, nil, domain.NewBadRequestError(err.Error())
+		}
 	}
 	if codigoTipoFact <= 0 {
 		codigoTipoFact = 1
@@ -449,6 +457,8 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		CodigoEmision:         body.CodigoEmision,
 		CodigoEvento:          int64(body.CodigoEvento),
 		Descripcion:           body.Descripcion,
+		Archivo:               body.Archivo,
+		HashArchivo:           body.HashArchivo,
 		Facturas:              facturasProcesadas,
 	}
 	return req, company, pointOfSale, nil
@@ -546,7 +556,10 @@ func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body Masiva
 		codigoTipoFact = body.Facturas[0].CodigoTipoFactura
 	}
 	if codigoDocSector <= 0 {
-		codigoDocSector = uc.ResolveDocumentoSector(company)
+		codigoDocSector, err = uc.ResolveDocumentoSector(company)
+		if err != nil {
+			return nil, nil, nil, domain.NewBadRequestError(err.Error())
+		}
 	}
 	if codigoTipoFact <= 0 {
 		codigoTipoFact = 1
@@ -565,6 +578,8 @@ func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body Masiva
 		CodigoDocumentoSector: codigoDocSector,
 		CodigoTipoFactura:     codigoTipoFact,
 		CodigoEmision:         body.CodigoEmision,
+		Archivo:               body.Archivo,
+		HashArchivo:           body.HashArchivo,
 		Facturas:              body.Facturas,
 	}
 	return req, company, pointOfSale, nil
@@ -1193,31 +1208,42 @@ func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) 
 // actividadesDocumentoSector (tabla siat_actividades_doc_sector). Prefiere la
 // factura de compraventa (FCV); si la actividad solo está asociada a sectores
 // educativos (FSEDU), usa ese sector.
-func (uc *SiatUsecase) ResolveDocumentoSector(company *domain.Company) int {
-	if uc.docSectorRepo == nil || company.CodigoActividad == nil {
-		return siat.SectorCompraVenta
+func (uc *SiatUsecase) ResolveDocumentoSector(company *domain.Company) (int, error) {
+	if company == nil {
+		return 0, errors.New("no se puede resolver documento-sector sin empresa")
+	}
+	if uc.docSectorRepo == nil {
+		return 0, errors.New("no existe repositorio de actividadesDocumentoSector; sincronice la lista de actividades")
+	}
+	if company.CodigoActividad == nil {
+		return 0, fmt.Errorf("la empresa %s no tiene codigo_actividad; sincronice actividadesDocumentoSector", company.ID)
 	}
 	actividad := strings.TrimSpace(*company.CodigoActividad)
 	if actividad == "" {
-		return siat.SectorCompraVenta
+		return 0, fmt.Errorf("la empresa %s no tiene codigo_actividad; sincronice actividadesDocumentoSector", company.ID)
 	}
 	items, err := uc.docSectorRepo.ListByActividad(company.ID, actividad)
-	if err != nil || len(items) == 0 {
-		return siat.SectorCompraVenta
+	if err != nil {
+		return 0, fmt.Errorf("no se pudo resolver documento-sector para actividad %s: %w", actividad, err)
+	}
+	if len(items) == 0 {
+		return 0, fmt.Errorf("actividad %s no sincronizada en actividadesDocumentoSector; ejecute la sincronizacion antes de emitir", actividad)
 	}
 	found := 0
 	for _, item := range items {
 		switch strings.TrimSpace(item.TipoDocumentoSector) {
 		case "FCV":
-			return item.CodigoDocumentoSector
+			if item.CodigoDocumentoSector > 0 {
+				return item.CodigoDocumentoSector, nil
+			}
 		case "FSEDU":
 			found = item.CodigoDocumentoSector
 		}
 	}
 	if found > 0 {
-		return found
+		return found, nil
 	}
-	return siat.SectorCompraVenta
+	return 0, fmt.Errorf("actividad %s no tiene una relacion de documento-sector soportada; sincronice nuevamente el catalogo", actividad)
 }
 
 // --- Documentos de ajuste (NC/ND) ---

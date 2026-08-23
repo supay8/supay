@@ -328,7 +328,10 @@ type Invoice struct {
 	TipoCambio            float64        `gorm:"type:decimal(18,5);default:1;not null"`
 	CodigoDocumentoSector int            `gorm:"default:1;not null"`
 	Layout                string         `gorm:"type:varchar(80)"`
+	Modalidad             int            `gorm:"default:1;not null"`
 	CodigoTipoFactura     int            `gorm:"default:1;not null"`
+	Archivo               string         `gorm:"type:text"`
+	HashArchivo           string         `gorm:"type:varchar(100)"`
 	NombreEstudiante      *string        `gorm:"type:varchar(150)"`
 	PeriodoFacturado      *string        `gorm:"type:varchar(30)"`
 	SectorData            datatypes.JSON `gorm:"type:jsonb"`

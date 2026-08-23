@@ -26,6 +26,42 @@ import (
 	goSiat "github.com/ron86i/go-siat/v2"
 )
 
+type ajusteRespuestaTest struct {
+	Transaccion     bool
+	CodigoEstado    int
+	CodigoRecepcion string
+}
+
+type ajusteContentTest struct {
+	RespuestaRecepcionFactura ajusteRespuestaTest
+}
+
+type ajusteBodyTest struct {
+	Content ajusteContentTest
+}
+
+type ajusteSOAPResponseTest struct {
+	Body ajusteBodyTest
+}
+
+func TestExtraerResultadoFacturacionAceptaRespuestaDocumentoAjuste(t *testing.T) {
+	resp := &ajusteSOAPResponseTest{Body: ajusteBodyTest{Content: ajusteContentTest{
+		RespuestaRecepcionFactura: ajusteRespuestaTest{
+			Transaccion:     true,
+			CodigoEstado:    908,
+			CodigoRecepcion: "RECEPCION-24",
+		},
+	}}}
+
+	transaccion, estado, recepcion, _, err := extraerResultadoFacturacion(resp)
+	if err != nil {
+		t.Fatalf("extraerResultadoFacturacion: %v", err)
+	}
+	if !transaccion || estado != 908 || recepcion != "RECEPCION-24" {
+		t.Fatalf("respuesta incorrecta: transaccion=%v estado=%d recepcion=%q", transaccion, estado, recepcion)
+	}
+}
+
 func TestEmpaquetaArchivo(t *testing.T) {
 	data := []byte(`<factura><numeroFactura>100</numeroFactura></factura>`)
 
@@ -700,6 +736,9 @@ func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
 	}
 	if !strings.Contains(xmlStr, "<numeroNotaCreditoDebito>501</numeroNotaCreditoDebito>") {
 		t.Error("numeroNotaCreditoDebito debe ser 501")
+	}
+	if !strings.Contains(xmlStr, "<numeroFactura>501</numeroFactura>") {
+		t.Error("numeroFactura de la factura original debe ser 501")
 	}
 	if !strings.Contains(xmlStr, "<numeroAutorizacionCuf>CUF-FACTURA-ORIGINAL-ABC123</numeroAutorizacionCuf>") {
 		t.Error("numeroAutorizacionCuf debe contener el CUF de la factura original")

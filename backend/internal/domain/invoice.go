@@ -48,7 +48,10 @@ type Invoice struct {
 	TipoCambio            float64         `json:"tipo_cambio"`
 	CodigoDocumentoSector int             `json:"codigo_documento_sector"`
 	Layout                string          `json:"layout,omitempty"`
+	Modalidad             int             `json:"modalidad"`
 	CodigoTipoFactura     int             `json:"codigo_tipo_factura"`
+	Archivo               string          `json:"archivo,omitempty"`
+	HashArchivo           string          `json:"hash_archivo,omitempty"`
 	NombreEstudiante      *string         `json:"nombre_estudiante,omitempty"`
 	PeriodoFacturado      *string         `json:"periodo_facturado,omitempty"`
 	SectorData            json.RawMessage `json:"sector_data,omitempty"`

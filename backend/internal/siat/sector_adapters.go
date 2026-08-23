@@ -16,6 +16,11 @@ func (genericSectorAdapter) Prepare(p *SectorProfile, req SolicitudFactura) (Sec
 	if err != nil {
 		return SectorDocument{}, err
 	}
+	if p.EsAjuste() {
+		if _, ok := values["monto_descuento_credito_debito"]; !ok {
+			values["monto_descuento_credito_debito"] = float64(0)
+		}
+	}
 	return SectorDocument{
 		Request: req,
 		Values:  values,

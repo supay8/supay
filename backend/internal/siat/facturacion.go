@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"log"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -44,19 +45,23 @@ type ItemFactura struct {
 // compraventa: CUIS/CUFD vigentes, identidad del emisor y cliente/ítems
 // mapeados a los catálogos sincronizados del SIN.
 type SolicitudFactura struct {
-	CodigoAmbiente   int       `json:"codigoAmbiente"`
-	CodigoSistema    string    `json:"codigoSistema"`
-	Nit              string    `json:"nit"`
-	Modalidad        int       `json:"modalidad"`
-	NumeroFactura    int64     `json:"numeroFactura"`
-	CodigoSucursal   int       `json:"codigoSucursal"`
-	CodigoPuntoVenta int       `json:"codigoPuntoVenta"`
-	Cuis             string    `json:"cuis"`
-	Cufd             string    `json:"cufd"`
-	CodigoControl    string    `json:"codigoControl"`
-	FechaEmision     time.Time `json:"fechaEmision"`
-	Usuario          string    `json:"usuario"`
-	Leyenda          string    `json:"leyenda"`
+	CodigoAmbiente int    `json:"codigoAmbiente"`
+	CodigoSistema  string `json:"codigoSistema"`
+	Nit            string `json:"nit"`
+	Modalidad      int    `json:"modalidad"`
+	NumeroFactura  int64  `json:"numeroFactura"`
+	// NumeroFacturaOriginal es el correlativo de la factura que se ajusta.
+	// Solo aplica a documentos de ajuste; NumeroFactura sigue siendo el
+	// correlativo de la nota nueva.
+	NumeroFacturaOriginal int64     `json:"numeroFacturaOriginal,omitempty"`
+	CodigoSucursal        int       `json:"codigoSucursal"`
+	CodigoPuntoVenta      int       `json:"codigoPuntoVenta"`
+	Cuis                  string    `json:"cuis"`
+	Cufd                  string    `json:"cufd"`
+	CodigoControl         string    `json:"codigoControl"`
+	FechaEmision          time.Time `json:"fechaEmision"`
+	Usuario               string    `json:"usuario"`
+	Leyenda               string    `json:"leyenda"`
 
 	RazonSocialEmisor string  `json:"razonSocialEmisor"`
 	Municipio         string  `json:"municipio"`
@@ -195,6 +200,19 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 			return nil, fmt.Errorf("siat emision: %w", err)
 		}
 		xmlSent = xmlToSend
+		xmlNumeroFactura, _ := xmlIntField(xmlData, "numeroFactura")
+		xmlNumeroNota, _ := xmlIntField(xmlData, "numeroNotaCreditoDebito")
+		logAttrs := []any{
+			"sector", perfil.Codigo,
+			"layout", perfil.Layout,
+			"modalidad", req.Modalidad,
+			"numero_nota", req.NumeroFactura,
+			"numero_factura_original", req.NumeroFacturaOriginal,
+			"xml_numero_factura", xmlNumeroFactura,
+			"xml_numero_nota", xmlNumeroNota,
+			"xml_bytes", len(xmlToSend),
+		}
+		slog.Info("siat documento construido", logAttrs...)
 	} else {
 		archivo = strings.TrimSpace(req.Archivo)
 		hash = strings.TrimSpace(req.HashArchivo)
@@ -368,6 +386,12 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 	if err != nil {
 		return nil, "", 0, err
 	}
+	slog.Info("siat datos sector preparados",
+		"sector", perfil.Codigo,
+		"layout", perfil.Layout,
+		"monto_descuento_credito_debito", doc.Values["monto_descuento_credito_debito"],
+		"numero_factura", req.NumeroFactura,
+		"numero_factura_original", req.NumeroFacturaOriginal)
 
 	nit := parseNit(req.Nit)
 	cuf, err = utils.NewCUF().
@@ -390,7 +414,40 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 	if err := validarCodigoDocumentoSectorFactura(req.CodigoDocumentoSector, perfil.Codigo, factura); err != nil {
 		return nil, "", 0, err
 	}
+	if err := validarNumerosDocumentoAjuste(perfil, factura); err != nil {
+		return nil, "", 0, err
+	}
 	return factura, cuf, tipoDoc, nil
+}
+
+func validarNumerosDocumentoAjuste(perfil *SectorProfile, factura any) error {
+	if !perfil.EsAjuste() {
+		return nil
+	}
+	data, err := xml.Marshal(factura)
+	if err != nil {
+		return fmt.Errorf("siat sectores %d: no se pudo verificar correlativos del ajuste: %w", perfil.Codigo, err)
+	}
+	numeroFactura, err := xmlIntField(data, "numeroFactura")
+	if err != nil || numeroFactura <= 0 {
+		return fmt.Errorf("siat sectores %d: numeroFactura de la factura original debe ser mayor a cero", perfil.Codigo)
+	}
+	if perfil.Codigo == SectorNotaCreditoDebito {
+		numeroNota, notaErr := xmlIntField(data, "numeroNotaCreditoDebito")
+		if notaErr != nil || numeroNota <= 0 {
+			return fmt.Errorf("siat sectores %d: numeroNotaCreditoDebito debe ser mayor a cero", perfil.Codigo)
+		}
+	}
+	return nil
+}
+
+func xmlIntField(data []byte, field string) (int64, error) {
+	name := regexp.QuoteMeta(field)
+	match := regexp.MustCompile(`(?s)<` + name + `>\s*([0-9]+)\s*</` + name + `>`).FindSubmatch(data)
+	if len(match) != 2 {
+		return 0, fmt.Errorf("campo %s ausente", field)
+	}
+	return strconv.ParseInt(string(match[1]), 10, 64)
 }
 
 // validarCodigoDocumentoSectorFactura protege la correspondencia entre el
@@ -695,7 +752,12 @@ func extraerResultadoFacturacion(resp any) (transaccion bool, codigoEstado int, 
 	}
 	rs := content.FieldByName("RespuestaServicioFacturacion")
 	if !rs.IsValid() {
-		return false, 0, "", nil, fmt.Errorf("respuesta del SIAT sin RespuestaServicioFacturacion")
+		// RecepcionDocumentoAjuste del SDK usa otro nombre de campo para
+		// representar el mismo nodo XML RespuestaServicioFacturacion.
+		rs = content.FieldByName("RespuestaRecepcionFactura")
+	}
+	if !rs.IsValid() {
+		return false, 0, "", nil, fmt.Errorf("respuesta del SIAT sin respuesta de facturacion")
 	}
 	if f := rs.FieldByName("Transaccion"); f.IsValid() {
 		transaccion = f.Bool()

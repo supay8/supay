@@ -100,12 +100,20 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		return nil, fmt.Errorf("error de emisión: %w", err)
 	}
 
-	inv.Cuf = &result.Cuf
+	if strings.TrimSpace(result.Cuf) != "" {
+		inv.Cuf = &result.Cuf
+	}
 	if result.Xml != "" {
 		inv.Xml = &result.Xml
 	}
 	if result.XmlHash != "" {
 		inv.XmlHash = &result.XmlHash
+	}
+	if result.Archivo != "" {
+		inv.Archivo = result.Archivo
+		if result.XmlHash != "" {
+			inv.HashArchivo = result.XmlHash
+		}
 	}
 	if result.CodigoRecepcion != "" {
 		inv.SiatReceptionCode = &result.CodigoRecepcion
@@ -386,7 +394,10 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		codigoPuntoVenta = *pos.SiatCode
 	}
 
-	modalidad := uc.modalidad
+	modalidad := inv.Modalidad
+	if modalidad <= 0 {
+		modalidad = uc.modalidad
+	}
 	if modalidad <= 0 {
 		modalidad = siat.ModalidadElectronica
 	}
@@ -396,6 +407,7 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		CodigoSistema:         inv.Company.CodigoSistema,
 		Nit:                   inv.Company.Nit,
 		Modalidad:             modalidad,
+		Layout:                inv.Layout,
 		Cuf:                   *inv.Cuf,
 		CodigoSucursal:        pos.CodigoSucursal,
 		CodigoPuntoVenta:      codigoPuntoVenta,
@@ -481,7 +493,10 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		codigoPuntoVenta = *pos.SiatCode
 	}
 
-	modalidad := uc.modalidad
+	modalidad := inv.Modalidad
+	if modalidad <= 0 {
+		modalidad = uc.modalidad
+	}
 	if modalidad <= 0 {
 		modalidad = siat.ModalidadElectronica
 	}
@@ -558,6 +573,28 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 	if err != nil {
 		return nil, fmt.Errorf("factura %s: %w", inv.ID, err)
 	}
+	var numeroFacturaOriginal int64
+	if perfil.EsAjuste() {
+		if strings.TrimSpace(valueOrEmpty(inv.AjustaFacturaId)) == "" {
+			return nil, errors.New("el documento de ajuste no tiene factura original asociada")
+		}
+		original, originalErr := uc.invoiceRepo.GetByID(*inv.AjustaFacturaId)
+		if originalErr != nil {
+			return nil, fmt.Errorf("no se pudo cargar la factura original del ajuste: %w", originalErr)
+		}
+		slog.Info("siat ajuste: factura original cargada",
+			"invoice_id", inv.ID,
+			"original_id", original.ID,
+			"nota_invoice_number", inv.InvoiceNumber,
+			"original_invoice_number", original.InvoiceNumber,
+			"original_cuf", valueOrEmpty(original.Cuf),
+			"layout", inv.Layout,
+			"sector", sector)
+		if original.InvoiceNumber <= 0 {
+			return nil, errors.New("la factura original del ajuste no tiene un número válido")
+		}
+		numeroFacturaOriginal = int64(original.InvoiceNumber)
+	}
 	tipoFactura := perfil.TipoDocumentoResuelto(inv.CodigoTipoFactura)
 
 	// Los campos legados educativos viajan siempre; el paquete siat los ignora
@@ -581,6 +618,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		Nit:                   company.Nit,
 		Modalidad:             modalidad,
 		NumeroFactura:         int64(inv.InvoiceNumber),
+		NumeroFacturaOriginal: numeroFacturaOriginal,
 		CodigoSucursal:        pos.CodigoSucursal,
 		CodigoPuntoVenta:      codigoPuntoVenta,
 		Cuis:                  *pos.Cuis,
@@ -603,6 +641,9 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		NombreEstudiante:      nombreEstudiante,
 		PeriodoFacturado:      periodoFacturado,
 		DatosSector:           inv.SectorData,
+		Archivo:               inv.Archivo,
+		HashArchivo:           inv.HashArchivo,
+		Cuf:                   valueOrEmpty(inv.Cuf),
 		Cliente: siat.ClienteFactura{
 			NombreRazonSocial:            inv.Customer.Name,
 			CodigoTipoDocumentoIdentidad: codigoDoc,
@@ -612,6 +653,13 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		},
 		Items: items,
 	}, nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // codigoTipoDocumentoIdentidad mapea el tipo de documento del cliente al código

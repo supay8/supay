@@ -231,17 +231,23 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		llamarMetodo(cab, c.metodo, false, c.valor)
 	}
 
-	// El correlativo del documento cambia de nombre en los XSD de notas
-	// (numeroNotaCreditoDebito / numeroNotaConciliacion); los builders de notas
-	// también exponen WithNumeroFactura pero su XSD no lo define, así que se
-	// resuelve por prioridad y se envía uno solo.
-	switch {
-	case tieneMetodo(cab, "WithNumeroNotaCreditoDebito"):
+	// Los documentos de ajuste del SDK tienen dos correlativos: el número de
+	// la nota y el número de la factura original. Ambos son obligatorios para
+	// el XSD del sector 24; no debe elegirse uno descartando el otro.
+	numeroFacturaOriginal := req.NumeroFacturaOriginal
+	if numeroFacturaOriginal <= 0 {
+		// Compatibilidad para consumidores de bajo nivel que todavía solo
+		// proporcionan NumeroFactura.
+		numeroFacturaOriginal = req.NumeroFactura
+	}
+	if tieneMetodo(cab, "WithNumeroFactura") {
+		llamarMetodo(cab, "WithNumeroFactura", false, numeroFacturaOriginal)
+	}
+	if tieneMetodo(cab, "WithNumeroNotaCreditoDebito") {
 		llamarMetodo(cab, "WithNumeroNotaCreditoDebito", false, req.NumeroFactura)
-	case tieneMetodo(cab, "WithNumeroNotaConciliacion"):
+	}
+	if tieneMetodo(cab, "WithNumeroNotaConciliacion") {
 		llamarMetodo(cab, "WithNumeroNotaConciliacion", false, req.NumeroFactura)
-	default:
-		llamarMetodo(cab, "WithNumeroFactura", false, req.NumeroFactura)
 	}
 
 	for _, campo := range p.Campos {

@@ -177,12 +177,12 @@ func TestResolveDocumentoSectorDesdeTabla(t *testing.T) {
 	actividad := "8549100"
 	company := &domain.Company{ID: "comp-1", CodigoActividad: &actividad}
 
-	if got := uc.ResolveDocumentoSector(company); got != 11 {
-		t.Errorf("ResolveDocumentoSector=%d, se esperaba 11 (FSEDU)", got)
+	if got, err := uc.ResolveDocumentoSector(company); err != nil || got != 11 {
+		t.Errorf("ResolveDocumentoSector=%d/%v, se esperaba 11 (FSEDU)", got, err)
 	}
 	sectores.items = append(sectores.items, domain.SiatActividadDocSector{CodigoActividad: "8549100", CodigoDocumentoSector: 1, TipoDocumentoSector: "FCV"})
-	if got := uc.ResolveDocumentoSector(company); got != 1 {
-		t.Errorf("ResolveDocumentoSector=%d, se esperaba 1 (FCV tiene prioridad)", got)
+	if got, err := uc.ResolveDocumentoSector(company); err != nil || got != 1 {
+		t.Errorf("ResolveDocumentoSector=%d/%v, se esperaba 1 (FCV tiene prioridad)", got, err)
 	}
 }
 

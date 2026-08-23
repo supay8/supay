@@ -159,6 +159,10 @@ type sectorDTO struct {
 	TipoDocumento      int              `json:"tipo_documento"`
 	Operacion          string           `json:"operacion"`
 	Fachada            string           `json:"fachada"`
+	Layout             string           `json:"layout,omitempty"`
+	Modalidades        []int            `json:"modalidades,omitempty"`
+	TieneBuilder       bool             `json:"tiene_builder"`
+	RequiereArchivo    bool             `json:"requiere_archivo"`
 	ConDetalle         bool             `json:"con_detalle"`
 	DetalleUnico       bool             `json:"detalle_unico"`
 	MontoSujetoIvaCero bool             `json:"monto_sujeto_iva_cero"`
@@ -186,7 +190,11 @@ func (h *InvoiceHandler) Sectores(w http.ResponseWriter, r *http.Request) {
 			Nombre:             p.Nombre,
 			TipoDocumento:      p.TipoDocumentoResuelto(0),
 			Operacion:          p.Operacion.String(),
-			Fachada:            p.Fachada.String(),
+			Fachada:            p.Facade.String(),
+			Layout:             p.Layout,
+			Modalidades:        append([]int(nil), p.Modalidades...),
+			TieneBuilder:       p.HasBuilder(),
+			RequiereArchivo:    !p.HasBuilder(),
 			ConDetalle:         p.ConDetalle,
 			DetalleUnico:       p.DetalleUnico,
 			MontoSujetoIvaCero: p.MontoSujetoIvaCero,

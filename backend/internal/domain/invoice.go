@@ -27,10 +27,14 @@ type InvoiceItem struct {
 	CodigoActividad   *string `json:"codigo_actividad,omitempty"`
 	CodigoProductoSin *string `json:"codigo_producto_sin,omitempty"`
 	UnitCode          *int    `json:"unit_code,omitempty"`
-	Quantity          float64 `json:"quantity"`
-	UnitPrice         float64 `json:"unit_price"`
-	Discount          float64 `json:"discount"`
-	Subtotal          float64 `json:"subtotal"`
+	Quantity          float64        `json:"quantity"`
+	UnitPrice         float64        `json:"unit_price"`
+	Discount          float64        `json:"discount"`
+	Subtotal          float64        `json:"subtotal"`
+	// SectorData contiene los campos sectoriales del detalle (ítem) validados
+	// contra CamposDetalle del perfil del documento-sector. Opcional: un ítem
+	// sin SectorData mantiene exactamente el comportamiento anterior.
+	SectorData        json.RawMessage `json:"sector_data,omitempty"`
 }
 
 type Invoice struct {

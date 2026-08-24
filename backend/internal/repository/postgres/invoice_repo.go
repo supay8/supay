@@ -209,6 +209,7 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 			UnitPrice:         item.UnitPrice,
 			Discount:          item.Discount,
 			Subtotal:          item.Subtotal,
+			SectorData:        datatypes.JSON(item.SectorData),
 		}
 		if mi.ID == "" {
 			mi.ID = uuid.NewString()
@@ -275,6 +276,7 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 			UnitPrice:         mi.UnitPrice,
 			Discount:          mi.Discount,
 			Subtotal:          mi.Subtotal,
+			SectorData:        json.RawMessage(mi.SectorData),
 		})
 	}
 	return inv

@@ -168,6 +168,7 @@ type sectorDTO struct {
 	MontoSujetoIvaCero bool             `json:"monto_sujeto_iva_cero"`
 	Ajuste             bool             `json:"es_ajuste"`
 	Campos             []sectorCampoDTO `json:"campos_datos_sector"`
+	CamposDetalle      []sectorCampoDTO `json:"campos_datos_sector_detalle,omitempty"`
 }
 
 // Sectores expone el catálogo de documentos-sector soportados con la
@@ -180,6 +181,14 @@ func (h *InvoiceHandler) Sectores(w http.ResponseWriter, r *http.Request) {
 		campos := make([]sectorCampoDTO, 0, len(p.Campos))
 		for _, c := range p.Campos {
 			campos = append(campos, sectorCampoDTO{
+				JSON:      c.JSON,
+				Requerido: c.Requerido,
+				Tipo:      c.Tipo,
+			})
+		}
+		camposDetalle := make([]sectorCampoDTO, 0, len(p.CamposDetalle))
+		for _, c := range p.CamposDetalle {
+			camposDetalle = append(camposDetalle, sectorCampoDTO{
 				JSON:      c.JSON,
 				Requerido: c.Requerido,
 				Tipo:      c.Tipo,
@@ -200,6 +209,7 @@ func (h *InvoiceHandler) Sectores(w http.ResponseWriter, r *http.Request) {
 			MontoSujetoIvaCero: p.MontoSujetoIvaCero,
 			Ajuste:             p.EsAjuste(),
 			Campos:             campos,
+			CamposDetalle:      camposDetalle,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

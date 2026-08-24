@@ -374,6 +374,7 @@ type InvoiceItem struct {
 	UnitPrice         float64 `gorm:"type:decimal(18,2);not null"`
 	Discount          float64 `gorm:"type:decimal(18,2);default:0;not null"`
 	Subtotal          float64 `gorm:"type:decimal(18,2);not null"`
+	SectorData        datatypes.JSON `gorm:"type:jsonb"`
 
 	Invoice Invoice `gorm:"foreignKey:InvoiceId"`
 }

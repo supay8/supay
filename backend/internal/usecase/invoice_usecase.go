@@ -66,6 +66,9 @@ type CreateInvoiceItemRequest struct {
 	Quantity          float64 `json:"quantity"`
 	UnitPrice         float64 `json:"unit_price"`
 	Discount          float64 `json:"discount,omitempty"`
+	// SectorData contiene los campos sectoriales del ítem (datos_sector_detalle)
+	// validados contra CamposDetalle del perfil del documento-sector. Opcional.
+	SectorData json.RawMessage `json:"datos_sector,omitempty"`
 }
 
 type CreateInvoiceRequest struct {
@@ -307,6 +310,12 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 		if it.Discount < 0 {
 			return nil, errors.New("el descuento del ítem no puede ser negativo")
 		}
+		// Validación fail-fast de los datos sectoriales del ítem contra
+		// CamposDetalle del perfil. Si el perfil declara campos requeridos, la
+		// ausencia de datos_sector en el ítem también debe fallar aquí.
+		if _, err := perfil.ValidarDatosDetalle(it.SectorData); err != nil {
+			return nil, fmt.Errorf("ítem %d: %w", index+1, err)
+		}
 		itemSubtotal := round2(it.Quantity*it.UnitPrice - it.Discount)
 		if itemSubtotal < 0 {
 			return nil, errors.New("el descuento del ítem no puede superar el monto")
@@ -322,6 +331,7 @@ func (uc *InvoiceUsecase) Create(req CreateInvoiceRequest) (*domain.Invoice, err
 			UnitPrice:         it.UnitPrice,
 			Discount:          it.Discount,
 			Subtotal:          itemSubtotal,
+			SectorData:        it.SectorData,
 		}
 		if mapping, ok := resolvedMappings[index]; ok {
 			codigoActividad := mapping.CodigoActividad

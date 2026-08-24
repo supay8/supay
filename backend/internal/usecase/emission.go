@@ -555,6 +555,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 			PrecioUnitario:     it.UnitPrice,
 			MontoDescuento:     descuentoPtr,
 			SubTotal:           it.Subtotal,
+			DatosSector:        it.SectorData,
 		})
 	}
 

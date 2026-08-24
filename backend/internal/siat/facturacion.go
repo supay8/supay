@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"log"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -39,6 +38,11 @@ type ItemFactura struct {
 	PrecioUnitario     float64  `json:"precioUnitario"`
 	MontoDescuento     *float64 `json:"montoDescuento,omitempty"`
 	SubTotal           float64  `json:"subTotal"`
+	// DatosSector contiene los campos sectoriales del detalle (item) validados
+	// contra CamposDetalle del perfil del documento-sector. Opcional: un item sin
+	// DatosSector mantiene exactamente el comportamiento anterior (solo campos
+	// comunes del detalle).
+	DatosSector json.RawMessage `json:"datosSector,omitempty"`
 }
 
 // SolicitudFactura agrupa los prerrequisitos para emitir una factura de
@@ -83,6 +87,11 @@ type SolicitudFactura struct {
 	// (catálogo del SIN: 1 = con crédito fiscal, 2 = sin derecho, 3 = nota de
 	// ajuste). Si es 0 se deriva del perfil del documento-sector.
 	CodigoTipoFactura int `json:"codigoTipoFactura"`
+	// Cafc es el Código de Autorización de Facturación de Contingencia. Solo
+	// aplica a facturas emitidas en contingencia (eventos significativos) o de
+	// homologación. Si es nil, el nodo cafc se omite del XML (comportamiento
+	// homologado); si tiene valor, viaja como <cafc>VALOR</cafc>.
+	Cafc *string `json:"cafc,omitempty"`
 	// DatosSector contiene los campos específicos del documento-sector
 	// (nombreEstudiante/periodoFacturado para el 11, montos y referencia para
 	// notas, pasajero para boletos aéreos, etc.), validados contra el registro
@@ -337,7 +346,7 @@ func optionalStringPtr(value *string) *string {
 }
 
 func removeEmptyOptionalFacturaFields(data []byte) []byte {
-	for _, field := range []string{"telefono", "complemento", "montoDescuentoCreditoDebito"} {
+	for _, field := range []string{"telefono", "complemento", "cafc", "montoDescuentoCreditoDebito"} {
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?></`+field+`>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?/>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`(?s)<`+field+`(?:\s[^>]*)?>\s*</`+field+`>`).ReplaceAll(data, nil)
@@ -379,6 +388,9 @@ func buildFacturaSDK(req SolicitudFactura, codigoEmision int) (factura any, cuf 
 	}
 	if !perfil.HasBuilder() {
 		return nil, "", 0, fmt.Errorf("siat sectores %d: no tiene builder; use Archivo y HashArchivo", perfil.Codigo)
+	}
+	if !perfil.Soportado {
+		return nil, "", 0, fmt.Errorf("siat sectores %d (%s): sector no soportado para emisión; consulte /invoices/sectores", perfil.Codigo, perfil.Nombre)
 	}
 	tipoDoc = perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
 
@@ -736,8 +748,6 @@ func (s *Service) RevertirAnulacion(ctx context.Context, req SolicitudDocumento)
 // facturación del SDK (recepción, verificación, anulación y reversión). Se usa
 // reflexión porque los tipos de respuesta viven en paquetes internos del SDK.
 func extraerResultadoFacturacion(resp any) (transaccion bool, codigoEstado int, codigoRecepcion string, mensajes []Mensaje, err error) {
-	log.Println("[LOG] extraerResultadoFacturacion")
-	log.Println(resp)
 	v := reflect.ValueOf(resp)
 	if !v.IsValid() || v.Kind() != reflect.Pointer {
 		return false, 0, "", nil, fmt.Errorf("respuesta del SIAT inválida")

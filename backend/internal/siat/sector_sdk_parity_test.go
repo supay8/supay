@@ -113,6 +113,11 @@ func countBuilderProfiles(profiles map[int][]*SectorProfile) int {
 
 func assertSDKRoots(t *testing.T, profile *SectorProfile, sdkCase sdkSectorCase) {
 	t.Helper()
+	if !profile.Soportado {
+		// La paridad de raíces XML se verifica solo para sectores habilitados
+		// para emisión; los no soportados se rechazan antes de construir.
+		return
+	}
 	for _, mode := range []struct {
 		code int
 		root string

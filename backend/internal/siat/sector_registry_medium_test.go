@@ -105,6 +105,14 @@ func TestRegistroValidaMetadatosDeBuilders(t *testing.T) {
 				t.Errorf("sector %d: campo %s declara método inexistente %s", profile.Codigo, field.JSON, field.Metodo)
 			}
 		}
+		if profile.builders.detalle != nil {
+			detalle := profile.builders.detalle()
+			for _, field := range profile.CamposDetalle {
+				if field.Metodo != "" && !tieneMetodo(detalle, field.Metodo) {
+					t.Errorf("sector %d: campo detalle %s declara método inexistente %s", profile.Codigo, field.JSON, field.Metodo)
+				}
+			}
+		}
 		modalidades := profile.Modalidades
 		if len(modalidades) == 0 {
 			modalidades = []int{ModalidadElectronica, ModalidadComputarizada}

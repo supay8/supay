@@ -1,6 +1,7 @@
 package siat
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -210,6 +211,7 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithMontoGiftCard", zeroFloat},
 		{"WithDescuentoAdicional", zeroFloat},
 		{"WithCodigoExcepcion", zeroInt},
+		{"WithCafc", req.Cafc},
 		{"WithCodigoMetodoPago", req.CodigoMetodoPago},
 		{"WithMontoTotal", req.MontoTotal},
 		{"WithMontoTotalSujetoIva", montoTotalSujetoIva(p, req)},
@@ -313,7 +315,37 @@ func construirDetalle(p *SectorProfile, item ItemFactura, correlativo int) any {
 	// codigoDetalleTransaccion existe solo en los detalles de notas: correlativo
 	// secuencial obligatorio ahí.
 	llamarMetodo(det, "WithCodigoDetalleTransaccion", true, correlativo)
+	// Campos sectoriales de detalle: se aplican mediante reflexión NO tolerante.
+	// Si Supay declara un campo en CamposDetalle pero el builder no tiene el
+	// método With* correspondiente, llamarMetodo con tolerante=false produce un
+	// error explícito (panic que buildFacturaSDK convierte en error).
+	aplicarCamposDetalle(p, det, item.DatosSector)
 	return llamarBuild(det)
+}
+
+// aplicarCamposDetalle valida y aplica los datos sectoriales del item sobre el
+// builder de detalle usando la misma reflexión que los campos de cabecera. Un
+// item sin DatosSector conserva el comportamiento anterior solo si el perfil no
+// declara CamposDetalle requeridos. Si el builder no expone el método With*
+// declarado, se produce un error explícito.
+func aplicarCamposDetalle(p *SectorProfile, det any, datos json.RawMessage) {
+	if len(p.CamposDetalle) == 0 && (len(datos) == 0 || string(datos) == "null") {
+		return
+	}
+	valores, err := p.ValidarDatosDetalle(datos)
+	if err != nil {
+		panic(err)
+	}
+	for _, campo := range p.CamposDetalle {
+		if campo.Metodo == "" {
+			continue
+		}
+		valor, presente := valores[campo.JSON]
+		if !presente || esPunteroNil(valor) {
+			continue
+		}
+		llamarMetodo(det, campo.Metodo, false, valor)
+	}
 }
 
 // construirFactura arma el documento raíz del sector: modalidad + cabecera +

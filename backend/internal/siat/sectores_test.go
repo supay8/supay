@@ -36,8 +36,16 @@ func TestCatalogoCubreLosSectoresDelSDK(t *testing.T) {
 // datosDeEjemplo genera un objeto datos_sector válido para el perfil: cada
 // campo requerido recibe un valor plausible según su tipo declarado.
 func datosDeEjemplo(p *SectorProfile) string {
-	pares := make([]string, 0, len(p.Campos))
-	for _, c := range p.Campos {
+	return datosCamposDeEjemplo(p.Campos)
+}
+
+func datosDetalleDeEjemplo(p *SectorProfile) []byte {
+	return jsonRaw(datosCamposDeEjemplo(p.CamposDetalle))
+}
+
+func datosCamposDeEjemplo(campos []CampoSector) string {
+	pares := make([]string, 0, len(campos))
+	for _, c := range campos {
 		if !c.Requerido {
 			continue
 		}
@@ -106,10 +114,20 @@ func TestBuildFacturaTodosLosSectores(t *testing.T) {
 					UnidadMedida:       1,
 					PrecioUnitario:     100,
 					SubTotal:           100,
+					DatosSector:        datosDetalleDeEjemplo(p),
 				}},
 			}
 
 			factura, cuf, tipoDoc, err := buildFacturaSDK(req, goSiat.EmisionOnline)
+			if !p.Soportado {
+				if err == nil {
+					t.Fatalf("sector %d: se esperaba error por sector no soportado", p.Codigo)
+				}
+				if !strings.Contains(err.Error(), "sector no soportado") {
+					t.Fatalf("sector %d: error inesperado: %v", p.Codigo, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("buildFacturaSDK sector %d: %v", p.Codigo, err)
 			}
@@ -133,3 +151,54 @@ func TestBuildFacturaTodosLosSectores(t *testing.T) {
 }
 
 func jsonRaw(s string) []byte { return []byte(s) }
+
+// TestSectorNoSoportadoRechazaEmision verifica que buildFacturaSDK rechace
+// explícitamente un sector registrado pero no marcado como Soportado, antes de
+// construir o enviar el documento al SIAT.
+func TestSectorNoSoportadoRechazaEmision(t *testing.T) {
+	req := SolicitudFactura{
+		CodigoAmbiente:        AmbientePruebas,
+		CodigoSistema:         "SYS-TEST",
+		Nit:                   "1020304050",
+		Modalidad:             goSiat.ModalidadElectronica,
+		NumeroFactura:         1,
+		Cuis:                  "CUIS-TEST",
+		Cufd:                  "CUFD-TEST",
+		CodigoControl:         "CONTROL-CODE-29-CHARACTERS-01",
+		FechaEmision:          time.Date(2025, 8, 15, 10, 30, 0, 0, LaPaz),
+		Usuario:               "SUPAY",
+		Leyenda:               "Ley N° 453",
+		RazonSocialEmisor:     "EMPRESA TEST SRL",
+		Municipio:             "LA PAZ",
+		Direccion:             "AV. TEST 123",
+		CodigoMetodoPago:      1,
+		CodigoMoneda:          1,
+		TipoCambio:            1,
+		MontoTotal:            100,
+		CodigoDocumentoSector: 19, // Hidrocarburos Alcanzada IEHD: registrado, no soportado
+		Cliente: ClienteFactura{
+			NombreRazonSocial:            "CLIENTE TEST",
+			CodigoTipoDocumentoIdentidad: 1,
+			NumeroDocumento:              "1234567",
+			CodigoCliente:                "C-001",
+		},
+		Items: []ItemFactura{{
+			ActividadEconomica: "473000",
+			CodigoProductoSin:  12345,
+			CodigoProducto:     "P-001",
+			Descripcion:        "Ítem de prueba",
+			Cantidad:           1,
+			UnidadMedida:       1,
+			PrecioUnitario:     100,
+			SubTotal:           100,
+		}},
+	}
+
+	_, _, _, err := buildFacturaSDK(req, goSiat.EmisionOnline)
+	if err == nil {
+		t.Fatal("se esperaba error para sector no soportado")
+	}
+	if !strings.Contains(err.Error(), "sector no soportado") {
+		t.Fatalf("error inesperado: %v", err)
+	}
+}

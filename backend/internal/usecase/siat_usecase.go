@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -237,14 +236,6 @@ type EventoSignificativoResultado struct {
 	Response    *siat.ResultadoEventoSignificativo
 }
 
-/*
-FBQUtCV1DDgUpBQ4NzM5NDA4QUI2QlVoSEFQWUlhVUMjI4NDUyQzM4RU
-FBQUtCV1DDgUpBQ4NzM5NDA4QUI2QlVoSEFQWUlhVUMjI4NDUyQzM4RU
-
-[CUFD send ]: FBQUtCV1DDgUpBQ4NzM5NDA4QUI2QlVoSEFQWUlhVUMjI4NDUyQzM4RU
-[cufd event] : JBQUtCV1DDgUpBQ4NzM5NDA4QUI2Qj54aVNWWElhVUMjI4NDUyQzM4RU"
-*/
-
 // RegistrarEventoSignificativo registra una contingencia ante el SIAT
 // (registroEventoSignificativo). El CUFD vigente se usa como cufdEvento salvo
 // que el input lo sobrescriba (p.ej. el CUFD vencido durante la contingencia).
@@ -263,8 +254,6 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 	if err != nil {
 		return nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
 	}
-
-	log.Printf("[cufd current] : %s \n ", cufd.Cufd)
 
 	codigoMotivo := body.CodigoMotivoEvento
 	if codigoMotivo <= 0 {
@@ -302,8 +291,6 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 		FechaHoraInicioEvento: inicio,
 		FechaHoraFinEvento:    fin,
 	}
-
-	log.Printf("[CUFD send ]: %s   [cufd event] : %s", cufd.Cufd, cufdEvento)
 
 	result, err := uc.siatService.RegistrarEventoSignificativo(ctx, req)
 	if err != nil {

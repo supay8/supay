@@ -264,10 +264,12 @@ func notaLayout(codigo int, nombre, layout string, facturaCtor, cabeceraCtor, de
 }
 
 // experimental marca los sectores sin homologación interna aún: se emiten con su
-// builder real pero solo aceptan datos_sector vacíos.
+// builder real pero la guarda de buildFacturaSDK rechaza su emisión con un error
+// explícito que nombra los campos del SDK que Supay no setea (Paso 2).
 func experimental(codigo int, nombre string, tipoDoc int, bs buildersSector) *SectorProfile {
 	p := sector(codigo, nombre, tipoDoc, FachadaPorModalidad, bs)
-	p.Experimental = true
+	// Soportado queda false: la guarda de buildFacturaSDK produce un error claro
+	// nombrando los campos faltantes en vez de emitir un XML incompleto.
 	if codigo == 52 {
 		p.Modalidades = []int{ModalidadElectronica}
 	}

@@ -231,6 +231,11 @@ func (h *SiatHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SiatHandler) EmitirDocumentoAjuste(w http.ResponseWriter, r *http.Request) {
+	slog.Warn("uso de endpoint deprecado documento-ajuste",
+		"path", r.URL.Path,
+		"company_id", chi.URLParam(r, "companyId"),
+		"point_of_sale_id", chi.URLParam(r, "pointOfSaleId"),
+	)
 	var body usecase.DocumentoAjusteInput
 	if !h.decodeBody(w, r, &body) {
 		return

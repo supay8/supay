@@ -74,7 +74,7 @@ type SolicitudCuis struct {
 // RespuestaCuis es la respuesta del SIAT para la solicitud de CUIS.
 type RespuestaCuis struct {
 	Codigo        string      `json:"codigo"`
-	FechaVigencia XMLDateTime `json:"fechaVigencia"`
+	FechaVigencia XMLDateTime `json:"fecha_vigencia"`
 	Transaccion   bool        `json:"transaccion"`
 	Mensajes      []Mensaje   `json:"mensajes,omitempty"`
 }
@@ -95,10 +95,10 @@ type SolicitudCufd struct {
 // compatibilidad del modelo de persistencia (queda nil).
 type RespuestaCufd struct {
 	Codigo        string      `json:"codigo"`
-	CodigoControl string      `json:"codigoControl"`
-	CodigoQR      *string     `json:"codigoQR,omitempty"`
+	CodigoControl string      `json:"codigo_control"`
+	CodigoQR      *string     `json:"codigo_qr,omitempty"`
 	Direccion     string      `json:"direccion"`
-	FechaVigencia XMLDateTime `json:"fechaVigencia"`
+	FechaVigencia XMLDateTime `json:"fecha_vigencia"`
 	Transaccion   bool        `json:"transaccion"`
 	Mensajes      []Mensaje   `json:"mensajes,omitempty"`
 }

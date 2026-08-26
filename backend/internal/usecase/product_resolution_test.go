@@ -39,7 +39,7 @@ func TestResolveProductMappingsUsesFiscalSnapshot(t *testing.T) {
 		}},
 	}
 	uc := &InvoiceUsecase{productRepo: &fakeProductRepository{product: product}}
-	mappings, ids, codes, err := uc.resolveProductMappings(CreateInvoiceRequest{
+	mappings, products, ids, codes, err := uc.resolveProductMappings(CreateInvoiceRequest{
 		CompanyId: "company-1",
 		Items:     []CreateInvoiceItemRequest{{ProductID: "product-1", Quantity: 1}},
 	})
@@ -48,6 +48,9 @@ func TestResolveProductMappingsUsesFiscalSnapshot(t *testing.T) {
 	}
 	if mappings[0].CodigoProductoSin != 12345 || mappings[0].CodigoActividad != "473000" {
 		t.Fatalf("mapeo inesperado: %+v", mappings[0])
+	}
+	if products[0] == nil || products[0].ID != "product-1" {
+		t.Fatalf("producto no resuelto: %+v", products[0])
 	}
 	if ids[0] == nil || *ids[0] != "product-1" || codes[0] != "SKU-001" {
 		t.Fatalf("identidad del producto no resuelta: ids=%v codes=%v", ids, codes)

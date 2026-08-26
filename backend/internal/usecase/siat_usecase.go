@@ -36,6 +36,7 @@ type SiatUsecase struct {
 	leyendaRepo     domain.SiatLeyendaRepository
 	docSectorRepo   domain.SiatActividadDocSectorRepository
 	siatService     *siat.Service
+	credentials     *CredentialService
 	modalidad       int
 }
 
@@ -62,6 +63,14 @@ func NewSiatUsecase(
 		siatService:     siatService,
 		modalidad:       modalidad,
 	}
+	// El servicio de credenciales comparte repos y SDK con el usecase; el
+	// cliente se inyecta solo si el SDK está inicializado para que un nil
+	// tipado no evada el guard interno.
+	var credClient SiatCredentialClient
+	if siatService != nil {
+		credClient = siatService
+	}
+	uc.credentials = NewCredentialService(pointOfSaleRepo, cufdRepo, credClient, modalidad)
 	for _, repo := range extraRepos {
 		switch typed := repo.(type) {
 		case domain.SinProductRepository:
@@ -132,6 +141,7 @@ type CuisResultado struct {
 	Response    *siat.RespuestaCuis
 }
 
+// SolicitarCUIS fuerza la obtención de un CUIS nuevo (endpoint explícito).
 func (uc *SiatUsecase) SolicitarCUIS(ctx context.Context, companyID, posID string) (*CuisResultado, error) {
 	if err := uc.requireService(); err != nil {
 		return nil, err
@@ -140,33 +150,10 @@ func (uc *SiatUsecase) SolicitarCUIS(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-
-	req := siat.SolicitudCuis{
-		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    company.CodigoSistema,
-		Nit:              company.Nit,
-		CodigoSucursal:   pointOfSale.CodigoSucursal,
-		CodigoModalidad:  uc.effectiveModalidad(),
-		CodigoPuntoVenta: resolveCodigoPuntoVenta(pointOfSale),
-	}
-	if pointOfSale.Cuis != nil && *pointOfSale.Cuis != "" {
-		req.Cuis = pointOfSale.Cuis
-	}
-
-	resp, err := uc.siatService.SolicitarCUIS(ctx, req)
+	resp, err := uc.credentials.RefreshCuis(ctx, company, pointOfSale)
 	if err != nil {
 		return nil, err
 	}
-
-	now := time.Now().In(siat.LaPaz)
-	updatedCuis := resp.Codigo
-	pointOfSale.Cuis = &updatedCuis
-	pointOfSale.CuisCreatedAt = &now
-	if err := uc.pointOfSaleRepo.Update(pointOfSale); err != nil {
-		slog.Error("no se pudo persistir el CUIS en el punto de venta", "pos_id", pointOfSale.ID, "error", err)
-		return nil, errors.New("no se pudo persistir el CUIS en el punto de venta")
-	}
-
 	return &CuisResultado{Company: company, PointOfSale: pointOfSale, Response: resp}, nil
 }
 
@@ -184,50 +171,75 @@ func (uc *SiatUsecase) SolicitarCUFD(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
-		return nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
+	resp, _, err := uc.credentials.RefreshCufd(ctx, company, pointOfSale)
+	if err != nil {
+		return nil, err
 	}
+	return &CufdResultado{Company: company, PointOfSale: pointOfSale, Response: resp}, nil
+}
 
-	req := siat.SolicitudCufd{
-		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    company.CodigoSistema,
-		Nit:              company.Nit,
-		CodigoSucursal:   pointOfSale.CodigoSucursal,
-		Cuis:             *pointOfSale.Cuis,
-		CodigoModalidad:  uc.effectiveModalidad(),
-		CodigoPuntoVenta: resolveCodigoPuntoVenta(pointOfSale),
+// SetupResultado es la respuesta de POST /setup: credenciales resueltas,
+// resultado de la sincronización y readiness final.
+type SetupResultado struct {
+	// Cuis es la respuesta del SIAT solo cuando se solicitó uno nuevo;
+	// nil cuando el punto de venta ya tenía CUIS.
+	Cuis       *siat.RespuestaCuis      `json:"cuis,omitempty"`
+	Cufd       *domain.Cufd             `json:"cufd"`
+	Operations []SincronizacionOpResult `json:"operations"`
+	Errors     []SincronizacionOpError  `json:"errors,omitempty"`
+	Readiness  *domain.CatalogReadiness `json:"readiness,omitempty"`
+}
+
+// Setup orquesta el alta completa de un punto de venta en una llamada:
+// CUIS (lazy) → sincronización de catálogos → CUFD (lazy) → readiness.
+// Es idempotente: re-ejecutarla reutiliza las credenciales vigentes y
+// refresca los catálogos.
+func (uc *SiatUsecase) Setup(ctx context.Context, companyID, posID string) (*SetupResultado, error) {
+	if err := uc.requireService(); err != nil {
+		return nil, err
 	}
-
-	resp, err := uc.siatService.SolicitarCUFD(ctx, req)
+	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
 	if err != nil {
 		return nil, err
 	}
 
-	now := time.Now().In(siat.LaPaz)
-	cufd := &domain.Cufd{
-		PointOfSaleID: pointOfSale.ID,
-		Cufd:          resp.Codigo,
-		ControlCode:   resp.CodigoControl,
-		Direccion:     resp.Direccion,
-		ValidFrom:     now,
-		ValidTo:       resp.FechaVigencia.Time,
-		Active:        true,
+	out := &SetupResultado{}
+
+	if pointOfSale.Cuis == nil || *pointOfSale.Cuis == "" {
+		resp, err := uc.credentials.RefreshCuis(ctx, company, pointOfSale)
+		if err != nil {
+			return nil, err
+		}
+		out.Cuis = resp
 	}
-	if err := uc.cufdRepo.Create(cufd); err != nil {
-		slog.Error("no se pudo persistir el CUFD", "pos_id", pointOfSale.ID, "error", err)
-		return nil, errors.New("no se pudo persistir el CUFD")
+
+	syncRes, err := uc.Sincronizar(ctx, companyID, posID, "")
+	if err != nil {
+		return nil, err
 	}
-	return &CufdResultado{Company: company, PointOfSale: pointOfSale, Response: resp}, nil
+	out.Operations = syncRes.Operations
+	out.Errors = syncRes.Errors
+
+	cufd, err := uc.credentials.EnsureCufd(ctx, company, pointOfSale)
+	if err != nil {
+		return nil, err
+	}
+	out.Cufd = cufd
+
+	if readiness, rerr := uc.CatalogReadiness(companyID, posID); rerr == nil {
+		out.Readiness = readiness
+	}
+	return out, nil
 }
 
 // --- Evento significativo ---
 
 type EventoSignificativoInput struct {
-	CodigoMotivoEvento    int    `json:"codigoMotivoEvento"`
+	CodigoMotivoEvento    int    `json:"codigo_motivo_evento"`
 	Descripcion           string `json:"descripcion"`
-	CufdEvento            string `json:"cufdEvento"`
-	FechaHoraInicioEvento string `json:"fechaHoraInicioEvento"`
-	FechaHoraFinEvento    string `json:"fechaHoraFinEvento"`
+	CufdEvento            string `json:"cufd_evento"`
+	FechaHoraInicioEvento string `json:"fecha_hora_inicio_evento"`
+	FechaHoraFinEvento    string `json:"fecha_hora_fin_evento"`
 }
 
 type EventoSignificativoResultado struct {
@@ -360,10 +372,10 @@ type ComprasInput struct {
 }
 
 type PaqueteValidacionInput struct {
-	CodigoRecepcion string `json:"codigoRecepcion"`
-	CodigoEmision   int    `json:"codigoEmision"`
-	CodigoDocSector int    `json:"codigoDocumentoSector"`
-	CodigoTipoFact  int    `json:"codigoTipoFactura"`
+	CodigoRecepcion string `json:"codigo_recepcion"`
+	CodigoEmision   int    `json:"codigo_emision"`
+	CodigoDocSector int    `json:"codigo_documento_sector"`
+	CodigoTipoFact  int    `json:"codigo_tipo_factura"`
 }
 
 type FirmaInput struct {

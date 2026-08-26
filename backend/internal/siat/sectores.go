@@ -101,6 +101,11 @@ type CampoSector struct {
 	Metodo    string `json:"-"`
 	Tipo      string `json:"tipo"` // string | int | float | fecha | json
 	Requerido bool   `json:"requerido"`
+	// Etiqueta y Ejemplo alimentan formularios dinámicos de los clientes
+	// (GET /invoices/sectores). Opcional: la API humaniza la clave cuando
+	// Etiqueta está vacía.
+	Etiqueta string `json:"etiqueta,omitempty"`
+	Ejemplo  string `json:"ejemplo,omitempty"`
 }
 
 // SectorProfile describe cómo emitir un documento-sector del SIAT: metadatos

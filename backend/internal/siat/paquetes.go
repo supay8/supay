@@ -64,17 +64,17 @@ type SolicitudPaqueteFactura struct {
 // validacionRecepcionPaqueteFactura.
 type ResultadoPaquete struct {
 	Transaccion     bool      `json:"transaccion"`
-	CodigoEstado    int       `json:"codigoEstado"`
-	CodigoRecepcion string    `json:"codigoRecepcion,omitempty"`
+	CodigoEstado    int       `json:"codigo_estado"`
+	CodigoRecepcion string    `json:"codigo_recepcion,omitempty"`
 	Mensajes        []Mensaje `json:"mensajes,omitempty"`
 
 	// Archivo es la cadena Base64 del TAR.GZ del paquete tal como se envió
 	// (auditoría).
 	Archivo string `json:"archivo,omitempty"`
 	// HashArchivo es el hash SHA-256 del archivo comprimido del paquete.
-	HashArchivo string `json:"hashArchivo,omitempty"`
+	HashArchivo string `json:"hash_archivo,omitempty"`
 	// CantidadFacturas es el número de facturas empaquetadas y enviadas.
-	CantidadFacturas int `json:"cantidadFacturas"`
+	CantidadFacturas int `json:"cantidad_facturas"`
 	// Cufs contiene el CUF de cada factura del paquete, para poder consultar o
 	// anular individualmente cada documento después del envío.
 	Cufs []string `json:"cufs,omitempty"`

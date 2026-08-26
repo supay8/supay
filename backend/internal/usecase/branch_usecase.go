@@ -2,9 +2,10 @@ package usecase
 
 import (
 	"errors"
+	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"time"
+	"gorm.io/gorm"
 )
 
 type BranchUsecase struct {
@@ -32,16 +33,16 @@ type UpdateBranchRequest struct {
 
 func (uc *BranchUsecase) Create(req CreateBranchRequest) (*domain.Branch, error) {
 	if req.CompanyID == "" {
-		return nil, errors.New("company_id es obligatorio")
+		return nil, domain.NewBadRequestError("company_id es obligatorio")
 	}
 	if req.Name == "" {
-		return nil, errors.New("name es obligatorio")
+		return nil, domain.NewBadRequestError("name es obligatorio")
 	}
 	if req.CodigoSucursal < 0 {
-		return nil, errors.New("codigo_sucursal debe ser mayor o igual a 0")
+		return nil, domain.NewBadRequestError("codigo_sucursal debe ser mayor o igual a 0")
 	}
 	if _, err := uc.companyRepo.GetByID(req.CompanyID); err != nil {
-		return nil, errors.New("empresa no encontrada")
+		return nil, domain.NewNotFoundError("empresa no encontrada")
 	}
 	if existing, err := uc.repo.GetByCompanyAndSucursal(req.CompanyID, req.CodigoSucursal); err == nil && existing != nil {
 		return nil, domain.ErrBranchSucursalConflict
@@ -62,7 +63,14 @@ func (uc *BranchUsecase) Create(req CreateBranchRequest) (*domain.Branch, error)
 }
 
 func (uc *BranchUsecase) GetByID(id string) (*domain.Branch, error) {
-	return uc.repo.GetByID(id)
+	b, err := uc.repo.GetByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.NewNotFoundError("sucursal no encontrada")
+		}
+		return nil, err
+	}
+	return b, nil
 }
 
 func (uc *BranchUsecase) List(companyID string) ([]*domain.Branch, error) {
@@ -70,13 +78,13 @@ func (uc *BranchUsecase) List(companyID string) ([]*domain.Branch, error) {
 }
 
 func (uc *BranchUsecase) Update(req UpdateBranchRequest, id string) (*domain.Branch, error) {
-	b, err := uc.repo.GetByID(id)
+	b, err := uc.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
 	if req.CodigoSucursal != nil {
 		if *req.CodigoSucursal < 0 {
-			return nil, errors.New("codigo_sucursal debe ser mayor o igual a 0")
+			return nil, domain.NewBadRequestError("codigo_sucursal debe ser mayor o igual a 0")
 		}
 		b.CodigoSucursal = *req.CodigoSucursal
 	}
@@ -96,5 +104,8 @@ func (uc *BranchUsecase) Update(req UpdateBranchRequest, id string) (*domain.Bra
 }
 
 func (uc *BranchUsecase) Delete(id string) error {
+	if _, err := uc.GetByID(id); err != nil {
+		return err
+	}
 	return uc.repo.Delete(id)
 }

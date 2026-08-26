@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,11 +16,12 @@ import (
 // ---- Fakes ----
 
 type fakeInvoiceRepo struct {
-	invoices    map[string]*domain.Invoice
-	claimCalls  int
-	updateCalls int
-	updateErr   error
-	activeCufd  *domain.Cufd
+	invoices           map[string]*domain.Invoice
+	claimCalls         int
+	updateCalls        int
+	updateErr          error
+	activeCufd         *domain.Cufd
+	conflictingIdemKey string // simula violación del índice único al crear con esta key
 }
 
 func newFakeInvoiceRepo() *fakeInvoiceRepo {
@@ -27,6 +29,13 @@ func newFakeInvoiceRepo() *fakeInvoiceRepo {
 }
 
 func (f *fakeInvoiceRepo) Create(inv *domain.Invoice) error {
+	// Simula la ventana de race: otro request insertó primero esta clave.
+	if f.conflictingIdemKey != "" && inv.IdempotencyKey != nil && *inv.IdempotencyKey == f.conflictingIdemKey {
+		return errors.New("ERROR: duplicate key value violates unique constraint \"idx_invoice_idem_key\" (SQLSTATE 23505)")
+	}
+	if inv.ID == "" {
+		inv.ID = "inv-" + strconv.Itoa(len(f.invoices)+1)
+	}
 	f.invoices[inv.ID] = inv
 	return nil
 }
@@ -37,6 +46,29 @@ func (f *fakeInvoiceRepo) GetByID(id string) (*domain.Invoice, error) {
 		return nil, gorm.ErrRecordNotFound
 	}
 	return inv, nil
+}
+
+func (f *fakeInvoiceRepo) ListFiltered(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
+	out := make([]*domain.Invoice, 0)
+	for _, inv := range f.invoices {
+		if inv.PointOfSaleId != filter.PointOfSaleID {
+			continue
+		}
+		if filter.Status != nil && inv.Status != *filter.Status {
+			continue
+		}
+		out = append(out, inv)
+	}
+	total := int64(len(out))
+	if filter.Offset < len(out) {
+		out = out[filter.Offset:]
+	} else {
+		out = nil
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, total, nil
 }
 
 func (f *fakeInvoiceRepo) ListByPointOfSale(string) ([]*domain.Invoice, error) {
@@ -102,6 +134,15 @@ func (f *fakeInvoiceRepo) FindActiveCufdForPointOfSale(string, time.Time) (*doma
 	return f.activeCufd, nil
 }
 
+func (f *fakeInvoiceRepo) GetByIdempotencyKey(pointOfSaleID, key string) (*domain.Invoice, error) {
+	for _, inv := range f.invoices {
+		if inv.PointOfSaleId == pointOfSaleID && inv.IdempotencyKey != nil && *inv.IdempotencyKey == key {
+			return inv, nil
+		}
+	}
+	return nil, nil
+}
+
 type fakeCatalogRepo struct {
 	items map[string][]*domain.CatalogItem
 }
@@ -129,15 +170,50 @@ func (f *fakeCompanyRepo) Update(*domain.Company) error             { return nil
 func (f *fakeCompanyRepo) Delete(string) error                      { return nil }
 
 type fakeCustomerRepo struct {
-	customer domain.Customer
+	byID       map[string]*domain.Customer
+	byDocument map[string]*domain.Customer
+	created    []*domain.Customer
 }
 
-func (f *fakeCustomerRepo) Create(*domain.Customer) error { return nil }
-func (f *fakeCustomerRepo) GetByID(string) (*domain.Customer, error) {
-	return &f.customer, nil
+func newFakeCustomerRepo(customers ...domain.Customer) *fakeCustomerRepo {
+	f := &fakeCustomerRepo{
+		byID:       map[string]*domain.Customer{},
+		byDocument: map[string]*domain.Customer{},
+	}
+	for i := range customers {
+		c := &customers[i]
+		f.byID[c.ID] = c
+		f.byDocument[documentKey(c.DocumentType, c.DocumentNumber)] = c
+	}
+	return f
 }
-func (f *fakeCustomerRepo) GetByCompanyAndDocument(string, string, string) (*domain.Customer, error) {
-	return &f.customer, nil
+
+func documentKey(documentType, documentNumber string) string {
+	return documentType + "|" + documentNumber
+}
+
+func (f *fakeCustomerRepo) Create(c *domain.Customer) error {
+	if c.ID == "" {
+		c.ID = "cust-" + strconv.Itoa(len(f.created)+1)
+	}
+	f.created = append(f.created, c)
+	f.byID[c.ID] = c
+	f.byDocument[documentKey(c.DocumentType, c.DocumentNumber)] = c
+	return nil
+}
+func (f *fakeCustomerRepo) GetByID(id string) (*domain.Customer, error) {
+	c, ok := f.byID[id]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return c, nil
+}
+func (f *fakeCustomerRepo) GetByCompanyAndDocument(_, documentType, documentNumber string) (*domain.Customer, error) {
+	c, ok := f.byDocument[documentKey(documentType, documentNumber)]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return c, nil
 }
 func (f *fakeCustomerRepo) List(string) ([]*domain.Customer, error) { return nil, nil }
 
@@ -383,7 +459,7 @@ func TestBuildSolicitudFactura(t *testing.T) {
 	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
 	inv := testInvoice()
 
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura: %v", err)
 	}
@@ -442,7 +518,7 @@ func TestBuildSolicitudFacturaUsaSiatCode(t *testing.T) {
 	siatsCode := 7
 	inv.PointOfSale.SiatCode = &siatsCode
 
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura: %v", err)
 	}
@@ -456,7 +532,7 @@ func TestBuildSolicitudFacturaFaltaCuis(t *testing.T) {
 	inv := testInvoice()
 	inv.PointOfSale.Cuis = nil
 
-	if _, err := uc.buildSolicitudFactura(inv); err == nil {
+	if _, err := uc.buildSolicitudFactura(context.Background(), inv); err == nil {
 		t.Fatal("se esperaba error por CUIS ausente")
 	}
 }
@@ -466,7 +542,7 @@ func TestBuildSolicitudFacturaCufdVencido(t *testing.T) {
 	inv := testInvoice()
 	inv.CufdRecord.ValidTo = time.Now().Add(-time.Hour)
 
-	if _, err := uc.buildSolicitudFactura(inv); err == nil {
+	if _, err := uc.buildSolicitudFactura(context.Background(), inv); err == nil {
 		t.Fatal("se esperaba error por CUFD vencido")
 	}
 }
@@ -476,8 +552,8 @@ func TestBuildSolicitudFacturaSinCodigoProductoSin(t *testing.T) {
 	inv := testInvoice()
 	inv.Items[0].CodigoProductoSin = nil
 
-	if _, err := uc.buildSolicitudFactura(inv); err == nil || !strings.Contains(err.Error(), "codigoProductoSin") {
-		t.Fatalf("se esperaba error de codigoProductoSin, se obtuvo: %v", err)
+	if _, err := uc.buildSolicitudFactura(context.Background(), inv); err == nil || !strings.Contains(err.Error(), "codigo_producto_sin") {
+		t.Fatalf("se esperaba error de codigo_producto_sin, se obtuvo: %v", err)
 	}
 }
 
@@ -486,7 +562,7 @@ func TestBuildSolicitudFacturaTipoDocInvalido(t *testing.T) {
 	inv := testInvoice()
 	inv.Customer.DocumentType = "XYZ"
 
-	if _, err := uc.buildSolicitudFactura(inv); err == nil {
+	if _, err := uc.buildSolicitudFactura(context.Background(), inv); err == nil {
 		t.Fatal("se esperaba error por tipo de documento inválido")
 	}
 }
@@ -943,7 +1019,7 @@ func TestBuildSolicitudFacturaFSEDU(t *testing.T) {
 	inv.NombreEstudiante = &nombre
 	inv.PeriodoFacturado = &periodo
 
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura FSEDU: %v", err)
 	}
@@ -967,7 +1043,7 @@ func TestBuildSolicitudFacturaNoArrastraCamposEducativosFueraDeSector11(t *testi
 	inv.NombreEstudiante = &nombre
 	inv.PeriodoFacturado = &periodo
 
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura: %v", err)
 	}
@@ -1005,13 +1081,13 @@ func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
 		Cuis:             strPtr("D17EEF19"),
 		IsActive:         true,
 	}}
-	customerRepo := &fakeCustomerRepo{customer: domain.Customer{
+	customerRepo := newFakeCustomerRepo(domain.Customer{
 		ID:             "cust-1",
 		CompanyId:      "comp-1",
 		DocumentType:   "CI",
 		DocumentNumber: "1234567",
 		Name:           "Juan Perez",
-	}}
+	})
 	companyRepo := &fakeCompanyRepo{company: domain.Company{
 		ID:            "comp-1",
 		Nit:           "9971522011",
@@ -1039,7 +1115,7 @@ func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
 		}},
 	}
 
-	inv, err := uc.Create(req)
+	inv, err := uc.Create(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -1061,7 +1137,7 @@ func TestBuildSolicitudFacturaDireccionPadron(t *testing.T) {
 	inv := testInvoice()
 	inv.CufdRecord.Direccion = "URBANIZACION: LA FLORIDA, AVENIDA: AROMA, NRO.: 364"
 
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura: %v", err)
 	}
@@ -1085,7 +1161,7 @@ func TestBuildSolicitudFacturaUsaCufdMasReciente(t *testing.T) {
 	}}
 	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica)
 
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura: %v", err)
 	}
@@ -1108,11 +1184,359 @@ func TestBuildSolicitudFacturaCufdVencidoConVigente(t *testing.T) {
 	}}
 	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica)
 
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
 		t.Fatalf("buildSolicitudFactura con CUFD de factura vencido pero CUFD nuevo vigente: %v", err)
 	}
 	if req.Cufd != "CUFD-NUEVO" {
 		t.Errorf("Cufd=%q, se esperaba CUFD-NUEVO", req.Cufd)
+	}
+}
+
+// --- lazy credentials ---
+
+type fakeCredentialProvider struct {
+	cuisErr   error
+	cufd      *domain.Cufd
+	cufdErr   error
+	cuisCalls int
+	cufdCalls int
+}
+
+func (f *fakeCredentialProvider) EnsureCuis(_ context.Context, _ *domain.Company, pos *domain.PointOfSale) error {
+	f.cuisCalls++
+	if f.cuisErr != nil {
+		return f.cuisErr
+	}
+	cuis := "CUIS-LAZY"
+	pos.Cuis = &cuis
+	return nil
+}
+
+func (f *fakeCredentialProvider) EnsureCufd(_ context.Context, _ *domain.Company, _ *domain.PointOfSale) (*domain.Cufd, error) {
+	f.cufdCalls++
+	return f.cufd, f.cufdErr
+}
+
+func TestBuildSolicitudFacturaLazyCredenciales(t *testing.T) {
+	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
+	provider := &fakeCredentialProvider{
+		cufd: &domain.Cufd{ID: "cufd-lazy", Cufd: "CUFD-LAZY", ControlCode: "CTRL-LAZY", Active: true,
+			ValidFrom: time.Now().Add(-time.Minute), ValidTo: time.Now().Add(time.Hour),
+			Direccion: "AV. PADRON 123"},
+	}
+	uc.credentials = provider
+
+	inv := testInvoice()
+	inv.PointOfSale.Cuis = nil // sin cuis ni cufd vigente
+
+	req, err := uc.buildSolicitudFactura(context.Background(), inv)
+	if err != nil {
+		t.Fatalf("buildSolicitudFactura con credenciales lazy: %v", err)
+	}
+	if provider.cuisCalls != 1 || provider.cufdCalls != 1 {
+		t.Fatalf("llamadas cuis=%d cufd=%d, se esperaban 1 y 1", provider.cuisCalls, provider.cufdCalls)
+	}
+	if req.Cuis != "CUIS-LAZY" || req.Cufd != "CUFD-LAZY" || req.CodigoControl != "CTRL-LAZY" {
+		t.Fatalf("solicitud con credenciales lazy incorrectas: cuis=%s cufd=%s ctrl=%s", req.Cuis, req.Cufd, req.CodigoControl)
+	}
+}
+
+func TestBuildSolicitudFacturaSinProviderMantieneError(t *testing.T) {
+	uc := newTestUsecase(newFakeInvoiceRepo(), &fakeCatalogRepo{}, nil)
+	inv := testInvoice()
+	inv.PointOfSale.Cuis = nil
+
+	if _, err := uc.buildSolicitudFactura(context.Background(), inv); err == nil {
+		t.Fatal("sin provider de credenciales el cuis ausente debe seguir siendo error")
+	}
+}
+
+func TestListInvoices(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica)
+
+	aceptada := testInvoice()
+	aceptada.ID = "inv-ok"
+	aceptada.Status = domain.InvoiceAccepted
+	_ = repo.Create(aceptada)
+	pending := testInvoice()
+	pending.ID = "inv-pending"
+	pending.Status = domain.InvoicePending
+	_ = repo.Create(pending)
+
+	t.Run("sin filtro de estado devuelve todo", func(t *testing.T) {
+		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1"})
+		if err != nil || total != 2 || len(list) != 2 {
+			t.Fatalf("list=%d total=%d err=%v", len(list), total, err)
+		}
+	})
+
+	t.Run("filtra por estado", func(t *testing.T) {
+		status := domain.InvoiceAccepted
+		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1", Status: &status})
+		if err != nil || total != 1 || len(list) != 1 || list[0].ID != "inv-ok" {
+			t.Fatalf("list=%d total=%d err=%v", len(list), total, err)
+		}
+	})
+
+	t.Run("point_of_sale_id obligatorio", func(t *testing.T) {
+		if _, _, err := uc.ListInvoices(domain.InvoiceListFilter{}); err == nil {
+			t.Fatal("se esperaba error de validación")
+		}
+	})
+
+	t.Run("estado inválido rechazado", func(t *testing.T) {
+		status := domain.InvoiceStatus("NO_EXISTE")
+		if _, _, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1", Status: &status}); err == nil {
+			t.Fatal("se esperaba error por estado inválido")
+		}
+	})
+
+	t.Run("paginación respeta limit/offset", func(t *testing.T) {
+		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1", Limit: 1, Offset: 1})
+		if err != nil || total != 2 || len(list) != 1 {
+			t.Fatalf("list=%d total=%d err=%v", len(list), total, err)
+		}
+	})
+}
+
+// createTestUsecaseBuilder arma un InvoiceUsecase listo para tests de Create.
+func createTestUsecaseBuilder() (*InvoiceUsecase, *fakeInvoiceRepo, *fakeCustomerRepo, *fakeProductRepository) {
+	repo := newFakeInvoiceRepo()
+	repo.activeCufd = &domain.Cufd{
+		ID:          "cufd-1",
+		Cufd:        "CUFD-XYZ",
+		ControlCode: "CC-123",
+		ValidFrom:   time.Now().Add(-time.Hour),
+		ValidTo:     time.Now().Add(time.Hour),
+		Active:      true,
+	}
+	posRepo := &fakePointOfSaleRepo{pos: domain.PointOfSale{
+		ID:               "pos-1",
+		CompanyId:        "comp-1",
+		CodigoSucursal:   0,
+		CodigoPuntoVenta: 3,
+		Cuis:             strPtr("D17EEF19"),
+		IsActive:         true,
+	}}
+	customerRepo := newFakeCustomerRepo(domain.Customer{
+		ID:             "cust-1",
+		CompanyId:      "comp-1",
+		DocumentType:   "CI",
+		DocumentNumber: "1234567",
+		Name:           "Juan Perez",
+	})
+	companyRepo := &fakeCompanyRepo{company: domain.Company{
+		ID:              "comp-1",
+		Nit:             "9971522011",
+		BusinessName:    "EMPRESA PILOTO SRL",
+		CodigoSistema:   "228452C38ED8739408AB6",
+		Ambiente:        domain.EnvironmentPiloto,
+		Municipio:       "LA PAZ",
+		Direccion:       "AV. CAMACHO 123",
+		CodigoActividad: strPtr("101010"),
+	}}
+	productRepo := &fakeProductRepository{product: &domain.Product{
+		ID: "product-1", SKU: "SKU-001", Name: "Producto de prueba mapeado", Active: true,
+		Mappings: []domain.ProductMapping{{
+			ProductID: "product-1", CodigoProductoSin: 5113100, CodigoActividad: "101010",
+			CodigoDocumentoSector: siat.SectorCompraVenta, UnidadMedida: 58, Active: true, SyncedAt: time.Now(),
+		}},
+	}}
+	docSectorRepo := &fakeDocSectorRepo{items: []*domain.SiatActividadDocSector{
+		{CodigoActividad: "101010", CodigoDocumentoSector: siat.SectorCompraVenta, TipoDocumentoSector: "FCV"},
+	}}
+	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica, docSectorRepo)
+	uc.productRepo = productRepo
+	return uc, repo, customerRepo, productRepo
+}
+
+func TestCreateCustomerInline(t *testing.T) {
+	uc, _, customerRepo, _ := createTestUsecaseBuilder()
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId: "pos-1",
+		Customer: &CreateInvoiceInlineCustomer{
+			DocumentType:   "nit",
+			DocumentNumber: "123456789",
+			Name:           "CLIENTE NUEVO",
+		},
+		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+
+	inv, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inv.CustomerId == "" {
+		t.Fatal("CustomerId no asignado")
+	}
+	if len(customerRepo.created) != 1 {
+		t.Fatalf("clientes creados=%d, se esperaba 1", len(customerRepo.created))
+	}
+	if customerRepo.created[0].Name != "CLIENTE NUEVO" {
+		t.Errorf("nombre=%q", customerRepo.created[0].Name)
+	}
+}
+
+func TestCreateReusaCustomerInline(t *testing.T) {
+	uc, _, customerRepo, _ := createTestUsecaseBuilder()
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId: "pos-1",
+		Customer: &CreateInvoiceInlineCustomer{
+			DocumentType:   "CI",
+			DocumentNumber: "1234567",
+			Name:           "OTRO NOMBRE",
+		},
+		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+
+	inv, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inv.CustomerId != "cust-1" {
+		t.Errorf("CustomerId=%q, se esperaba reusar cust-1", inv.CustomerId)
+	}
+	if len(customerRepo.created) != 0 {
+		t.Fatalf("no debió crear cliente; creados=%d", len(customerRepo.created))
+	}
+}
+
+func TestCreateCompanyDerivadoDePOS(t *testing.T) {
+	uc, _, _, _ := createTestUsecaseBuilder()
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId: "pos-1",
+		CustomerId:    "cust-1",
+		Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+
+	inv, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inv.CompanyId != "comp-1" {
+		t.Errorf("CompanyId=%q, se esperaba comp-1 derivado del POS", inv.CompanyId)
+	}
+}
+
+func TestCreateDescriptionDefaultDesdeProducto(t *testing.T) {
+	uc, _, _, _ := createTestUsecaseBuilder()
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId: "pos-1",
+		CustomerId:    "cust-1",
+		Items:         []CreateInvoiceItemRequest{{SKU: "SKU-001", Quantity: 1, UnitPrice: 100}},
+	}
+
+	inv, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(inv.Items) != 1 || inv.Items[0].Description != "Producto de prueba mapeado" {
+		t.Fatalf("descripción=%q, se esperaba default del producto", inv.Items[0].Description)
+	}
+	if inv.Items[0].Code != "SKU-001" {
+		t.Errorf("código=%q, se esperaba SKU-001", inv.Items[0].Code)
+	}
+}
+
+func TestCreateIdempotencia(t *testing.T) {
+	uc, repo, _, _ := createTestUsecaseBuilder()
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId:    "pos-1",
+		CustomerId:       "cust-1",
+		IdempotencyKey:   "orden-42",
+		CodigoMetodoPago: 1,
+		Items:            []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+
+	inv1, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create #1: %v", err)
+	}
+
+	// Segunda llamada con la misma clave debe devolver la misma factura sin crear otra.
+	inv2, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create #2: %v", err)
+	}
+	if inv1.ID != inv2.ID {
+		t.Errorf("ids distintos: %s vs %s", inv1.ID, inv2.ID)
+	}
+	if len(repo.invoices) != 1 {
+		t.Errorf("facturas persistidas=%d, se esperaba 1", len(repo.invoices))
+	}
+
+	// Clave distinta crea otra factura.
+	req.IdempotencyKey = "orden-43"
+	inv3, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create #3: %v", err)
+	}
+	if inv3.ID == inv1.ID {
+		t.Error("claves distintas no deben devolver la misma factura")
+	}
+}
+
+func TestCreateRaceIdempotencia(t *testing.T) {
+	uc, repo, _, _ := createTestUsecaseBuilder()
+	// Simula que otro request ganó la carrera e insertó la clave primero.
+	repo.conflictingIdemKey = "orden-race"
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId:  "pos-1",
+		CustomerId:     "cust-1",
+		IdempotencyKey: "orden-race",
+		Items:          []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+	ganadora := &domain.Invoice{
+		ID:             "inv-ganador",
+		CompanyId:      "comp-1",
+		CustomerId:     "cust-1",
+		PointOfSaleId:  "pos-1",
+		Status:         domain.InvoicePending,
+		IdempotencyKey: strPtr("orden-race"),
+	}
+	repo.invoices["inv-ganador"] = ganadora
+
+	got, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create con conflicto de idempotencia: %v", err)
+	}
+	if got.ID != "inv-ganador" {
+		t.Errorf("id=%q, se esperaba el replay de inv-ganador", got.ID)
+	}
+
+	// Con conflicto de clave pero sin factura existente que re-leer
+	// (p.ej. la fila ganadora aún no visible), el error debe propagarse.
+	req.IdempotencyKey = "orden-huerfana"
+	repo.conflictingIdemKey = "orden-huerfana"
+	if _, err := uc.Create(context.Background(), req); err == nil {
+		t.Fatal("conflicto sin factura existente debe propagar el error")
+	}
+}
+
+func TestCreateIgnoresEmitFlag(t *testing.T) {
+	uc, _, _, _ := createTestUsecaseBuilder()
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId: "pos-1",
+		CustomerId:    "cust-1",
+		Emit:          true,
+		Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+
+	// El flag Emit es responsabilidad del handler; el usecase Create solo crea.
+	inv, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inv.Status != domain.InvoicePending {
+		t.Errorf("status=%s, se esperaba PENDING (Emit no afecta Create)", inv.Status)
 	}
 }

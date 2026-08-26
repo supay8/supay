@@ -44,8 +44,8 @@ type SolicitudCompras struct {
 // ResultadoCompras es la respuesta normalizada de recepcionPaqueteCompras.
 type ResultadoCompras struct {
 	Transaccion     bool      `json:"transaccion"`
-	CodigoEstado    int       `json:"codigoEstado"`
-	CodigoRecepcion string    `json:"codigoRecepcion"`
+	CodigoEstado    int       `json:"codigo_estado"`
+	CodigoRecepcion string    `json:"codigo_recepcion"`
 	Mensajes        []Mensaje `json:"mensajes,omitempty"`
 }
 

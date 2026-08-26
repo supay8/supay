@@ -39,7 +39,7 @@ type SolicitudEventoSignificativo struct {
 // registroEventoSignificativo (RespuestaListaEventos del SIAT).
 type ResultadoEventoSignificativo struct {
 	Transaccion     bool      `json:"transaccion"`
-	CodigoRecepcion string    `json:"codigoRecepcion,omitempty"`
+	CodigoRecepcion string    `json:"codigo_recepcion,omitempty"`
 	Mensajes        []Mensaje `json:"mensajes,omitempty"`
 }
 

@@ -88,7 +88,14 @@ func main() {
 	if siatService != nil {
 		emissionService = siatService
 	}
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo)
+	// Credenciales lazy: la emisión solicita CUIS/CUFD on-demand en lugar de
+	// exigir el alta manual explícita.
+	var credentialClient usecase.SiatCredentialClient
+	if siatService != nil {
+		credentialClient = siatService
+	}
+	credentialService := usecase.NewCredentialService(posRepo, cufdRepo, credentialClient, appCfg.SiatModalidad)
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo, credentialService)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
 	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo)

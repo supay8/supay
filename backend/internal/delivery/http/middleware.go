@@ -14,9 +14,10 @@ func RequireAPIKey(apiKey string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			provided := r.Header.Get(apiKeyHeader)
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(apiKey)) != 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"error":"no autorizado: falta o es inválido el header X-API-Key"}`))
+				writeErrorBody(w, http.StatusUnauthorized, errorBody{
+					Code:    codeUnauthorized,
+					Message: "no autorizado: falta o es inválido el header X-API-Key",
+				})
 				return
 			}
 			next.ServeHTTP(w, r)

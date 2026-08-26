@@ -45,6 +45,8 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 			r.Use(RequireAPIKey(apiKey))
 		}
 
+		r.Post("/setup", h.Siat.Setup)
+
 		r.Route("/companies", func(r chi.Router) {
 			r.Post("/", h.Company.Create)
 			r.Get("/", h.Company.GetByNit)
@@ -52,7 +54,7 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 			r.Delete("/{id}", h.Company.Delete)
 		})
 
-		r.Route("/point-of-sale", func(r chi.Router) {
+		r.Route("/point-of-sales", func(r chi.Router) {
 			r.Post("/", h.Pos.Create)
 			r.Get("/", h.Pos.List)
 			r.Get("/{id}", h.Pos.GetByID)
@@ -104,9 +106,11 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 
 		r.Route("/invoices", func(r chi.Router) {
 			r.Post("/", h.Invoice.Create)
-			r.Get("/", h.Invoice.ListByPointOfSale)
+			r.Get("/", h.Invoice.List)
 			r.Get("/sectores", h.Invoice.Sectores)
 			r.Get("/{id}", h.Invoice.GetByID)
+			r.Get("/{id}/xml", h.Invoice.DownloadXML)
+			r.Get("/{id}/pdf", h.Siat.DownloadPDF)
 			r.Post("/{id}/emit", h.Invoice.Emit)
 			r.Get("/{id}/siat-status", h.Invoice.SiatStatus)
 			r.Post("/{id}/annul", h.Invoice.Annul)

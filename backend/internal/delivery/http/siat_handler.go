@@ -15,7 +15,6 @@ import (
 	"github.com/brandsrx/supay/internal/siat"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
-	goSiat "github.com/ron86i/go-siat/v2"
 	"gorm.io/gorm"
 )
 
@@ -66,7 +65,7 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 	var body usecase.EventoSignificativoInput
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-			writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+			respondValidation(w, "payload JSON inválido")
 			return
 		}
 	}
@@ -184,6 +183,33 @@ func (h *SiatHandler) FirmarFactura(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type setupRequest struct {
+	CompanyID     string `json:"company_id"`
+	PointOfSaleID string `json:"point_of_sale_id"`
+}
+
+// Setup orquesta el alta de un punto de venta en una llamada: CUIS (lazy),
+// sincronización de catálogos, CUFD (lazy) y readiness. Idempotente.
+func (h *SiatHandler) Setup(w http.ResponseWriter, r *http.Request) {
+	var body setupRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			respondValidation(w, "payload JSON inválido")
+			return
+		}
+	}
+	if body.CompanyID == "" || body.PointOfSaleID == "" {
+		respondValidation(w, "company_id y point_of_sale_id son obligatorios")
+		return
+	}
+	res, err := h.siatUC.Setup(r.Context(), body.CompanyID, body.PointOfSaleID)
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 func (h *SiatHandler) Sincronizar(w http.ResponseWriter, r *http.Request) {
 	res, err := h.siatUC.Sincronizar(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), r.URL.Query().Get("operation"))
 	if err != nil {
@@ -201,7 +227,7 @@ func (h *SiatHandler) Sincronizar(w http.ResponseWriter, r *http.Request) {
 func (h *SiatHandler) ListSinProducts(w http.ResponseWriter, r *http.Request) {
 	limit := parseQueryInt(r.URL.Query().Get("limit"), 50)
 	offset := parseQueryInt(r.URL.Query().Get("offset"), 0)
-	items, total, err := h.siatUC.ListSinProducts(r.URL.Query().Get("companyId"), r.URL.Query().Get("query"), limit, offset)
+	items, total, err := h.siatUC.ListSinProducts(r.URL.Query().Get("company_id"), r.URL.Query().Get("query"), limit, offset)
 	if err != nil {
 		respondError(w, err)
 		return
@@ -210,7 +236,7 @@ func (h *SiatHandler) ListSinProducts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SiatHandler) CatalogReadiness(w http.ResponseWriter, r *http.Request) {
-	readiness, err := h.siatUC.CatalogReadiness(r.URL.Query().Get("companyId"), r.URL.Query().Get("pointOfSaleId"))
+	readiness, err := h.siatUC.CatalogReadiness(r.URL.Query().Get("company_id"), r.URL.Query().Get("point_of_sale_id"))
 	if err != nil {
 		respondError(w, err)
 		return
@@ -259,16 +285,10 @@ func (h *SiatHandler) decodeBody(w http.ResponseWriter, r *http.Request, out any
 		return true
 	}
 	if err := json.NewDecoder(r.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
-		writeJSONError(w, http.StatusBadRequest, "payload JSON inválido")
+		respondValidation(w, "payload JSON inválido")
 		return false
 	}
 	return true
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func parseQueryInt(raw string, fallback int) int {
@@ -281,23 +301,26 @@ func parseQueryInt(raw string, fallback int) int {
 // DownloadPDF genera y descarga el PDF de la factura indicada.
 func (h *SiatHandler) DownloadPDF(w http.ResponseWriter, r *http.Request) {
 	if h.pdfService == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "Servicio de PDF no inicializado")
+		writeErrorBody(w, http.StatusServiceUnavailable, errorBody{Code: codeInternal, Message: "servicio de PDF no inicializado"})
 		return
 	}
-	invoiceID := chi.URLParam(r, "invoiceId")
+	invoiceID := chi.URLParam(r, "id")
 	if invoiceID == "" {
-		writeJSONError(w, http.StatusBadRequest, "invoiceId es obligatorio")
+		invoiceID = chi.URLParam(r, "invoiceId")
+	}
+	if invoiceID == "" {
+		respondValidation(w, "id es obligatorio")
 		return
 	}
 
 	data, err := h.pdfService.GenerateInvoicePDF(invoiceID)
 	if err != nil {
 		if strings.Contains(err.Error(), "no encontrada") || errors.Is(err, gorm.ErrRecordNotFound) {
-			writeJSONError(w, http.StatusNotFound, "factura no encontrada")
+			respondNotFound(w, "factura no encontrada")
 			return
 		}
 		slog.Error("no se pudo generar el PDF", "invoice_id", invoiceID, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "error interno al generar el PDF")
+		writeErrorBody(w, http.StatusInternalServerError, errorBody{Code: codeInternal, Message: "error interno al generar el PDF"})
 		return
 	}
 
@@ -305,28 +328,4 @@ func (h *SiatHandler) DownloadPDF(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"factura-%s.pdf\"", invoiceID))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
-}
-
-func errToStatus(err error) int {
-	var br *domain.BadRequestError
-	var nf *domain.NotFoundError
-	var cf *domain.ConflictError
-	var siatErr *goSiat.SiatError
-	switch {
-	case errors.Is(err, usecase.ErrSiatNoDisponible):
-		return http.StatusServiceUnavailable
-	case errors.As(err, &br):
-		return http.StatusBadRequest
-	case errors.As(err, &nf):
-		return http.StatusNotFound
-	case errors.As(err, &cf):
-		return http.StatusConflict
-	case errors.As(err, &siatErr):
-		if goSiat.IsNetworkError(err) || goSiat.IsRetryable(err) {
-			return http.StatusServiceUnavailable
-		}
-		return http.StatusBadGateway
-	default:
-		return http.StatusInternalServerError
-	}
 }

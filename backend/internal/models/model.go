@@ -317,7 +317,8 @@ type Invoice struct {
 	ID                    string         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	CompanyId             string         `gorm:"type:uuid;not null"`
 	CustomerId            string         `gorm:"type:uuid;not null"`
-	PointOfSaleId         string         `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;not null"`
+	PointOfSaleId         string         `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;uniqueIndex:idx_invoice_idem_key,priority:1;not null"`
+	IdempotencyKey        *string        `gorm:"type:varchar(100);uniqueIndex:idx_invoice_idem_key,priority:2"`
 	CufdId                string         `gorm:"type:uuid;not null"`
 	ContingencyEventId    *string        `gorm:"type:uuid"`
 	InvoiceNumber         int            `gorm:"uniqueIndex:idx_pos_invoice_num,priority:2;not null"`
@@ -370,10 +371,10 @@ type InvoiceItem struct {
 	CodigoActividad   *string `gorm:"type:varchar(20)"`
 	CodigoProductoSin *string `gorm:"type:varchar(20)"`
 	UnitCode          *int
-	Quantity          float64 `gorm:"type:decimal(18,3);not null"`
-	UnitPrice         float64 `gorm:"type:decimal(18,2);not null"`
-	Discount          float64 `gorm:"type:decimal(18,2);default:0;not null"`
-	Subtotal          float64 `gorm:"type:decimal(18,2);not null"`
+	Quantity          float64        `gorm:"type:decimal(18,3);not null"`
+	UnitPrice         float64        `gorm:"type:decimal(18,2);not null"`
+	Discount          float64        `gorm:"type:decimal(18,2);default:0;not null"`
+	Subtotal          float64        `gorm:"type:decimal(18,2);not null"`
 	SectorData        datatypes.JSON `gorm:"type:jsonb"`
 
 	Invoice Invoice `gorm:"foreignKey:InvoiceId"`

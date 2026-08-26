@@ -138,6 +138,12 @@ func ConnectDB() {
 		log.Fatalf("❌ Error al crear el índice único idx_pos_invoice_num: %v", err)
 	}
 
+	// invoices: unique (point_of_sale_id, idempotency_key). Protege contra
+	// duplicados por retries del cliente con el mismo Idempotency-Key.
+	if err := DB.Migrator().CreateIndex(&models.Invoice{}, "idx_invoice_idem_key"); err != nil {
+		log.Fatalf("❌ Error al crear el índice único idx_invoice_idem_key: %v", err)
+	}
+
 	fmt.Println("✨ ¡Tablas migradas y listas en PostgreSQL!")
 }
 

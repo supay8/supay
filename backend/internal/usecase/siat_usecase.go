@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -35,9 +36,10 @@ type SiatUsecase struct {
 	actividadRepo   domain.SiatActividadRepository
 	leyendaRepo     domain.SiatLeyendaRepository
 	docSectorRepo   domain.SiatActividadDocSectorRepository
-	siatService     *siat.Service
-	credentials     *CredentialService
-	modalidad       int
+
+	siatService *siat.Service
+	credentials *CredentialService
+	modalidad   int
 }
 
 func NewSiatUsecase(
@@ -136,9 +138,8 @@ func (uc *SiatUsecase) effectiveModalidad() int {
 // --- CUIS / CUFD ---
 
 type CuisResultado struct {
-	Company     *domain.Company
-	PointOfSale *domain.PointOfSale
-	Response    *siat.RespuestaCuis
+	Success bool `json:"success"`
+	Data    *siat.RespuestaCuis
 }
 
 // SolicitarCUIS fuerza la obtención de un CUIS nuevo (endpoint explícito).
@@ -154,7 +155,7 @@ func (uc *SiatUsecase) SolicitarCUIS(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	return &CuisResultado{Company: company, PointOfSale: pointOfSale, Response: resp}, nil
+	return &CuisResultado{Success: resp.Transaccion, Data: resp}, nil
 }
 
 type CufdResultado struct {
@@ -303,7 +304,8 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 		FechaHoraInicioEvento: inicio,
 		FechaHoraFinEvento:    fin,
 	}
-
+	log.Println("req....")
+	log.Println(req)
 	result, err := uc.siatService.RegistrarEventoSignificativo(ctx, req)
 	if err != nil {
 		return nil, err
@@ -810,7 +812,6 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
 		return out, nil
 	}
-
 	for _, op := range siat.SincronizacionOperations {
 		result, err := uc.siatService.Sincronizar(ctx, req, op)
 		if err != nil {
@@ -823,6 +824,7 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 		}
 		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
 	}
+
 	return out, nil
 }
 
@@ -1067,10 +1069,48 @@ func (uc *SiatUsecase) CatalogReadiness(companyID, pointOfSaleID string) (*domai
 }
 
 func (uc *SiatUsecase) ListSinProducts(companyID, query string, limit, offset int) ([]*domain.SinProduct, int64, error) {
-	if uc.sinProductRepo == nil {
-		return nil, 0, errors.New("repositorio de productos SIN no configurado")
+	res, err := uc.ListProductosSinQuery(companyID, query, 0, limit, offset)
+	if err != nil {
+		return nil, 0, err
 	}
-	return uc.sinProductRepo.List(companyID, query, limit, offset)
+	return res.Items, res.Total, nil
+}
+
+// ListActivitesDocumentSectors mantiene el contrato legado (paginado en memoria).
+func (uc *SiatUsecase) ListActivitesDocumentSectors(companyID, query string, limit, offset int) ([]*domain.SiatActividadDocSector, int64, error) {
+	if uc.docSectorRepo == nil {
+		return nil, 0, errors.New("repositorio actividadesDocumentoSector no configurado")
+	}
+	items, err := uc.docSectorRepo.List(companyID)
+	if err != nil {
+		return nil, 0, err
+	}
+	term := strings.TrimSpace(strings.ToLower(query))
+	if term != "" {
+		filtered := make([]*domain.SiatActividadDocSector, 0, len(items))
+		for _, it := range items {
+			haystack := strings.ToLower(it.CodigoActividad + " " + it.TipoDocumentoSector + " " + strconv.Itoa(it.CodigoDocumentoSector))
+			if strings.Contains(haystack, term) {
+				filtered = append(filtered, it)
+			}
+		}
+		items = filtered
+	}
+	total := int64(len(items))
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(items) {
+		return []*domain.SiatActividadDocSector{}, total, nil
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end], total, nil
 }
 
 // --- Lectura de catálogos sincronizados ---

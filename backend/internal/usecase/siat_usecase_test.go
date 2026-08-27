@@ -88,12 +88,15 @@ func (r *recordingSinProductRepo) Replace(_ string, products []domain.SinProduct
 	return nil
 }
 
-func (r *recordingSinProductRepo) List(string, string, int, int) ([]*domain.SinProduct, int64, error) {
+func (r *recordingSinProductRepo) List(_ string, _ string, codigoActividad int64, _, _ int) ([]*domain.SinProduct, int64, error) {
 	out := make([]*domain.SinProduct, 0, len(r.items))
 	for i := range r.items {
+		if codigoActividad > 0 && r.items[i].CodigoActividad != codigoActividad {
+			continue
+		}
 		out = append(out, &r.items[i])
 	}
-	return out, int64(len(r.items)), nil
+	return out, int64(len(out)), nil
 }
 
 func (r *recordingSinProductRepo) ListAll(string) ([]*domain.SinProduct, error) {

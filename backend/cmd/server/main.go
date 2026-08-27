@@ -100,6 +100,7 @@ func main() {
 
 	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo)
 	siatHandler := deliveryHttp.NewSiatHandler(siatUsecase, pdf.NewService(database.DB))
+	catalogHandler := deliveryHttp.NewCatalogHandler(siatUsecase)
 
 	// 4. Router
 	router := deliveryHttp.NewRouter(deliveryHttp.Handlers{
@@ -110,6 +111,7 @@ func main() {
 		Product:  productHandler,
 		Invoice:  invoiceHandler,
 		Siat:     siatHandler,
+		Catalog:  catalogHandler,
 	}, appCfg.APIKey)
 
 	srv := &http.Server{

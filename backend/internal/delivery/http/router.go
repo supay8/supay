@@ -21,6 +21,7 @@ type Handlers struct {
 	Product  *ProductHandler
 	Invoice  *InvoiceHandler
 	Siat     *SiatHandler
+	Catalog  *CatalogHandler
 }
 
 // NewRouter construye el router de Chi con todas las rutas de la API.
@@ -52,6 +53,19 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 			r.Get("/", h.Company.GetByNit)
 			r.Patch("/{id}", h.Company.Update)
 			r.Delete("/{id}", h.Company.Delete)
+
+			if h.Catalog != nil {
+				r.Get("/{id}/actividades-economicas", h.Catalog.ListCompanyActividadesEconomicas)
+				r.Route("/{id}/catalogs", func(r chi.Router) {
+					r.Get("/readiness", h.Catalog.Readiness)
+					r.Get("/actividades-economicas", h.Catalog.ListActividadesEconomicas)
+					r.Get("/documentos-sector", h.Catalog.ListDocumentosSector)
+					r.Get("/leyendas-factura", h.Catalog.ListLeyendasFactura)
+					r.Get("/productos-sin", h.Catalog.ListProductosSin)
+					r.Get("/emision-bootstrap", h.Catalog.EmisionBootstrap)
+					r.Get("/{catalogSlug}", h.Catalog.ListParametric)
+				})
+			}
 		})
 
 		r.Route("/point-of-sales", func(r chi.Router) {
@@ -86,6 +100,12 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 		})
 
 		r.Route("/catalogs", func(r chi.Router) {
+			if h.Catalog != nil {
+				r.Get("/perfiles-documento-sector", h.Catalog.ListPerfilesDocumentoSector)
+				r.Get("/perfiles-documento-sector/{codigo}", h.Catalog.GetPerfilDocumentoSector)
+			}
+			// Rutas legadas (compatibilidad). Preferir /companies/{id}/catalogs/...
+			r.Get("/activites-document-sectors", h.Siat.ListActivitesDocumentSectors)
 			r.Get("/products", h.Siat.ListSinProducts)
 			r.Get("/readiness", h.Siat.CatalogReadiness)
 			r.Get("/{companyId}", h.Siat.GetCatalog)

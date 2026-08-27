@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/pdf"
-	"github.com/brandsrx/supay/internal/siat"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
@@ -30,9 +29,9 @@ func NewSiatHandler(siatUC *usecase.SiatUsecase, pdfService *pdf.Service) *SiatH
 }
 
 type siatCuisResponse struct {
-	Company     *domain.Company     `json:"company"`
-	PointOfSale *domain.PointOfSale `json:"point_of_sale"`
-	Response    *siat.RespuestaCuis `json:"response"`
+	Success       bool   `json:"success"`
+	Cuis          string `json:"cuis"`
+	FechaVigencia string `json:"fecha_vigencia"`
 }
 
 func (h *SiatHandler) SolicitarCUIS(w http.ResponseWriter, r *http.Request) {
@@ -42,9 +41,9 @@ func (h *SiatHandler) SolicitarCUIS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, siatCuisResponse{
-		Company:     res.Company,
-		PointOfSale: res.PointOfSale,
-		Response:    res.Response,
+		Success:       res.Success,
+		Cuis:          res.Data.Codigo,
+		FechaVigencia: res.Data.FechaVigencia.String(),
 	})
 }
 
@@ -55,9 +54,12 @@ func (h *SiatHandler) SolicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"company":       res.Company,
-		"point_of_sale": res.PointOfSale,
-		"response":      res.Response,
+		"success": res.Response.Transaccion,
+		"data": map[string]any{
+			"cufd":           res.Response.Codigo,
+			"fecha_vigencia": res.Response.FechaVigencia.Time.Format("2006-01-02 15:04:05"),
+			"codigo_control": res.Response.CodigoControl,
+		},
 	})
 }
 
@@ -75,9 +77,8 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"company":       res.Company,
-		"point_of_sale": res.PointOfSale,
-		"response":      res.Response,
+		"success":          true,
+		"codigo_recepcion": res.Response.CodigoRecepcion,
 	})
 }
 
@@ -211,23 +212,38 @@ func (h *SiatHandler) Setup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SiatHandler) Sincronizar(w http.ResponseWriter, r *http.Request) {
-	res, err := h.siatUC.Sincronizar(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), r.URL.Query().Get("operation"))
-	if err != nil {
+	companyID := chi.URLParam(r, "companyId")
+	posID := chi.URLParam(r, "pointOfSaleId")
+	res, err := h.siatUC.Sincronizar(r.Context(), companyID, posID, r.URL.Query().Get("operation"))
+	if err != nil && res == nil {
 		respondError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"company":       res.Company,
-		"point_of_sale": res.PointOfSale,
-		"operations":    res.Operations,
-		"errors":        res.Errors,
-	})
+	if err != nil {
+		log.Println("error en sincronizacion:", err)
+	}
+	resumen := h.siatUC.BuildSincronizacionResumen(companyID, posID, res)
+	status := http.StatusOK
+	if !resumen.Success && err != nil {
+		status = http.StatusForbidden
+	}
+	writeJSON(w, status, resumen)
 }
 
 func (h *SiatHandler) ListSinProducts(w http.ResponseWriter, r *http.Request) {
 	limit := parseQueryInt(r.URL.Query().Get("limit"), 50)
 	offset := parseQueryInt(r.URL.Query().Get("offset"), 0)
 	items, total, err := h.siatUC.ListSinProducts(r.URL.Query().Get("company_id"), r.URL.Query().Get("query"), limit, offset)
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit, "offset": offset, "total": total})
+}
+func (h *SiatHandler) ListActivitesDocumentSectors(w http.ResponseWriter, r *http.Request) {
+	limit := parseQueryInt(r.URL.Query().Get("limit"), 50)
+	offset := parseQueryInt(r.URL.Query().Get("offset"), 0)
+	items, total, err := h.siatUC.ListActivitesDocumentSectors(r.URL.Query().Get("company_id"), r.URL.Query().Get("query"), limit, offset)
 	if err != nil {
 		respondError(w, err)
 		return

@@ -48,7 +48,7 @@ func (r *PostgresSinProductRepository) Replace(companyID string, products []doma
 	})
 }
 
-func (r *PostgresSinProductRepository) List(companyID, query string, limit, offset int) ([]*domain.SinProduct, int64, error) {
+func (r *PostgresSinProductRepository) List(companyID, query string, codigoActividad int64, limit, offset int) ([]*domain.SinProduct, int64, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -56,6 +56,9 @@ func (r *PostgresSinProductRepository) List(companyID, query string, limit, offs
 		offset = 0
 	}
 	base := r.db.Model(&models.SinProduct{}).Where("company_id = ? AND active = true", companyID)
+	if codigoActividad > 0 {
+		base = base.Where("codigo_actividad = ?", codigoActividad)
+	}
 	term := strings.TrimSpace(query)
 	if term != "" {
 		base = base.Where("CAST(codigo_producto_sin AS TEXT) ILIKE ? OR descripcion ILIKE ?", "%"+term+"%", "%"+term+"%")

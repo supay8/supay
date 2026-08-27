@@ -16,7 +16,8 @@ type SinProduct struct {
 
 type SinProductRepository interface {
 	Replace(companyID string, products []SinProduct, syncedAt time.Time) error
-	List(companyID, query string, limit, offset int) ([]*SinProduct, int64, error)
+	// List pagina productos activos. codigoActividad=0 no filtra por actividad.
+	List(companyID, query string, codigoActividad int64, limit, offset int) ([]*SinProduct, int64, error)
 	ListAll(companyID string) ([]*SinProduct, error)
 	GetByCode(companyID string, code int64) (*SinProduct, error)
 }

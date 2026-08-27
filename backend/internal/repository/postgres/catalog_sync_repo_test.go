@@ -62,7 +62,7 @@ func TestSinProductReplaceDeduplica(t *testing.T) {
 	if err := repo.Replace(cid, productos, now); err != nil {
 		t.Fatalf("replace con duplicados: %v", err)
 	}
-	items, total, err := repo.List(cid, "", 50, 0)
+	items, total, err := repo.List(cid, "", 0, 50, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestSinProductReplaceDeduplica(t *testing.T) {
 	if err := repo.Replace(cid, productos[:1], now); err != nil {
 		t.Fatalf("replace final: %v", err)
 	}
-	if _, total, _ = repo.List(cid, "", 50, 0); total != 1 {
+	if _, total, _ = repo.List(cid, "", 0, 50, 0); total != 1 {
 		t.Errorf("tras el replace debería haber 1 producto, hay %d", total)
 	}
 }

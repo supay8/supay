@@ -274,7 +274,10 @@ func montoTotalSujetoIva(p *SectorProfile, req SolicitudFactura) float64 {
 
 // construirDetalles construye las líneas de detalle del sector. Para sectores
 // prevalorados (detalle único) usa WithDetalle con el primer ítem; para el resto
-// AddDetalle con cada ítem.
+// AddDetalle con cada ítem. Si DetallePar es true (sectores 47/48), cada ítem
+// lógico genera dos nodos <detalle> con el mismo contenido y
+// codigoDetalleTransaccion 1 (original) y 2 (devolución/ajuste), con nroItem
+// secuencial 1,2,3,4...
 func construirDetalles(p *SectorProfile, root any, items []ItemFactura) {
 	if !p.ConDetalle || len(items) == 0 {
 		return
@@ -284,6 +287,18 @@ func construirDetalles(p *SectorProfile, root any, items []ItemFactura) {
 		llamarMetodo(root, "WithDetalle", false, detalle)
 		return
 	}
+	if p.DetallePar {
+		nro := 1
+		for i := range items {
+			d1 := construirDetalleConCodigo(p, items[i], nro, 1)
+			llamarMetodo(root, "AddDetalle", true, d1)
+			nro++
+			d2 := construirDetalleConCodigo(p, items[i], nro, 2)
+			llamarMetodo(root, "AddDetalle", true, d2)
+			nro++
+		}
+		return
+	}
 	for i := range items {
 		detalle := construirDetalle(p, items[i], i+1)
 		llamarMetodo(root, "AddDetalle", true, detalle)
@@ -291,6 +306,10 @@ func construirDetalles(p *SectorProfile, root any, items []ItemFactura) {
 }
 
 func construirDetalle(p *SectorProfile, item ItemFactura, correlativo int) any {
+	return construirDetalleConCodigo(p, item, correlativo, correlativo)
+}
+
+func construirDetalleConCodigo(p *SectorProfile, item ItemFactura, nroItem int, codigoTransaccion int) any {
 	if p.builders.detalle == nil {
 		panic(fmt.Sprintf("el sector %d no admite líneas de detalle", p.Codigo))
 	}
@@ -299,6 +318,7 @@ func construirDetalle(p *SectorProfile, item ItemFactura, correlativo int) any {
 		metodo string
 		valor  any
 	}{
+		{"WithNroItem", nroItem},
 		{"WithActividadEconomica", item.ActividadEconomica},
 		{"WithCodigoProductoSin", item.CodigoProductoSin},
 		{"WithCodigoProducto", item.CodigoProducto},
@@ -312,9 +332,10 @@ func construirDetalle(p *SectorProfile, item ItemFactura, correlativo int) any {
 	for _, c := range comunes {
 		llamarMetodo(det, c.metodo, true, c.valor)
 	}
-	// codigoDetalleTransaccion existe solo en los detalles de notas: correlativo
-	// secuencial obligatorio ahí.
-	llamarMetodo(det, "WithCodigoDetalleTransaccion", true, correlativo)
+	// codigoDetalleTransaccion existe solo en los detalles de notas. Para
+	// sectores con DetallePar (47/48) es 1 para original y 2 para devolución;
+	// para el resto (24, etc.) es el correlativo secuencial.
+	llamarMetodo(det, "WithCodigoDetalleTransaccion", true, codigoTransaccion)
 	// Campos sectoriales de detalle: se aplican mediante reflexión NO tolerante.
 	// Si Supay declara un campo en CamposDetalle pero el builder no tiene el
 	// método With* correspondiente, llamarMetodo con tolerante=false produce un

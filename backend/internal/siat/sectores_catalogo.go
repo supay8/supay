@@ -190,13 +190,21 @@ var catalogoSectores = []*SectorProfile{
 	sectorEducativoSinCredito(46, "Sector Educativo Zona Franca",
 		b(invoices.NewSectorEducativoZFBuilder, invoices.NewSectorEducativoZFCabeceraBuilder, invoices.NewSectorEducativoZFDetalleBuilder)),
 
-	nota(47, "Nota Crédito Débito Descuentos",
-		invoices.NewNotaCreditoDebitoDescuentoBuilder, invoices.NewNotaCreditoDebitoDescuentoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoDescuentoBuilder,
-		notasCampos()...),
+	func() *SectorProfile {
+		p := nota(47, "Nota Crédito Débito Descuentos",
+			invoices.NewNotaCreditoDebitoDescuentoBuilder, invoices.NewNotaCreditoDebitoDescuentoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoDescuentoBuilder,
+			notasCampos()...)
+		p.DetallePar = true
+		return p
+	}(),
 
-	nota(48, "Nota Crédito Débito ICE",
-		invoices.NewNotaCreditoDebitoIceBuilder, invoices.NewNotaCreditoDebitoIceCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoIceBuilder,
-		notasCampos()...),
+	func() *SectorProfile {
+		p := nota(48, "Nota Crédito Débito ICE",
+			invoices.NewNotaCreditoDebitoIceBuilder, invoices.NewNotaCreditoDebitoIceCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoIceBuilder,
+			notasCampos()...)
+		p.DetallePar = true
+		return p
+	}(),
 
 	sector(49, "Telecomunicaciones Zona Franca", TipoDocumentoFacturaSinCredito, FachadaTelecomunicaciones,
 		b(invoices.NewTelecomunicacionesZFBuilder, invoices.NewTelecomunicacionesZFCabeceraBuilder, invoices.NewTelecomunicacionesZFDetalleBuilder),

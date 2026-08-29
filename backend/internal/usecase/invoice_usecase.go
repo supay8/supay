@@ -190,9 +190,6 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	if req.PointOfSaleId == "" {
 		return nil, domain.NewBadRequestError("el point_of_sale_id es obligatorio")
 	}
-	if len(req.Items) == 0 {
-		return nil, domain.NewBadRequestError("la factura debe tener al menos un ítem")
-	}
 	if req.CustomerId == "" && req.Customer == nil {
 		return nil, domain.NewBadRequestError("debe indicar customer_id o customer")
 	}
@@ -215,6 +212,15 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	}
 	if !pos.IsActive {
 		return nil, domain.NewBadRequestError("el punto de venta está inactivo")
+	}
+
+	refFactura, err := uc.autofillDocumentoAjusteDescuento(&req, req.CompanyId)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(req.Items) == 0 {
+		return nil, domain.NewBadRequestError("la factura debe tener al menos un ítem")
 	}
 
 	if req.IdempotencyKey != "" {
@@ -314,6 +320,14 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	if err := perfil.ValidarModalidad(modalidad); err != nil {
 		return nil, err
 	}
+	// Deduplicación legacy para sectores con DetallePar (47/48): si el cliente
+	// envió el par manual para bypassear minOccurs=2, colapsar a ítems lógicos
+	// antes de persistir (builder_reflex generará el par automáticamente).
+	if perfil.DetallePar {
+		if dedup := deduplicarItemsPar(req.Items); len(dedup) < len(req.Items) {
+			req.Items = dedup
+		}
+	}
 	if !perfil.HasBuilder() && (strings.TrimSpace(req.Archivo) == "" || strings.TrimSpace(req.HashArchivo) == "" || strings.TrimSpace(req.Cuf) == "") {
 		return nil, domain.NewBadRequestError(fmt.Sprintf("el sector %d requiere archivo, hash_archivo y cuf", sector))
 	}
@@ -338,9 +352,13 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		if req.ReferenciaFacturaId == nil || strings.TrimSpace(*req.ReferenciaFacturaId) == "" {
 			return nil, domain.NewBadRequestError("los documentos de ajuste requieren referencia_factura_id (factura original)")
 		}
-		ref, err := uc.invoiceRepo.GetByID(strings.TrimSpace(*req.ReferenciaFacturaId))
-		if err != nil {
-			return nil, domain.NewNotFoundError("la factura referenciada no existe")
+		ref := refFactura
+		if ref == nil {
+			var loadErr error
+			ref, loadErr = uc.invoiceRepo.GetByID(strings.TrimSpace(*req.ReferenciaFacturaId))
+			if loadErr != nil {
+				return nil, domain.NewNotFoundError("la factura referenciada no existe")
+			}
 		}
 		if ref.CompanyId != req.CompanyId {
 			return nil, domain.NewBadRequestError("la factura referenciada pertenece a otra empresa")

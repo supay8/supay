@@ -122,6 +122,13 @@ type SectorProfile struct {
 	// DetalleUnico marca los sectores prevalorados (23, 36): su XSD acepta una
 	// sola línea, que se envía con WithDetalle en lugar de AddDetalle.
 	DetalleUnico bool `json:"detalle_unico,omitempty"`
+	// DetallePar marca los sectores donde cada ítem lógico genera dos nodos
+	// <detalle> en el XML (par original/devolución): codigoDetalleTransaccion 1
+	// y 2 con los mismos valores. Aplica únicamente a los sectores 47 y 48
+	// (Nota Crédito Débito Descuentos/ICE), cuyo XSD exige minOccurs=2 y el SIAT
+	// suma por código de transacción. Con DetallePar=true, WithNroItem es
+	// secuencial 1,2,3,4... y el par se genera automáticamente.
+	DetallePar bool `json:"detalle_par,omitempty"`
 	// Soportado marca los perfiles con casos aceptados por el SIAT (homologados).
 	// Reemplaza al antiguo flag Experimental, que solo significaba "acepta
 	// datos_sector vacío" y no protegía nada. Un perfil no Soportado produce un

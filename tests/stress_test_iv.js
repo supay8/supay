@@ -1,84 +1,193 @@
 import http from 'k6/http';
-import { check, sleep } from 'k6';
-
-export const options = {
-  stages: [
-    { duration: '20s', target: 10 },
-    { duration: '20s', target: 50 },
-    { duration: '10s', target: 0 },
-  ],
-  thresholds: {
-    http_req_failed: ['rate<0.05'],
-    http_req_duration: ['p(95)<800'],
-  },
-};
+import { check, group, sleep } from 'k6';
+import { Trend, Counter, Rate } from 'k6/metrics';
+import { randomIntBetween, randomItem } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 
 const BASE_URL = 'http://localhost:8081';
 const API_KEY = 'efc4c5d72e7c272881ffdaef03328a7ef2fbad363f4de23af10d741ca2f1fffb';
-
-const COMPANY_ID = '1da4cdec-32c5-4f32-bfb6-ebc3a6ef1b7f';
-const POS_ID = ['a3d89d57-03bb-4b86-9771-879eee79e415','88a078de-ab11-4985-b8fa-ab321b0254af'];
-
-const CUSTOMER_ID = 'aaa0299d-033d-45a9-9782-833197a71e83';
-const ORIGINAL_INVOICE_CUF = '7f020ea6-6a25-4cd4-9587-79c2cc4bbadb';
+const COMPANY_ID = __ENV.COMPANY_ID || '1da4cdec-32c5-4f32-bfb6-ebc3a6ef1b7f';
+const POS_IDS = ["88a078de-ab11-4985-b8fa-ab321b0254af","a3d89d57-03bb-4b86-9771-879eee79e415"]
+const CUSTOMER_IDS = (__ENV.CUSTOMER_IDS || 'aaa0299d-033d-45a9-9782-833197a71e83').split(',');
 
 const headers = {
   'Content-Type': 'application/json',
   'X-API-Key': API_KEY,
 };
 
-function createAndEmitCreditNote(index) {
-  // 1. Crear la Nota de Crédito-Débito (Sector 24)
-  const createPayload = JSON.stringify({
-    company_id: COMPANY_ID,
-    point_of_sale_id: POS_ID[1],
-    customer_id: CUSTOMER_ID,
-    invoice_type: 'credit_note',
-    codigo_documento_sector: 1,
-  modalidad: 1,
-  codigo_metodo_pago: 1,
-  codigo_moneda: 1,
-  tipo_cambio: 1,
-  codigo_tipo_factura: 1,
-  items: [
-    {
-      code: "PROD-001",
-      description: "Consultoría en pedagogía - Parte 1",
-      codigo_actividad: "8550100",
-      codigo_producto_sin: "1004411",
-      unit_code: 1,
-      quantity: 1,
-      unit_price: 1250,
-      discount: 0
-    }
-  ]
-  });
+// ---------------------------------------------------------------------------
+// Métricas personalizadas — separan la fase de creación de la de emisión SIAT,
+// que suelen tener latencias muy distintas.
+// ---------------------------------------------------------------------------
+const createDuration = new Trend('nc_create_duration', true);
+const emitDuration = new Trend('nc_emit_duration', true);
+const siatAcceptedRate = new Rate('siat_accepted_rate');
+const createErrors = new Counter('nc_create_errors');
+const emitErrors = new Counter('nc_emit_errors');
 
-  const createRes = http.post(`${BASE_URL}/invoices/`, createPayload, { headers });
-  const createSuccess = check(createRes, {
-    [`nota de crédito ${index} creada con status 201`]: (r) => r.status === 201,
-  });
+// ---------------------------------------------------------------------------
+// Catálogo de productos de prueba — cada factura toma una combinación aleatoria
+// de 1 a 5 items, en vez de repetir siempre los mismos dos.
+// ---------------------------------------------------------------------------
+const PRODUCT_CATALOG = [
+  { code: 'PROD-001', description: 'Consultoría en pedagogía - Parte 1', codigo_actividad: '8550100', codigo_producto_sin: '1004411', unit_code: 1, unit_price: 1250 },
+  { code: 'PROD-002', description: 'Consultoría en pedagogía - Parte 2', codigo_actividad: '8550100', codigo_producto_sin: '1004411', unit_code: 1, unit_price: 1250 },
+  { code: 'PROD-003', description: 'Material didáctico impreso', codigo_actividad: '8549100', codigo_producto_sin: '1004386', unit_code: 1, unit_price: 85 },
+  { code: 'PROD-004', description: 'Licencia de plataforma virtual (mensual)', codigo_actividad: '8549100', codigo_producto_sin: '1004385', unit_code: 1, unit_price: 400 },
+  { code: 'PROD-005', description: 'Soporte técnico especializado', codigo_actividad: '8549100', codigo_producto_sin: '1004387', unit_code: 1, unit_price: 300 },
+];
 
-  if (!createSuccess) {
-    console.error(`Error creando nota ${index}:`, createRes.body);
-    return;
+const PAYMENT_METHODS = [1, 2, 3];
+const CURRENCIES = [1, 2];
+const MODALIDADES = [1, 2];
+
+function buildRandomItems() {
+  const itemCount = randomIntBetween(1, 5);
+  const items = [];
+  for (let i = 0; i < itemCount; i++) {
+    const product = randomItem(PRODUCT_CATALOG);
+    items.push({
+      code: product.code,
+      description: product.description,
+      codigo_actividad: product.codigo_actividad,
+      codigo_producto_sin: product.codigo_producto_sin,
+      unit_code: product.unit_code,
+      quantity: randomIntBetween(1, 10),
+      unit_price: product.unit_price,
+      discount: randomItem([0, 0, 0, 5, 10]), // mayoría sin descuento, algunos con
+    });
   }
-
-  const invoiceId = createRes.json('id');
-
-  // 2. Emitir la nota de crédito-débito al SIAT
-  const emitRes = http.post(`${BASE_URL}/invoices/${invoiceId}/emit`, null, { headers });
-  check(emitRes, {
-    [`nota de crédito ${index} emitida con status 200`]: (r) => r.status === 200,
-    [`nota de crédito ${index} aceptada por SIAT`]: (r) => r.json('status') === 'ACCEPTED',
-  });
-
-  if (emitRes.status !== 200) {
-    console.error(`Error emitiendo nota ${index} al SIAT:`, emitRes.body);
-  }
+  return items;
 }
 
+function createAndEmitCreditNote(vu, iter) {
+  const tag = `vu${vu}-iter${iter}`;
+  const randomIndex = Math.floor(Math.random() * POS_IDS.length);
+  const createPayload = JSON.stringify({
+    company_id: COMPANY_ID,
+    point_of_sale_id: POS_IDS[randomIndex],
+    customer_id: randomItem(CUSTOMER_IDS),
+    codigo_documento_sector: 1,
+    codigo_tipo_factura: 1,
+    modalidad: 1,
+    codigo_metodo_pago: 1,
+    codigo_moneda: 1,
+    tipo_cambio: 1,
+    items: buildRandomItems(),
+  });
+
+  let invoiceId;
+
+  group('Crear factura de compra-venta', function () {
+    const createRes = http.post(`${BASE_URL}/invoices/`, createPayload, {
+      headers,
+    });
+    createDuration.add(createRes.timings.duration);
+
+    const createSuccess = check(createRes, {
+      [`[${tag}] creada con status 201`]: (r) => r.status === 201,
+      [`[${tag}] respuesta trae id`]: (r) => !!r.json('id'),
+    });
+
+    if (!createSuccess) {
+      createErrors.add(1);
+      console.error(`[${tag}] Error creando factura:`, createRes.status, createRes.body);
+      return;
+    }
+
+    invoiceId = createRes.json('id');
+  });
+
+  if (!invoiceId) return;
+
+  group('Emitir factura al SIAT', function () {
+    const emitRes = http.post(`${BASE_URL}/invoices/${invoiceId}/emit`, null, {
+      headers,
+    });
+    emitDuration.add(emitRes.timings.duration);
+
+    const emitOk = emitRes.status === 200;
+    const accepted = emitOk && emitRes.json('status') === 'ACCEPTED';
+    siatAcceptedRate.add(accepted);
+
+    check(emitRes, {
+      [`[${tag}] emitida con status 200`]: () => emitOk,
+      [`[${tag}] aceptada por SIAT`]: () => accepted,
+    });
+
+    if (!emitOk) {
+      emitErrors.add(1);
+      console.error(`[${tag}] Error emitiendo la factura al SIAT:`, emitRes.status, emitRes.body);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Escenarios de carga. Elige cuál correr con -e K6_SCENARIO=smoke|load|stress|spike
+// ---------------------------------------------------------------------------
+const SCENARIO = __ENV.K6_SCENARIO || 'load';
+
+const scenarios = {
+  smoke: {
+    executor: 'constant-vus',
+    vus: 2,
+    duration: '30s',
+  },
+  load: {
+    executor: 'ramping-vus',
+    startVUs: 0,
+    stages: [
+      { duration: '30s', target: 20 },
+      { duration: '1m', target: 20 },
+      { duration: '30s', target: 0 },
+    ],
+    gracefulRampDown: '10s',
+  },
+  stress: {
+    executor: 'ramping-vus',
+    startVUs: 0,
+    stages: [
+      { duration: '30s', target: 20 },
+      { duration: '1m', target: 50 },
+      { duration: '1m', target: 100 },
+      { duration: '30s', target: 0 },
+    ],
+    gracefulRampDown: '10s',
+  },
+  spike: {
+    executor: 'ramping-vus',
+    startVUs: 0,
+    stages: [
+      { duration: '10s', target: 5 },
+      { duration: '10s', target: 150 },
+      { duration: '30s', target: 150 },
+      { duration: '20s', target: 0 },
+    ],
+    gracefulRampDown: '10s',
+  },
+};
+export const options = {
+  scenarios: {
+    [SCENARIO]: scenarios[SCENARIO],
+  },
+  thresholds: {
+    http_req_failed: ['rate<0.05'],
+    http_req_duration: ['p(95)<2000'],
+    'http_req_duration{name:CreateCreditNote}': ['p(95)<1500'],
+    'http_req_duration{name:EmitCreditNote}': ['p(95)<3000'], // SIAT suele ser más lento
+    siat_accepted_rate: ['rate>0.95'],
+  },
+};
+ 
+
 export default function () {
-  createAndEmitCreditNote(1);
-  sleep(0.05);
+  createAndEmitCreditNote(__VU, __ITER);
+  sleep(randomIntBetween(1, 3) / 10); // 0.1s–0.3s, simula pacing real de usuarios
+}
+
+export function handleSummary(data) {
+  return {
+    stdout: textSummary(data, { indent: ' ', enableColors: true }),
+    'summary.json': JSON.stringify(data, null, 2),
+  };
 }

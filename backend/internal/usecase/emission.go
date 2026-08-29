@@ -144,6 +144,14 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		}
 	}
 
+	// Hook PDF: persiste en disco (local) o R2 (cloud) según STORAGE_DRIVER.
+	// Con STORAGE_DRIVER=none es no-op. No bloquea la respuesta (async + WithoutCancel).
+	if uc.pdfService != nil && result.Transaccion {
+		invID := inv.ID
+		// Detach del ctx del request: la generación puede tardar ~100ms.
+		go uc.pdfService.GenerateAndPersist(context.WithoutCancel(ctx), invID)
+	}
+
 	return inv, nil
 }
 

@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript"/>
   <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL"/>
   <img src="https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white" alt="Prisma"/>
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT"/>
+  <img src="https://img.shields.io/badge/License-SupayAPI%20v1.0-blue?style=for-the-badge" alt="SupayAPI License v1.0"/>
 </p>
 
 ---
@@ -302,15 +302,17 @@ Esto permite desarrollar **sin credenciales reales ni dependencia del entorno de
 
 ---
 
-## 🌱 Open Source
+## 🌱 Código abierto, con límites claros
 
-La idea es que cualquier desarrollador boliviano pueda:
+El código fuente de Supay es público y cualquier desarrollador boliviano puede:
 
-* 📚 Aprender cómo funciona el SIAT
-* 🏢 Crear su propio sistema de facturación
-* 🖥️ Desplegar una versión **self-hosted**
+* 📚 Aprender cómo funciona la integración con el SIAT
+* 🏢 Integrar Supay dentro de su propio ERP, POS o sistema de inventario
+* 🖥️ Desplegar su propia instancia **self-hosted**
 * 🔌 Construir módulos y adaptadores
 * 🤝 Contribuir al ecosistema tecnológico boliviano
+
+Lo único que la licencia no permite es tomar Supay (o una versión derivada) y ofrecerlo como un **servicio o producto de API de facturación que compita directamente con Supay**, ya sea hospedado por terceros o instalado por el propio cliente. Ver la sección [📜 Licencia](#-licencia) para el detalle completo.
 
 ---
 
@@ -335,6 +337,8 @@ git push origin feature/nueva-funcionalidad
 ```
 
 Luego abre un **Pull Request** 🚀
+
+> Al contribuir con código a este repositorio, aceptas que tu contribución se distribuya bajo los mismos términos de la [SupayAPI License v1.0](./LICENSE.md).
 
 ---
 
@@ -371,10 +375,25 @@ Incluirá:
 
 ## 📜 Licencia
 
-Distribuido bajo la licencia **MIT**.
+Supay se distribuye bajo la **SupayAPI License v1.0**, una licencia propia inspirada en la Elastic License 2.0.
+
+**En resumen, puedes:**
+
+* ✅ Usar, copiar, modificar y distribuir el software
+* ✅ Usarlo comercialmente
+* ✅ Integrarlo dentro de tu propio ERP, POS, sistema de inventario u otra plataforma, y vender ese producto (incluso self-hosted)
+* ✅ Auto-alojar (self-host) Supay en tu propia infraestructura
+
+**No puedes:**
+
+* ❌ Ofrecer Supay como un servicio hospedado o gestionado a terceros (modelo SaaS)
+* ❌ Tomar Supay, o una versión modificada de él, y distribuirlo como tu propio producto/API de facturación que compita directamente con Supay — ya sea hospedado por ti, por un tercero, o instalado self-hosted por el cliente final
+* ❌ Eliminar o alterar los avisos de copyright y licencia
+
+El texto completo, con todas las definiciones y condiciones, está en [`LICENSE.md`](./LICENSE.md).
 
 ```text
-MIT License © 2026 Supay Contributors
+SupayAPI License v1.0 © 2026 Ramiro Brandon Mamani Quisbert
 ```
 
 ---

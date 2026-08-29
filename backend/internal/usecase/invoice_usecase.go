@@ -29,6 +29,12 @@ type InvoiceUsecase struct {
 	siatService   SiatEmissionService
 	credentials   CredentialProvider
 	modalidad     int
+	pdfService    PdfGenerator
+}
+
+// PdfGenerator genera y persiste PDFs (interfaz para evitar import cycle con internal/pdf).
+type PdfGenerator interface {
+	GenerateAndPersist(ctx context.Context, invoiceID string)
 }
 
 func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository, catalogRepo domain.CatalogRepository, cufdRepo domain.CufdRepository, siatService SiatEmissionService, modalidad int, extras ...any) *InvoiceUsecase {
@@ -54,6 +60,8 @@ func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain
 			uc.docSectorRepo = typed
 		case CredentialProvider:
 			uc.credentials = typed
+		case PdfGenerator:
+			uc.pdfService = typed
 		}
 	}
 	return uc

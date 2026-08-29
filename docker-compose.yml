@@ -1,0 +1,56 @@
+# Supay — docker-compose único con profiles ["selfhosted","cloud"]
+# selfhosted: BYO infra, PDF en disco (STORAGE_DRIVER=local por defecto).
+#   docker compose --profile selfhosted up
+#   On-demand sin disco: STORAGE_DRIVER=none
+# cloud: infra administrada (R2 + DB gestionada), STORAGE_DRIVER=r2 por defecto
+#   DEPLOYMENT_MODE=cloud docker compose --profile cloud up
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["selfhosted", "cloud"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-supay}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-supay}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: ["selfhosted", "cloud"]
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-supay}?sslmode=disable
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-selfhosted}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-}
+      STORAGE_PATH: ${STORAGE_PATH:-}
+      # R2 solo en cloud
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+    ports:
+      - "${PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./storage:/app/storage
+
+volumes:
+  pgdata:

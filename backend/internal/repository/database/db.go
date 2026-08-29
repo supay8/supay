@@ -37,10 +37,30 @@ func ConnectDB() {
 		// Nivel de log configurable vía LOG_LEVEL (debug|info|warn|error).
 		// Por defecto Warn para no volcar queries con datos fiscales en producción.
 		Logger: logger.Default.LogMode(gormLogLevel()),
+		// PrepareStmt cachea prepared statements en pgx (reduce parse/plan
+		// en queries repetidas como SELECT MAX invoice_number). Seguro sin
+		// PgBouncer en modo transaction (no usado actualmente).
+		PrepareStmt: true,
+		// SkipDefaultTransaction evita BEGIN/COMMIT implícitos por cada
+		// Create/Update; ya usamos tx explícitas donde se necesita
+		// (invoice_repo: pg_advisory_xact_lock). Ahorra ~1 roundtrip.
+		SkipDefaultTransaction: true,
 	})
 	if err != nil {
 		log.Fatalf("Error of connection to PostgreSQL: %v", err)
 	}
+
+	// Tuning del pool database/sql para 50 VUs / 1-2 instancias.
+	// max_connections en nube ~100; 60 deja margen para overhead y 2da instancia (60*2=120 -> ajustar max_connections a 150 si escalas).
+	sqlDB, err := DB.DB()
+	if err != nil {
+		log.Fatalf("No se pudo obtener sql.DB del pool GORM: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(60)                    // 50 VUs * 1.2 buffer
+	sqlDB.SetMaxIdleConns(15)                    // 25% de MaxOpen, cubre burst sin churn
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)   // recicla antes que LB/RDS cierre conns stale
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)    // libera idles tras burst nocturno
+	log.Printf("🔌 Pool DB configurado: MaxOpen=60 MaxIdle=15 MaxLifetime=30m MaxIdleTime=5m")
 
 	// Configurar la zona horaria de la sesión PostgreSQL a America/La_Paz para
 	// que las consultas y visualizaciones de timestamps muestren la hora de Bolivia.

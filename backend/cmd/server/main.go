@@ -94,12 +94,19 @@ func main() {
 	if siatService != nil {
 		credentialClient = siatService
 	}
+	pdfStorage, err := pdf.NewStorageFromConfig(appCfg)
+	if err != nil {
+		log.Fatalf("PDF storage no disponible (STORAGE_DRIVER=%s): %v", appCfg.StorageDriver, err)
+	}
+	log.Printf("📄 PDF storage: driver=%s deployment=%s path=%s", appCfg.StorageDriver, appCfg.DeploymentMode, appCfg.StoragePath)
+	pdfService := pdf.NewServiceWithStorage(database.DB, pdfStorage)
+
 	credentialService := usecase.NewCredentialService(posRepo, cufdRepo, credentialClient, appCfg.SiatModalidad)
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo, credentialService)
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo, credentialService, pdfService)
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
 	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo)
-	siatHandler := deliveryHttp.NewSiatHandler(siatUsecase, pdf.NewService(database.DB))
+	siatHandler := deliveryHttp.NewSiatHandler(siatUsecase, pdfService)
 	catalogHandler := deliveryHttp.NewCatalogHandler(siatUsecase)
 
 	// 4. Router

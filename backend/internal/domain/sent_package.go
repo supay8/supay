@@ -35,6 +35,7 @@ type SentPackage struct {
 	CodigoTipoFactura     int               `json:"codigo_tipo_factura"`
 	CodigoEmision         int               `json:"codigo_emision"`
 	CodigoEvento          *int64            `json:"codigo_evento,omitempty"`
+	ContingencyEventId    *string           `json:"contingency_event_id,omitempty"`
 	Status                SentPackageStatus `json:"status"`
 	Mensajes              *string           `json:"mensajes,omitempty"`
 	XmlHash               string            `json:"xml_hash"`

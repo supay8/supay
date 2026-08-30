@@ -403,6 +403,7 @@ type SentPackage struct {
 	CodigoTipoFactura     int       `gorm:"not null"`
 	CodigoEmision         int       `gorm:"not null"`
 	CodigoEvento          *int64    `gorm:"type:bigint"`
+	ContingencyEventId    *string   `gorm:"type:uuid;index"`
 	Status                string    `gorm:"type:varchar(30);default:'SENT';index;not null"`
 	Mensajes              *string   `gorm:"type:text"`
 	XmlHash               string    `gorm:"type:varchar(100);not null"`
@@ -410,8 +411,9 @@ type SentPackage struct {
 	ValidatedAt           *time.Time
 	CreatedAt             time.Time
 
-	Company     Company     `gorm:"foreignKey:CompanyId"`
-	PointOfSale PointOfSale `gorm:"foreignKey:PointOfSaleId"`
+	Company          Company           `gorm:"foreignKey:CompanyId"`
+	PointOfSale      PointOfSale       `gorm:"foreignKey:PointOfSaleId"`
+	ContingencyEvent *ContingencyEvent `gorm:"foreignKey:ContingencyEventId"`
 }
 
 type Certificate struct {

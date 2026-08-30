@@ -113,6 +113,7 @@ type InvoiceRepository interface {
 	// correlativo por point_of_sale_id bajo advisory lock (atómico).
 	Create(inv *Invoice) error
 	GetByID(id string) (*Invoice, error)
+	GetByIDs(ids []string) ([]*Invoice, error)
 	ListByPointOfSale(pointOfSaleID string) ([]*Invoice, error)
 	// ListFiltered devuelve el listado paginado según el filtro, sin los
 	// campos pesados (xml/archivo), junto con el total de coincidencias.

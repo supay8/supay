@@ -535,11 +535,6 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		modalidad = siat.ModalidadElectronica
 	}
 
-	codigoDoc, err := codigoTipoDocumentoIdentidad(inv.Customer.DocumentType)
-	if err != nil {
-		return nil, err
-	}
-
 	leyenda, err := uc.resolveLeyenda(inv.CompanyId, actividad)
 	if err != nil {
 		return nil, err
@@ -673,6 +668,35 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		usuario = company.UsuarioSiat
 	}
 
+	// Determine receiver data for SIAT
+	var receiverName, receiverDocType, receiverDocNum string
+	var receiverComplement *string
+	var receiverCodigoCliente string
+
+	if inv.Customer.ID != "" {
+		// Has associated customer - use customer data
+		receiverName = inv.Customer.Name
+		receiverDocType = inv.Customer.DocumentType
+		receiverDocNum = inv.Customer.DocumentNumber
+		receiverComplement = inv.Customer.Complement
+		receiverCodigoCliente = inv.Customer.ID
+	} else if inv.ReceiverName != nil {
+		// No customer, use receiver snapshot
+		receiverName = *inv.ReceiverName
+		receiverDocType = *inv.ReceiverDocumentType
+		receiverDocNum = *inv.ReceiverDocument
+		receiverComplement = inv.ReceiverComplement
+		receiverCodigoCliente = ""
+	} else {
+		// Fallback (should not happen with new validation)
+		return nil, domain.NewConflictError("factura sin datos de receptor")
+	}
+
+	codigoDoc, err := codigoTipoDocumentoIdentidad(receiverDocType)
+	if err != nil {
+		return nil, err
+	}
+
 	return &siat.SolicitudFactura{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
@@ -706,11 +730,11 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		HashArchivo:           inv.HashArchivo,
 		Cuf:                   valueOrEmpty(inv.Cuf),
 		Cliente: siat.ClienteFactura{
-			NombreRazonSocial:            inv.Customer.Name,
+			NombreRazonSocial:            receiverName,
 			CodigoTipoDocumentoIdentidad: codigoDoc,
-			NumeroDocumento:              inv.Customer.DocumentNumber,
-			Complemento:                  inv.Customer.Complement,
-			CodigoCliente:                inv.Customer.ID,
+			NumeroDocumento:              receiverDocNum,
+			Complemento:                  receiverComplement,
+			CodigoCliente:                receiverCodigoCliente,
 		},
 		Items: items,
 	}, nil

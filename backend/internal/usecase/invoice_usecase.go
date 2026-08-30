@@ -99,6 +99,14 @@ type CreateInvoiceInlineCustomer struct {
 	Complement     *string `json:"complement,omitempty"`
 }
 
+type CreateInvoiceReceiver struct {
+	DocumentType   int     `json:"document_type"`
+	DocumentNumber string  `json:"document_number"`
+	Complement     *string `json:"complement,omitempty"`
+	Name           string  `json:"name"`
+	Email          *string `json:"email,omitempty"`
+}
+
 type FlexibleTime time.Time
 
 func (ft FlexibleTime) MarshalJSON() ([]byte, error) {
@@ -165,6 +173,7 @@ type CreateInvoiceRequest struct {
 	PointOfSaleId    string  `json:"point_of_sale_id"`
 	CustomerId       string  `json:"customer_id,omitempty"`
 	Customer         *CreateInvoiceInlineCustomer `json:"customer,omitempty"`
+	Receiver         *CreateInvoiceReceiver       `json:"receiver,omitempty"`
 	InvoiceType      string  `json:"invoice_type,omitempty"`
 	CodigoMetodoPago int     `json:"codigo_metodo_pago,omitempty"`
 	CodigoMoneda     int     `json:"codigo_moneda,omitempty"`
@@ -202,76 +211,200 @@ func cadenaOpcional(v *string) string {
 	return strings.TrimSpace(*v)
 }
 
-// resolveCustomer resuelve el cliente de la factura: por ID existente o por
-// datos inline (busca por documento y crea si no existe).
-func (uc *InvoiceUsecase) resolveCustomer(companyID, customerID string, inline *CreateInvoiceInlineCustomer) (*domain.Customer, error) {
-	if customerID != "" {
-		customer, err := uc.customerRepo.GetByID(customerID)
+func documentTypeCodeToString(code int) string {
+	switch code {
+	case 1:
+		return "CI"
+	case 2:
+		return "CEX"
+	case 3:
+		return "PAS"
+	case 4:
+		return "NIT"
+	case 5:
+		return "OD"
+	default:
+		return ""
+	}
+}
+
+func documentTypeStringToCode(docType string) int {
+	switch strings.ToUpper(strings.TrimSpace(docType)) {
+	case "CI":
+		return 1
+	case "CEX":
+		return 2
+	case "PAS":
+		return 3
+	case "NIT":
+		return 4
+	case "OD":
+		return 5
+	default:
+		return 0
+	}
+}
+
+func validateReceiver(r *CreateInvoiceReceiver) error {
+	if r == nil {
+		return domain.NewBadRequestError("receiver es requerido")
+	}
+	if r.DocumentType < 1 || r.DocumentType > 5 {
+		return domain.NewBadRequestError("document_type debe ser un código SIAT válido (1=CI, 2=CEX, 3=PAS, 4=NIT, 5=OD)")
+	}
+	if strings.TrimSpace(r.DocumentNumber) == "" {
+		return domain.NewBadRequestError("document_number es obligatorio")
+	}
+	if strings.TrimSpace(r.Name) == "" {
+		return domain.NewBadRequestError("name es obligatorio")
+	}
+	return nil
+}
+
+// resolveCustomerAndReceiver resuelve el cliente y/o receptor de la factura.
+// Soporta tres modos:
+// 1. customer_id: cliente existente
+// 2. customer: datos inline (busca por documento y crea si no existe)
+// 3. receiver: receptor directo (no crea cliente, opcionalmente asocia si existe)
+func (uc *InvoiceUsecase) resolveCustomerAndReceiver(companyID string, req CreateInvoiceRequest) (*domain.Customer, *domain.ReceiverSnapshot, error) {
+	count := 0
+	if req.CustomerId != "" {
+		count++
+	}
+	if req.Customer != nil {
+		count++
+	}
+	if req.Receiver != nil {
+		count++
+	}
+	if count != 1 {
+		return nil, nil, domain.NewBadRequestError("debe indicar exactamente uno de: customer_id, customer, receiver")
+	}
+
+	// Mode A: customer_id provided
+	if req.CustomerId != "" {
+		customer, err := uc.customerRepo.GetByID(req.CustomerId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, domain.NewNotFoundError("cliente no encontrado")
+				return nil, nil, domain.NewNotFoundError("cliente no encontrado")
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		if customer.CompanyId != companyID {
-			return nil, domain.NewBadRequestError("el cliente no pertenece a la empresa")
+			return nil, nil, domain.NewBadRequestError("el cliente no pertenece a la empresa")
 		}
-		return customer, nil
+		// Build receiver snapshot from customer
+		snap := &domain.ReceiverSnapshot{
+			Name:           customer.Name,
+			DocumentType:   customer.DocumentType,
+			DocumentNumber: customer.DocumentNumber,
+			Complement:     customer.Complement,
+			Email:          nil,
+		}
+		return customer, snap, nil
 	}
 
-	if inline == nil {
-		return nil, domain.NewBadRequestError("debe indicar customer_id o customer")
-	}
-	inline.DocumentType = strings.ToUpper(strings.TrimSpace(inline.DocumentType))
-	inline.DocumentNumber = strings.TrimSpace(inline.DocumentNumber)
-	inline.Name = strings.TrimSpace(inline.Name)
-	if inline.DocumentType == "" || inline.DocumentNumber == "" {
-		return nil, domain.NewBadRequestError("el tipo y número de documento del cliente son obligatorios")
-	}
-	if !validDocumentType(inline.DocumentType) {
-		return nil, domain.NewBadRequestError("tipo de documento inválido (CI, CEX, PAS, NIT, OD)")
-	}
-	if inline.Name == "" {
-		return nil, domain.NewBadRequestError("el nombre del cliente es obligatorio")
-	}
+	// Mode B: inline customer (existing behavior - creates customer if not exists)
+	if req.Customer != nil {
+		inline := req.Customer
+		inline.DocumentType = strings.ToUpper(strings.TrimSpace(inline.DocumentType))
+		inline.DocumentNumber = strings.TrimSpace(inline.DocumentNumber)
+		inline.Name = strings.TrimSpace(inline.Name)
+		if inline.DocumentType == "" || inline.DocumentNumber == "" {
+			return nil, nil, domain.NewBadRequestError("el tipo y número de documento del cliente son obligatorios")
+		}
+		if !validDocumentType(inline.DocumentType) {
+			return nil, nil, domain.NewBadRequestError("tipo de documento inválido (CI, CEX, PAS, NIT, OD)")
+		}
+		if inline.Name == "" {
+			return nil, nil, domain.NewBadRequestError("el nombre del cliente es obligatorio")
+		}
 
-	customer, err := uc.customerRepo.GetByCompanyAndDocument(companyID, inline.DocumentType, inline.DocumentNumber)
-	if err == nil && customer != nil {
-		return customer, nil
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-
-	customer = &domain.Customer{
-		CompanyId:      companyID,
-		DocumentType:   inline.DocumentType,
-		DocumentNumber: inline.DocumentNumber,
-		Name:           inline.Name,
-		Complement:     inline.Complement,
-	}
-	if err := uc.customerRepo.Create(customer); err != nil {
-		if errors.Is(err, domain.ErrCustomerDocumentConflict) {
-			// Race: otro request creó el cliente entre el Get y el Create.
-			existing, err2 := uc.customerRepo.GetByCompanyAndDocument(companyID, inline.DocumentType, inline.DocumentNumber)
-			if err2 == nil && existing != nil {
-				return existing, nil
+		customer, err := uc.customerRepo.GetByCompanyAndDocument(companyID, inline.DocumentType, inline.DocumentNumber)
+		if err == nil && customer != nil {
+			snap := &domain.ReceiverSnapshot{
+				Name:           customer.Name,
+				DocumentType:   customer.DocumentType,
+				DocumentNumber: customer.DocumentNumber,
+				Complement:     customer.Complement,
+				Email:          nil,
 			}
+			return customer, snap, nil
 		}
-		return nil, err
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, err
+		}
+
+		customer = &domain.Customer{
+			CompanyId:      companyID,
+			DocumentType:   inline.DocumentType,
+			DocumentNumber: inline.DocumentNumber,
+			Name:           inline.Name,
+			Complement:     inline.Complement,
+		}
+		if err := uc.customerRepo.Create(customer); err != nil {
+			if errors.Is(err, domain.ErrCustomerDocumentConflict) {
+				existing, err2 := uc.customerRepo.GetByCompanyAndDocument(companyID, inline.DocumentType, inline.DocumentNumber)
+				if err2 == nil && existing != nil {
+					snap := &domain.ReceiverSnapshot{
+						Name:           existing.Name,
+						DocumentType:   existing.DocumentType,
+						DocumentNumber: existing.DocumentNumber,
+						Complement:     existing.Complement,
+						Email:          nil,
+					}
+					return existing, snap, nil
+				}
+			}
+			return nil, nil, err
+		}
+		snap := &domain.ReceiverSnapshot{
+			Name:           customer.Name,
+			DocumentType:   customer.DocumentType,
+			DocumentNumber: customer.DocumentNumber,
+			Complement:     customer.Complement,
+			Email:          nil,
+		}
+		return customer, snap, nil
 	}
-	return customer, nil
+
+	// Mode C: receiver (new - direct receiver, no customer creation)
+	if req.Receiver != nil {
+		if err := validateReceiver(req.Receiver); err != nil {
+			return nil, nil, err
+		}
+
+		docTypeStr := documentTypeCodeToString(req.Receiver.DocumentType)
+		snap := &domain.ReceiverSnapshot{
+			Name:           strings.TrimSpace(req.Receiver.Name),
+			DocumentType:   docTypeStr,
+			DocumentNumber: strings.TrimSpace(req.Receiver.DocumentNumber),
+			Complement:     req.Receiver.Complement,
+			Email:          req.Receiver.Email,
+		}
+
+		// Optional: try to find existing customer by document (non-blocking)
+		customer, err := uc.customerRepo.GetByCompanyAndDocument(companyID, docTypeStr, snap.DocumentNumber)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, err
+		}
+
+		return customer, snap, nil
+	}
+
+	return nil, nil, domain.NewBadRequestError("debe indicar customer_id, customer o receiver")
+}
+
+func customerIDOrNil(c *domain.Customer) *string {
+	if c == nil {
+		return nil
+	}
+	return &c.ID
 }
 
 func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) (*domain.Invoice, error) {
 	if req.PointOfSaleId == "" {
 		return nil, domain.NewBadRequestError("el point_of_sale_id es obligatorio")
-	}
-	if req.CustomerId == "" && req.Customer == nil {
-		return nil, domain.NewBadRequestError("debe indicar customer_id o customer")
-	}
-	if req.CustomerId != "" && req.Customer != nil {
-		return nil, domain.NewBadRequestError("indique customer_id o customer, no ambos")
 	}
 
 	pos, err := uc.posRepo.GetByID(req.PointOfSaleId)
@@ -323,7 +456,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		return nil, err
 	}
 
-	customer, err := uc.resolveCustomer(req.CompanyId, req.CustomerId, req.Customer)
+	customer, receiverSnap, err := uc.resolveCustomerAndReceiver(req.CompanyId, req)
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +599,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 
 	inv := &domain.Invoice{
 		CompanyId:             req.CompanyId,
-		CustomerId:            customer.ID,
+		CustomerId:            customerIDOrNil(customer),
 		PointOfSaleId:         req.PointOfSaleId,
 		CufdId:                activeCufd.ID,
 		EmissionType:          "EN_LINEA",
@@ -485,6 +618,11 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		AjustaFacturaId:       ajustaFacturaId,
 		IssueDate:             issueDate,
 		Status:                domain.InvoicePending,
+		ReceiverName:          &receiverSnap.Name,
+		ReceiverDocumentType:  &receiverSnap.DocumentType,
+		ReceiverDocument:      &receiverSnap.DocumentNumber,
+		ReceiverComplement:    receiverSnap.Complement,
+		ReceiverEmail:         receiverSnap.Email,
 	}
 	if req.IdempotencyKey != "" {
 		inv.IdempotencyKey = &req.IdempotencyKey

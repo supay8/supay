@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/siat"
+	"gorm.io/gorm"
 )
 
 // ErrSiatNoDisponible indica que el adaptador SIAT no pudo inicializarse
@@ -36,6 +38,7 @@ type SiatUsecase struct {
 	actividadRepo   domain.SiatActividadRepository
 	leyendaRepo     domain.SiatLeyendaRepository
 	docSectorRepo   domain.SiatActividadDocSectorRepository
+	invoiceRepo     domain.InvoiceRepository
 
 	siatService *siat.Service
 	credentials *CredentialService
@@ -85,6 +88,8 @@ func NewSiatUsecase(
 			uc.leyendaRepo = typed
 		case domain.SiatActividadDocSectorRepository:
 			uc.docSectorRepo = typed
+		case domain.InvoiceRepository:
+			uc.invoiceRepo = typed
 		}
 	}
 	return uc
@@ -95,6 +100,165 @@ func (uc *SiatUsecase) requireService() error {
 		return ErrSiatNoDisponible
 	}
 	return nil
+}
+
+func (uc *SiatUsecase) actividadesHabilitadas(company *domain.Company) map[string]bool {
+	habilitadas := make(map[string]bool)
+	if uc.docSectorRepo != nil && company != nil {
+		if items, err := uc.docSectorRepo.List(company.ID); err == nil {
+			for _, it := range items {
+				code := strings.TrimSpace(it.CodigoActividad)
+				if code != "" {
+					habilitadas[code] = true
+				}
+			}
+		}
+	}
+	if company != nil && company.CodigoActividad != nil {
+		principal := strings.TrimSpace(*company.CodigoActividad)
+		if principal != "" {
+			habilitadas[principal] = true
+		}
+	}
+	return habilitadas
+}
+
+func codigoTipoDocumentoIdentidadSiatu(docType string) (int, error) {
+	switch strings.ToUpper(strings.TrimSpace(docType)) {
+	case "CI":
+		return 1, nil
+	case "CEX":
+		return 2, nil
+	case "PAS":
+		return 3, nil
+	case "NIT":
+		return 4, nil
+	case "OD":
+		return 5, nil
+	default:
+		return 0, domain.NewBadRequestError("tipo de documento de identidad no soportado: " + docType)
+	}
+}
+
+func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domain.Company, pos *domain.PointOfSale, cufd *domain.Cufd) (siat.SolicitudFactura, error) {
+	// Resuelve leyenda como en InvoiceUsecase.resolveLeyenda
+	actividad := ""
+	if company.CodigoActividad != nil {
+		actividad = strings.TrimSpace(*company.CodigoActividad)
+	}
+	leyenda := "Ley N° 453: Tienes derecho a recibir información sobre el Sistema de Facturación, Ley N° 453, de 4 de diciembre de 2013."
+	if uc.leyendaRepo != nil && actividad != "" {
+		if items, err := uc.leyendaRepo.ListByActividad(company.ID, actividad); err == nil {
+			for _, it := range items {
+				if strings.TrimSpace(it.DescripcionLeyenda) != "" {
+					leyenda = strings.TrimSpace(it.DescripcionLeyenda)
+					break
+				}
+			}
+		}
+	}
+	codigoDoc, err := codigoTipoDocumentoIdentidadSiatu(inv.Customer.DocumentType)
+	if err != nil {
+		return siat.SolicitudFactura{}, err
+	}
+	// Dirección padrón
+	direccion := strings.TrimSpace(cufd.Direccion)
+	if direccion == "" {
+		direccion = company.Direccion
+	}
+	var telPtr *string
+	if strings.TrimSpace(company.Telefono) != "" {
+		t := strings.TrimSpace(company.Telefono)
+		telPtr = &t
+	}
+	usuario := "SUPAY"
+	if company.UsuarioSiat != "" {
+		usuario = company.UsuarioSiat
+	}
+	// Items mapeados desde InvoiceItem ya persistidos
+	solItems := make([]siat.ItemFactura, 0, len(inv.Items))
+	for _, it := range inv.Items {
+		var codigoSin int64
+		if it.CodigoProductoSin != nil {
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(*it.CodigoProductoSin), 10, 64); err == nil {
+				codigoSin = parsed
+			}
+		}
+		if codigoSin <= 0 {
+			return siat.SolicitudFactura{}, domain.NewBadRequestError("el ítem " + it.Description + " no tiene codigo_producto_sin válido")
+		}
+		act := actividad
+		if it.CodigoActividad != nil && strings.TrimSpace(*it.CodigoActividad) != "" {
+			act = strings.TrimSpace(*it.CodigoActividad)
+		}
+		unidad := 1
+		if it.UnitCode != nil && *it.UnitCode > 0 {
+			unidad = *it.UnitCode
+		}
+		var discPtr *float64
+		if it.Discount != 0 {
+			d := it.Discount
+			discPtr = &d
+		}
+		solItems = append(solItems, siat.ItemFactura{
+			ActividadEconomica: act,
+			CodigoProductoSin:  codigoSin,
+			CodigoProducto:     it.Code,
+			Descripcion:        it.Description,
+			Cantidad:           it.Quantity,
+			UnidadMedida:       unidad,
+			PrecioUnitario:     it.UnitPrice,
+			MontoDescuento:     discPtr,
+			SubTotal:           it.Subtotal,
+			DatosSector:        it.SectorData,
+		})
+	}
+	tipoFactura := inv.CodigoTipoFactura
+	if tipoFactura <= 0 {
+		if perfil, err := siat.PerfilSectorLayout(inv.CodigoDocumentoSector, inv.Layout); err == nil {
+			tipoFactura = perfil.TipoDocumentoResuelto(0)
+		} else {
+			tipoFactura = 1
+		}
+	}
+	return siat.SolicitudFactura{
+		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
+		CodigoSistema:         company.CodigoSistema,
+		Nit:                   company.Nit,
+		Modalidad:             inv.Modalidad,
+		NumeroFactura:         int64(inv.InvoiceNumber),
+		CodigoSucursal:        pos.CodigoSucursal,
+		CodigoPuntoVenta:      pos.CodigoPuntoVenta,
+		Cuis:                  "", // se hereda del paquete
+		Cufd:                  "",
+		CodigoControl:         "",
+		FechaEmision:          inv.IssueDate,
+		Usuario:               usuario,
+		Leyenda:               leyenda,
+		RazonSocialEmisor:     company.BusinessName,
+		Municipio:             company.Municipio,
+		Direccion:             direccion,
+		Telefono:              telPtr,
+		CodigoMetodoPago:      inv.CodigoMetodoPago,
+		CodigoMoneda:          inv.CodigoMoneda,
+		TipoCambio:            inv.TipoCambio,
+		MontoTotal:            inv.Total,
+		CodigoDocumentoSector: inv.CodigoDocumentoSector,
+		Layout:                inv.Layout,
+		CodigoTipoFactura:     tipoFactura,
+		DatosSector:           inv.SectorData,
+		Archivo:               inv.Archivo,
+		HashArchivo:           inv.HashArchivo,
+		Cuf:                   "",
+		Cliente: siat.ClienteFactura{
+			NombreRazonSocial:            inv.Customer.Name,
+			CodigoTipoDocumentoIdentidad: codigoDoc,
+			NumeroDocumento:              inv.Customer.DocumentNumber,
+			Complemento:                  inv.Customer.Complement,
+			CodigoCliente:                inv.Customer.ID,
+		},
+		Items: solItems,
+	}, nil
 }
 
 // LoadCompanyAndPointOfSale valida que el punto de venta pertenezca a la empresa.
@@ -118,6 +282,17 @@ func (uc *SiatUsecase) LoadCompanyAndPointOfSale(companyID, pointOfSaleID string
 	}
 
 	return company, pointOfSale, nil
+}
+func (uc *SiatUsecase) LoadInvoicesIDs(invoiceIDs []string) ([]*domain.Invoice, error) {
+	invoices, err := uc.invoiceRepo.GetByIDs(invoiceIDs)
+	if err != nil {
+		return nil, domain.NewBadRequestError("Error al obtener facturas por IDs: " + err.Error())
+	}
+	if len(invoices) != len(invoiceIDs) {
+		return nil, domain.NewBadRequestError("No se encontraron todas las facturas por IDs proporcionadas")
+	}
+
+	return invoices, nil
 }
 
 // resolveCodigoPuntoVenta prefiere el código registrado ante el SIAT.
@@ -281,13 +456,59 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 		cufdEvento = cufd.Cufd
 	}
 
-	inicio, err := ParseFechaSiat(body.FechaHoraInicioEvento)
-	if err != nil {
-		return nil, domain.NewBadRequestError("fechaHoraInicioEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)")
+	var inicio, fin time.Time
+	var errInicio, errFin error
+	inicioStr := strings.TrimSpace(body.FechaHoraInicioEvento)
+	finStr := strings.TrimSpace(body.FechaHoraFinEvento)
+	ambasVacias := inicioStr == "" && finStr == ""
+	algunaVacia := inicioStr == "" || finStr == ""
+	if ambasVacias {
+		// Caso holgada intencional: cliente no envió fechas -> generar now-10m → now+1h50m
+		errInicio = fmt.Errorf("vacía")
+		errFin = fmt.Errorf("vacía")
+	} else if algunaVacia {
+		// Si solo una viene, es error del cliente, no generar holgada silenciosa
+		if inicioStr == "" {
+			return nil, domain.NewBadRequestError("fechaHoraInicioEvento es obligatoria si se envía fechaHoraFinEvento")
+		}
+		return nil, domain.NewBadRequestError("fechaHoraFinEvento es obligatoria si se envía fechaHoraInicioEvento")
+	} else {
+		inicio, errInicio = ParseFechaSiat(inicioStr)
+		if errInicio != nil {
+			return nil, domain.NewBadRequestError("fechaHoraInicioEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)")
+		}
+		fin, errFin = ParseFechaSiat(finStr)
+		if errFin != nil {
+			return nil, domain.NewBadRequestError("fechaHoraFinEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)")
+		}
+		if !fin.After(inicio) {
+			return nil, domain.NewBadRequestError("fechaHoraFinEvento debe ser posterior a fechaHoraInicioEvento")
+		}
 	}
-	fin, err := ParseFechaSiat(body.FechaHoraFinEvento)
-	if err != nil {
-		return nil, domain.NewBadRequestError("fechaHoraFinEvento inválida (use YYYY-MM-DDTHH:mm:ss.SSS)")
+
+	// Solo aplicar ventana holgada si AMBAS estaban vacías (caso anterior)
+	if siat.DebeUsarVentanaHolgada(inicio, fin, errInicio, errFin) {
+		prevInicio, prevFin := inicio, fin
+		inicio, fin = siat.VentanaContingenciaHolgada(time.Now())
+		// Clamp a vigencia CUFD para no exceder límite SIAT
+		if !cufd.ValidTo.IsZero() && fin.After(cufd.ValidTo) {
+			fin = cufd.ValidTo
+			// Mantener duración 2h si es posible recortando inicio
+			candidateInicio := fin.Add(-2 * time.Hour)
+			if !cufd.ValidFrom.IsZero() && candidateInicio.Before(cufd.ValidFrom) {
+				candidateInicio = cufd.ValidFrom
+			}
+			inicio = candidateInicio
+		}
+		if !cufd.ValidFrom.IsZero() && inicio.Before(cufd.ValidFrom) {
+			inicio = cufd.ValidFrom
+		}
+		slog.Warn("contingencia: ventana holgada aplicada para evitar error 1040",
+			"prev_inicio", prevInicio, "prev_fin", prevFin,
+			"nuevo_inicio", inicio.In(siat.LaPaz).Format(time.RFC3339),
+			"nuevo_fin", fin.In(siat.LaPaz).Format(time.RFC3339),
+			"duracion", fin.Sub(inicio).String(),
+		)
 	}
 
 	req := siat.SolicitudEventoSignificativo{
@@ -352,14 +573,127 @@ type PaqueteInput struct {
 	CodigoEmision int                     `json:"codigoEmision"`
 	Archivo       string                  `json:"archivo,omitempty"`
 	HashArchivo   string                  `json:"hashArchivo,omitempty"`
-	Facturas      []siat.SolicitudFactura `json:"facturas"`
+	Facturas      []siat.SolicitudFactura `json:"-"`
+	FacturaIDs    []string                `json:"-"`
+}
+
+// UnmarshalJSON permite que `facturas` sea tanto []SolicitudFactura (objetos)
+// como []string (ids) — el flujo de contingencia envía solo ids en el mismo endpoint.
+func (p *PaqueteInput) UnmarshalJSON(data []byte) error {
+	type rawPaquete struct {
+		CodigoEvento   int             `json:"codigoEvento"`
+		CodigoEvento2  int             `json:"codigo_evento"`
+		Descripcion    string          `json:"descripcion"`
+		CodigoEmision  int             `json:"codigoEmision"`
+		CodigoEmision2 int             `json:"codigo_emision"`
+		Archivo        string          `json:"archivo"`
+		HashArchivo    string          `json:"hashArchivo"`
+		HashArchivo2   string          `json:"hash_archivo"`
+		Facturas       json.RawMessage `json:"facturas"`
+		Factura        json.RawMessage `json:"factura"` // alias singular por compat
+	}
+	var raw rawPaquete
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.CodigoEvento != 0 {
+		p.CodigoEvento = raw.CodigoEvento
+	} else if raw.CodigoEvento2 != 0 {
+		p.CodigoEvento = raw.CodigoEvento2
+	}
+	p.Descripcion = raw.Descripcion
+	if raw.CodigoEmision != 0 {
+		p.CodigoEmision = raw.CodigoEmision
+	} else if raw.CodigoEmision2 != 0 {
+		p.CodigoEmision = raw.CodigoEmision2
+	}
+	p.Archivo = raw.Archivo
+	if raw.HashArchivo != "" {
+		p.HashArchivo = raw.HashArchivo
+	} else if raw.HashArchivo2 != "" {
+		p.HashArchivo = raw.HashArchivo2
+	}
+	factRaw := raw.Facturas
+	if len(factRaw) == 0 || string(factRaw) == "null" {
+		factRaw = raw.Factura
+	}
+	if len(factRaw) == 0 || string(factRaw) == "null" {
+		return nil
+	}
+	// Intenta []string (IDs)
+	var ids []string
+	if err := json.Unmarshal(factRaw, &ids); err == nil {
+		p.FacturaIDs = ids
+		return nil
+	}
+	// Intenta []SolicitudFactura (objetos)
+	var facs []siat.SolicitudFactura
+	if err := json.Unmarshal(factRaw, &facs); err == nil {
+		p.Facturas = facs
+		return nil
+	}
+	// Intenta single string id
+	var singleID string
+	if err := json.Unmarshal(factRaw, &singleID); err == nil && singleID != "" {
+		p.FacturaIDs = []string{singleID}
+		return nil
+	}
+	return fmt.Errorf("facturas debe ser array de ids (strings) o array de objetos SolicitudFactura")
 }
 
 type MasivaInput struct {
 	CodigoEmision int                     `json:"codigoEmision"`
 	Archivo       string                  `json:"archivo,omitempty"`
 	HashArchivo   string                  `json:"hashArchivo,omitempty"`
-	Facturas      []siat.SolicitudFactura `json:"facturas"`
+	Facturas      []siat.SolicitudFactura `json:"-"`
+	FacturaIDs    []string                `json:"-"`
+}
+
+func (m *MasivaInput) UnmarshalJSON(data []byte) error {
+	type rawMasiva struct {
+		CodigoEmision  int             `json:"codigoEmision"`
+		CodigoEmision2 int             `json:"codigo_emision"`
+		Archivo        string          `json:"archivo"`
+		HashArchivo    string          `json:"hashArchivo"`
+		HashArchivo2   string          `json:"hash_archivo"`
+		Facturas       json.RawMessage `json:"facturas"`
+		Factura        json.RawMessage `json:"factura"` // alias singular por compat
+	}
+	var raw rawMasiva
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	factRaw := raw.Facturas
+	if len(factRaw) == 0 || string(factRaw) == "null" {
+		factRaw = raw.Factura
+	}
+	if len(factRaw) == 0 || string(factRaw) == "null" {
+		return nil
+	}
+
+	// Intenta []string (IDs)
+	var ids []string
+	if err := json.Unmarshal(factRaw, &ids); err == nil {
+		m.FacturaIDs = ids
+		return nil
+	}
+
+	// Intenta []SolicitudFactura (objetos)
+	var facs []siat.SolicitudFactura
+	if err := json.Unmarshal(factRaw, &facs); err == nil {
+		m.Facturas = facs
+		return nil
+	}
+
+	// Intenta single string id
+	var singleID string
+	if err := json.Unmarshal(factRaw, &singleID); err == nil && singleID != "" {
+		m.FacturaIDs = []string{singleID}
+		return nil
+	}
+
+	return fmt.Errorf("facturas debe ser array de ids (strings) o array de objetos SolicitudFactura")
 }
 
 type ComprasInput struct {
@@ -420,7 +754,51 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 	}
 
 	modalidad := uc.effectiveModalidad()
+	// Si vienen solo IDs (flujo contingencia offline por lotes), expandir a SolicitudFactura desde BD
+	if len(body.FacturaIDs) > 0 {
+		if uc.invoiceRepo == nil {
+			return nil, nil, nil, domain.NewConflictError("repositorio de facturas no configurado para paquete por ids")
+		}
+		if len(body.FacturaIDs)+len(body.Facturas) > siat.MaxFacturasPorPaquete {
+			return nil, nil, nil, domain.NewBadRequestError(fmt.Sprintf("el paquete supera el límite de %d facturas", siat.MaxFacturasPorPaquete))
+		}
+		seen := make(map[string]bool, len(body.FacturaIDs))
+		for _, fid := range body.FacturaIDs {
+			fid = strings.TrimSpace(fid)
+			if fid == "" {
+				continue
+			}
+			if seen[fid] {
+				continue
+			}
+			seen[fid] = true
+			inv, err := uc.invoiceRepo.GetByID(fid)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil, nil, domain.NewNotFoundError("factura " + fid + " no encontrada")
+				}
+				return nil, nil, nil, err
+			}
+			if inv.CompanyId != company.ID {
+				return nil, nil, nil, domain.NewBadRequestError("la factura " + fid + " no pertenece a la empresa " + company.ID)
+			}
+			if inv.PointOfSaleId != pointOfSale.ID {
+				return nil, nil, nil, domain.NewBadRequestError("la factura " + fid + " no pertenece al punto de venta " + pointOfSale.ID)
+			}
+			if inv.Status == domain.InvoiceAccepted || inv.Status == domain.InvoiceCancelled {
+				return nil, nil, nil, domain.NewConflictError("la factura " + fid + " ya está emitida (status " + string(inv.Status) + ")")
+			}
+			sol, err := uc.solicitudDesdeInvoice(inv, company, pointOfSale, cufd)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			body.Facturas = append(body.Facturas, sol)
+		}
+	}
+
 	var facturasProcesadas []siat.SolicitudFactura
+	// Habilitadas para multiactividad controlada (8549910 principal, 8550100 secundaria, etc.)
+	habilitadasPaq := uc.actividadesHabilitadas(company)
 	for _, f := range body.Facturas {
 		f.CodigoAmbiente = company.Ambiente.CodigoAmbiente()
 		f.CodigoSistema = company.CodigoSistema
@@ -435,7 +813,76 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		if f.FechaEmision.IsZero() {
 			f.FechaEmision = time.Now().In(siat.LaPaz)
 		}
+		// Auto-corrección de totales por factura en paquete (evitar 1013/1018 off-line)
+		if len(f.Items) > 0 {
+			// Normalizar subtotales y montoTotal dinámicamente con Warn
+			for i := range f.Items {
+				esp := siat.CalcularSubtotal(f.Items[i].Cantidad, f.Items[i].PrecioUnitario, f.Items[i].MontoDescuento)
+				if f.Items[i].SubTotal != 0 && siat.Round2ForCompare(f.Items[i].SubTotal) != esp {
+					slog.Warn("paquete: subtotal item auto-corregido", "descripcion", f.Items[i].Descripcion, "previo", f.Items[i].SubTotal, "corregido", esp)
+					f.Items[i].SubTotal = esp
+				} else if f.Items[i].SubTotal == 0 {
+					f.Items[i].SubTotal = esp
+				}
+				// Multiactividad controlada por ítem
+				act := f.Items[i].ActividadEconomica
+				if act == "" && company.CodigoActividad != nil {
+					act = *company.CodigoActividad
+					f.Items[i].ActividadEconomica = act
+				}
+				if len(habilitadasPaq) > 0 && act != "" && !habilitadasPaq[act] {
+					slog.Warn("paquete: actividad item no habilitada, se permite con advertencia", "actividad", act, "habilitadas", habilitadasPaq)
+				}
+			}
+			total, _ := siat.CalcularTotales(f.Items, false)
+			if siat.Round2ForCompare(f.MontoTotal) != total {
+				slog.Warn("paquete: montoTotal auto-corregido", "previo", f.MontoTotal, "corregido", total)
+				f.MontoTotal = total
+			}
+		}
 		facturasProcesadas = append(facturasProcesadas, f)
+	}
+
+	// Paso B — Alineación de fechas en memoria al intervalo del evento (evitar 1040).
+	// No muta BD, solo la copia que viaja en el paquete. Vincula ContingencyEventId para trazabilidad.
+	var eventoParaAlineacion *domain.ContingencyEvent
+	if body.CodigoEvento != 0 {
+		if evByCode, err := uc.contingencyRepo.GetBySiatCode(fmt.Sprint(body.CodigoEvento)); err == nil && evByCode != nil {
+			eventoParaAlineacion = evByCode
+		}
+	}
+	if eventoParaAlineacion == nil && uc.contingencyRepo != nil {
+		if latest, err := uc.contingencyRepo.GetLatestByPointOfSale(pointOfSale.ID); err == nil && latest != nil && latest.SiatEventCode != nil {
+			if code, _ := strconv.ParseInt(*latest.SiatEventCode, 10, 64); code == int64(body.CodigoEvento) || body.CodigoEvento == 0 {
+				eventoParaAlineacion = latest
+			}
+		}
+	}
+	if eventoParaAlineacion != nil && eventoParaAlineacion.EndDate != nil {
+		effectiveEnd := *eventoParaAlineacion.EndDate
+		if !cufd.ValidTo.IsZero() && effectiveEnd.After(cufd.ValidTo) {
+			slog.Warn("contingencia: clamp fin evento a ValidTo CUFD", "eventEnd", *eventoParaAlineacion.EndDate, "cufdValidTo", cufd.ValidTo, "effectiveEnd", cufd.ValidTo)
+			effectiveEnd = cufd.ValidTo
+		}
+		if !cufd.ValidFrom.IsZero() && eventoParaAlineacion.StartDate.Before(cufd.ValidFrom) {
+			slog.Warn("contingencia: inicio evento antes de ValidFrom CUFD", "eventStart", eventoParaAlineacion.StartDate, "cufdValidFrom", cufd.ValidFrom)
+		}
+		for idx := range facturasProcesadas {
+			orig := facturasProcesadas[idx].FechaEmision
+			aligned := orig
+			changed := false
+			if orig.Before(eventoParaAlineacion.StartDate) {
+				aligned = eventoParaAlineacion.StartDate.Add(time.Second)
+				changed = true
+			} else if orig.After(effectiveEnd) {
+				aligned = effectiveEnd.Add(-time.Second)
+				changed = true
+			}
+			if changed {
+				slog.Warn("contingencia: FechaEmision alineada en memoria al evento", "factura_idx", idx, "codigoEvento", body.CodigoEvento, "prev", orig.In(siat.LaPaz).Format(time.RFC3339Nano), "new", aligned.In(siat.LaPaz).Format(time.RFC3339Nano), "evento", fmt.Sprintf("%s → %s", eventoParaAlineacion.StartDate.In(siat.LaPaz).Format(time.RFC3339), effectiveEnd.In(siat.LaPaz).Format(time.RFC3339)))
+				facturasProcesadas[idx].FechaEmision = aligned.In(siat.LaPaz)
+			}
+		}
 	}
 
 	// Resolver documento-sector desde la primera factura del paquete o desde la
@@ -485,7 +932,7 @@ func (uc *SiatUsecase) EnviarPaquete(ctx context.Context, companyID, posID strin
 	if err := uc.requireService(); err != nil {
 		return nil, err
 	}
-	if len(body.Facturas) == 0 {
+	if len(body.Facturas) == 0 && len(body.FacturaIDs) == 0 {
 		return nil, domain.NewBadRequestError("El paquete debe contener al menos una factura en el campo facturas")
 	}
 	req, company, pointOfSale, err := uc.buildSolicitudPaquete(companyID, posID, body)
@@ -512,7 +959,13 @@ func (uc *SiatUsecase) EnviarPaquete(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypePaquete, req.CodigoDocumentoSector, int(req.CodigoEmision), len(req.Facturas))
+	var contingencyEventId *string
+	if req.CodigoEvento != 0 && uc.contingencyRepo != nil {
+		if ev, err := uc.contingencyRepo.GetBySiatCode(fmt.Sprint(req.CodigoEvento)); err == nil && ev != nil {
+			contingencyEventId = &ev.ID
+		}
+	}
+	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypePaquete, req.CodigoDocumentoSector, int(req.CodigoEmision), len(req.Facturas), contingencyEventId)
 	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
 }
 
@@ -549,6 +1002,7 @@ func (uc *SiatUsecase) ValidarPaquete(ctx context.Context, companyID, posID stri
 // buildSolicitudMasiva reúne la identidad del contribuyente y los datos del lote.
 func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body MasivaInput) (*siat.SolicitudMasivaFactura, *domain.Company, *domain.PointOfSale, error) {
 	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
+
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -559,7 +1013,21 @@ func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body Masiva
 	if err != nil {
 		return nil, nil, nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
 	}
+	invoices, err := uc.LoadInvoicesIDs(body.FacturaIDs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for _, inv := range invoices {
+		if inv.CompanyId != companyID {
+			return nil, nil, nil, domain.NewBadRequestError("La factura no pertenece a la empresa indicada")
+		}
+		solFactura, err := uc.solicitudDesdeInvoice(inv, company, pointOfSale, cufd)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 
+		body.Facturas = append(body.Facturas, solFactura)
+	}
 	modalidad := uc.effectiveModalidad()
 
 	// Resolver documento-sector desde la primera factura del lote o desde la
@@ -606,10 +1074,9 @@ func (uc *SiatUsecase) EnviarMasiva(ctx context.Context, companyID, posID string
 	if err := uc.requireService(); err != nil {
 		return nil, err
 	}
-	if len(body.Facturas) == 0 {
+	if len(body.Facturas) == 0 && len(body.FacturaIDs) == 0 {
 		return nil, domain.NewBadRequestError("El lote debe contener al menos una factura en el campo facturas")
 	}
-
 	req, company, pointOfSale, err := uc.buildSolicitudMasiva(companyID, posID, body)
 	if err != nil {
 		return nil, err
@@ -724,7 +1191,7 @@ func (uc *SiatUsecase) FirmarFactura(ctx context.Context, companyID, posID strin
 // persistSentPackage guarda el registro de auditoría del envío al SIAT. Un
 // fallo no revierte el envío pero sí se loguea: perder la trazabilidad fiscal
 // (codigoRecepcion ↔ facturas) sin rastro es inaceptable.
-func (uc *SiatUsecase) persistSentPackage(company *domain.Company, pos *domain.PointOfSale, codigoRecepcion string, tipo domain.SentPackageType, docSector, codigoEmision, cantidad int) {
+func (uc *SiatUsecase) persistSentPackage(company *domain.Company, pos *domain.PointOfSale, codigoRecepcion string, tipo domain.SentPackageType, docSector, codigoEmision, cantidad int, contingencyEventId ...*string) {
 	if uc.sentPackageRepo == nil || codigoRecepcion == "" {
 		return
 	}
@@ -737,6 +1204,9 @@ func (uc *SiatUsecase) persistSentPackage(company *domain.Company, pos *domain.P
 		CodigoEmision:         codigoEmision,
 		CantidadFacturas:      cantidad,
 		Status:                domain.PackageStatusPending,
+	}
+	if len(contingencyEventId) > 0 && contingencyEventId[0] != nil {
+		pkg.ContingencyEventId = contingencyEventId[0]
 	}
 	if err := uc.sentPackageRepo.Create(pkg); err != nil {
 		slog.Error("no se pudo persistir el registro de paquete enviado",

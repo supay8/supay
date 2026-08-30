@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -227,6 +228,7 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 // CONFIRMADA) se persiste el estado, el motivo y la fecha de anulación.
 func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
+	log.Println("Funcion emission.go ejecutandose")
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")
@@ -240,24 +242,29 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
 		return nil, domain.NewConflictError("la factura no tiene cuf asignado")
 	}
-
+	log.Println("[DEBUG] bloque Anuul 1 ")
 	if err := uc.validateMotivoAnulacion(inv.CompanyId, codigoMotivo); err != nil {
 		return nil, err
 	}
+	log.Println("[DEBUG] bloque Anuul 2 ")
 
 	if uc.siatService == nil {
 		return nil, ErrSiatNoDisponible
 	}
+	log.Println("[DEBUG] bloque Anuul 3")
 
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
 	}
+	log.Println("[DEBUG] bloque Anuul 4 ")
 
 	result, err := uc.siatService.AnularFactura(ctx, *req, codigoMotivo)
 	if err != nil {
 		return nil, fmt.Errorf("error de anulación: %w", err)
 	}
+	log.Println("[DEBUG] bloque Anuul 5 ", result)
+
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
 			CodigoEstado:    result.CodigoEstado,
@@ -265,6 +272,7 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 			Mensajes:        result.Mensajes,
 		}
 	}
+	log.Println("[DEBUG] bloque Anuul 6 ")
 
 	now := time.Now()
 	fields := map[string]any{
@@ -543,11 +551,20 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		telefonoPtr = &telefono
 	}
 
+	habilitadas := uc.actividadesHabilitadas(&company)
 	items := make([]siat.ItemFactura, 0, len(inv.Items))
 	for i, it := range inv.Items {
 		itemActividad := actividad
 		if it.CodigoActividad != nil && strings.TrimSpace(*it.CodigoActividad) != "" {
 			itemActividad = strings.TrimSpace(*it.CodigoActividad)
+		} else {
+			// Herencia por defecto de actividad principal si no viene definida
+			itemActividad = actividad
+		}
+		// Multiactividad controlada: validar existencia en habilitadas (Warn, no bloquea)
+		if len(habilitadas) > 0 && !habilitadas[itemActividad] {
+			slog.Warn("emission: actividad item no habilitada en padrón, se emite con advertencia (evitar 1017)",
+				"invoice_id", inv.ID, "item", i+1, "actividad_item", itemActividad, "actividad_principal", actividad, "habilitadas", habilitadas)
 		}
 
 		var codigoProductoSin int64
@@ -571,6 +588,13 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 			descuentoPtr = &descuento
 		}
 
+		// Subtotal dinámico estricto: corrige valores quemados/desalineados (1013/1018)
+		subtotalCalc := siat.CalcularSubtotal(it.Quantity, it.UnitPrice, descuentoPtr)
+		if it.Subtotal != 0 && round2(it.Subtotal) != subtotalCalc {
+			slog.Warn("emission: subtotal item auto-corregido",
+				"invoice_id", inv.ID, "item", i+1, "descripcion", it.Description,
+				"subtotal_previo", it.Subtotal, "subtotal_corregido", subtotalCalc)
+		}
 		items = append(items, siat.ItemFactura{
 			ActividadEconomica: itemActividad,
 			CodigoProductoSin:  codigoProductoSin,
@@ -580,9 +604,19 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 			UnidadMedida:       unidadMedida,
 			PrecioUnitario:     it.UnitPrice,
 			MontoDescuento:     descuentoPtr,
-			SubTotal:           it.Subtotal,
+			SubTotal:           subtotalCalc,
 			DatosSector:        it.SectorData,
 		})
+	}
+	// MontoTotal dinámico: suma estricta de subtotales (auto-corrección con Warn)
+	var montoCorregido float64
+	for _, it := range items {
+		montoCorregido += it.SubTotal
+	}
+	montoCorregido = round2(montoCorregido)
+	if round2(inv.Total) != montoCorregido {
+		slog.Warn("emission: montoTotal auto-corregido",
+			"invoice_id", inv.ID, "monto_previo", inv.Total, "monto_corregido", montoCorregido)
 	}
 
 	// La dirección del XML debe coincidir con la registrada en padrón ante el
@@ -661,7 +695,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		CodigoMetodoPago:      inv.CodigoMetodoPago,
 		CodigoMoneda:          inv.CodigoMoneda,
 		TipoCambio:            inv.TipoCambio,
-		MontoTotal:            inv.Total,
+		MontoTotal:            montoCorregido,
 		CodigoDocumentoSector: sector,
 		Layout:                inv.Layout,
 		CodigoTipoFactura:     tipoFactura,

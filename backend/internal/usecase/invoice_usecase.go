@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"strings"
@@ -16,20 +17,21 @@ import (
 )
 
 type InvoiceUsecase struct {
-	invoiceRepo   domain.InvoiceRepository
-	productRepo   domain.ProductRepository
-	syncStateRepo domain.CatalogSyncStateRepository
-	customerRepo  domain.CustomerRepository
-	companyRepo   domain.CompanyRepository
-	posRepo       domain.PointOfSaleRepository
-	catalogRepo   domain.CatalogRepository
-	cufdRepo      domain.CufdRepository
-	leyendaRepo   domain.SiatLeyendaRepository
-	docSectorRepo domain.SiatActividadDocSectorRepository
-	siatService   SiatEmissionService
-	credentials   CredentialProvider
-	modalidad     int
-	pdfService    PdfGenerator
+	invoiceRepo          domain.InvoiceRepository
+	productRepo          domain.ProductRepository
+	syncStateRepo        domain.CatalogSyncStateRepository
+	customerRepo         domain.CustomerRepository
+	companyRepo          domain.CompanyRepository
+	posRepo              domain.PointOfSaleRepository
+	catalogRepo          domain.CatalogRepository
+	cufdRepo             domain.CufdRepository
+	leyendaRepo          domain.SiatLeyendaRepository
+	docSectorRepo        domain.SiatActividadDocSectorRepository
+	siatService          SiatEmissionService
+	credentials          CredentialProvider
+	modalidad            int
+	pdfService           PdfGenerator
+	allowCustomIssueDate bool
 }
 
 // PdfGenerator genera y persiste PDFs (interfaz para evitar import cycle con internal/pdf).
@@ -62,9 +64,16 @@ func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain
 			uc.credentials = typed
 		case PdfGenerator:
 			uc.pdfService = typed
+		case bool:
+			uc.allowCustomIssueDate = typed
 		}
 	}
 	return uc
+}
+
+// SetAllowCustomIssueDate habilita (solo dev/PILOTO) el uso de issue_date custom en POST /invoices.
+func (uc *InvoiceUsecase) SetAllowCustomIssueDate(allow bool) {
+	uc.allowCustomIssueDate = allow
 }
 
 type CreateInvoiceItemRequest struct {
@@ -88,6 +97,66 @@ type CreateInvoiceInlineCustomer struct {
 	DocumentNumber string  `json:"document_number"`
 	Name           string  `json:"name"`
 	Complement     *string `json:"complement,omitempty"`
+}
+
+type FlexibleTime time.Time
+
+func (ft FlexibleTime) MarshalJSON() ([]byte, error) {
+	t := time.Time(ft)
+	return json.Marshal(t.Format(time.RFC3339Nano))
+}
+
+func (ft *FlexibleTime) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	// quoted string
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		// maybe number or RFC3339 without quotes? try raw time
+		var t time.Time
+		if err2 := json.Unmarshal(data, &t); err2 == nil {
+			*ft = FlexibleTime(t)
+			return nil
+		}
+		return err
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	t, err := parseFlexibleTime(s)
+	if err != nil {
+		return err
+	}
+	*ft = FlexibleTime(t)
+	return nil
+}
+
+func (ft FlexibleTime) Time() time.Time { return time.Time(ft) }
+
+func parseFlexibleTime(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.000",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.000",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05.000Z07:00",
+		"2006-01-02T15:04:05Z07:00",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, s, siat.LaPaz); err == nil {
+			return t, nil
+		}
+	}
+	// fallback with SIAT helper (LaPaz .000)
+	if t, err := time.ParseInLocation("2006-01-02T15:04:05.000", s, siat.LaPaz); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("formato de fecha no soportado %q: use RFC3339 o YYYY-MM-DDTHH:mm:ss.SSS", s)
 }
 
 type CreateInvoiceRequest struct {
@@ -114,7 +183,7 @@ type CreateInvoiceRequest struct {
 	PeriodoFacturado      *string                    `json:"periodo_facturado,omitempty"`
 	DatosSector           json.RawMessage            `json:"datos_sector,omitempty"`
 	ReferenciaFacturaId   *string                    `json:"referencia_factura_id,omitempty"`
-	IssueDate             *time.Time                 `json:"issue_date,omitempty"`
+	IssueDate             *FlexibleTime              `json:"issue_date,omitempty"`
 	Items                 []CreateInvoiceItemRequest `json:"items"`
 	// Emit en true crea la factura y la emite al SIAT en una sola llamada.
 	Emit bool `json:"emit,omitempty"`
@@ -380,12 +449,19 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		ajustaFacturaId = &ref.ID
 	}
 
-	// La fecha de emisión debe expresarse en hora local de Bolivia (UTC-4): el
-	// SIAT serializa la hora de pared sin zona y la interpreta como hora local.
-	// Se usa el mismo instante que time.Now(), solo cambia la representación.
+	// La fecha de emisión debe expresarse en hora local de Bolivia (UTC-4).
+	// En desarrollo (ALLOW_CUSTOM_ISSUE_DATE=true, ambientes PILOTO) se permite
+	// fijar issue_date arbitrario para simular ventas offline durante contingencia.
+	// En producción este flag debe ser false y se usa now.
 	issueDate := now.In(siat.LaPaz)
 	if req.IssueDate != nil {
-		issueDate = req.IssueDate.In(siat.LaPaz)
+		if !uc.allowCustomIssueDate {
+			slog.Warn("issue_date custom rechazado; ALLOW_CUSTOM_ISSUE_DATE=false", "requested", req.IssueDate.Time())
+			return nil, domain.NewBadRequestError("issue_date personalizado solo permitido en entorno de desarrollo (ALLOW_CUSTOM_ISSUE_DATE=true)")
+		}
+		t := req.IssueDate.Time()
+		issueDate = t.In(siat.LaPaz)
+		slog.Info("issue_date custom aplicado (dev/contingencia)", "requested", t, "effective", issueDate)
 	}
 
 	inv := &domain.Invoice{
@@ -475,6 +551,18 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 			item.CodigoActividad = &codigoActividad
 			item.CodigoProductoSin = &codigoSin
 			item.UnitCode = &unidad
+		}
+		// Multiactividad controlada: valida herencia o existencia en habilitadas (no bloqueante)
+		actForItem := ""
+		if item.CodigoActividad != nil {
+			actForItem = *item.CodigoActividad
+		}
+		actValidada := uc.validarActividadItem(company, actForItem, index)
+		if actValidada != "" {
+			item.CodigoActividad = &actValidada
+		} else if item.CodigoActividad != nil && strings.TrimSpace(*item.CodigoActividad) == "" {
+			// Si validación retornó vacío (empresa sin principal), limpiar
+			item.CodigoActividad = nil
 		}
 		inv.Items = append(inv.Items, item)
 		subtotal += itemSubtotal
@@ -689,6 +777,59 @@ func (uc *InvoiceUsecase) SectoresHabilitados(companyID string) (map[int]bool, e
 		habilitados[item.CodigoDocumentoSector] = true
 	}
 	return habilitados, nil
+}
+
+// actividadesHabilitadas devuelve el conjunto de códigos de actividad
+// habilitados para la empresa según el catálogo sincronizado
+// actividadesDocumentoSector. Si el repo no está configurado o está vacío,
+// retorna al menos la actividad principal de la empresa para no bloquear
+// emisión en entornos sin sincronización completa. Usado para validación
+// controlada de multiactividad (8549910 principal, 8550100 secundaria, etc.)
+// evitando el rechazo 1017.
+func (uc *InvoiceUsecase) actividadesHabilitadas(company *domain.Company) map[string]bool {
+	habilitadas := make(map[string]bool)
+	if uc.docSectorRepo != nil && company != nil {
+		if items, err := uc.docSectorRepo.List(company.ID); err == nil {
+			for _, it := range items {
+				code := strings.TrimSpace(it.CodigoActividad)
+				if code != "" {
+					habilitadas[code] = true
+				}
+			}
+		}
+	}
+	// Siempre incluir la actividad principal como fallback (padrón SIN)
+	if company != nil && company.CodigoActividad != nil {
+		principal := strings.TrimSpace(*company.CodigoActividad)
+		if principal != "" {
+			habilitadas[principal] = true
+		}
+	}
+	return habilitadas
+}
+
+// validarActividadItem verifica que la actividad del ítem esté habilitada;
+// si no viene definida hereda la principal. No bloquea (Warn) para permitir
+// multiactividad controlada registrada en padrón.
+func (uc *InvoiceUsecase) validarActividadItem(company *domain.Company, itemActividad string, idx int) string {
+	actividadPrincipal := ""
+	if company != nil && company.CodigoActividad != nil {
+		actividadPrincipal = strings.TrimSpace(*company.CodigoActividad)
+	}
+	act := strings.TrimSpace(itemActividad)
+	if act == "" {
+		// Hereda por defecto la actividad principal
+		return actividadPrincipal
+	}
+	habilitadas := uc.actividadesHabilitadas(company)
+	if len(habilitadas) > 0 && !habilitadas[act] {
+		slog.Warn("multiactividad: actividad del ítem no está en habilitadas del padrón, se permite con advertencia (evitar 1017)",
+			"item", idx+1, "actividad_item", act, "actividad_principal", actividadPrincipal,
+			"habilitadas", habilitadas)
+		// No se bloquea: empresa puede tener actividad secundaria registrada fuera de docSector (ej. 8550100 consultoría)
+		// pero se deja traza para sincronizar catálogos.
+	}
+	return act
 }
 
 // resolveDocumentoSector determina el documento-sector del SIAT para la

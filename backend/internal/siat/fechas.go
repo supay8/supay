@@ -5,6 +5,38 @@ import (
 	"time"
 )
 
+// VentanaContingenciaHolgada calcula una ventana de contingencia amplia y
+// holgada para evitar el error 1040 (fuera de rango) por desfase de relojes
+// entre el VPS y los servidores del SIAT (piloto). Margen hacia atrás de
+// 10 minutos es vital por latencias y desincronización.
+// Retorna inicio = now -10m, fin = inicio +2h (= now +1h50m), ambos en LaPaz.
+func VentanaContingenciaHolgada(now time.Time) (time.Time, time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.In(LaPaz)
+	inicio := now.Add(-10 * time.Minute)
+	fin := inicio.Add(2 * time.Hour)
+	return inicio, fin
+}
+
+// DebeUsarVentanaHolgada determina si las fechas solicitadas requieren
+// reemplazo por la ventana holgada. SOLO se usa si faltan fechas, falló el
+// parse o fin <= inicio. Duración corta (ej. 11 min) y now fuera del rango
+// son válidas SIAT (eventos históricos) y NO deben gatillar reemplazo.
+func DebeUsarVentanaHolgada(inicio, fin time.Time, errInicio, errFin error) bool {
+	if errInicio != nil || errFin != nil {
+		return true
+	}
+	if inicio.IsZero() || fin.IsZero() {
+		return true
+	}
+	if !fin.After(inicio) {
+		return true
+	}
+	return false
+}
+
 // LaPaz es la zona horaria de Bolivia (UTC-4). El SIAT expresa la vigencia del
 // CUFD y las fechas de los eventos significativos en esta hora local; no deben
 // convertirse a UTC +00 al comparar o serializar.

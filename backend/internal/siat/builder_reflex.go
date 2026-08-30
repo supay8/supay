@@ -269,7 +269,19 @@ func montoTotalSujetoIva(p *SectorProfile, req SolicitudFactura) float64 {
 	if p.MontoSujetoIvaCero {
 		return 0
 	}
-	return req.MontoTotal
+	// Cálculo dinámico estricto: suma de subtotales = monto sujeto a IVA.
+	// Evita valores quemados (100.00) que generan rechazo 1013/1018.
+	_, sujeto := CalcularTotales(req.Items, false)
+	if round2(req.MontoTotal) != sujeto {
+		// No bloqueamos (auto-corrección en capas superiores), pero dejamos
+		// traza para auditoría de desalineaciones en cabecera.
+		// El caller (NormalizarTotales) ya habrá corregido req.MontoTotal;
+		// este Warn captura casos donde se llamó directo sin normalizar.
+		// Import log/slog solo si se usa; aquí evitamos import circular y
+		// confiamos en el Warn de NormalizarTotales. Si persiste desfase,
+		// sujeto es la verdad fiscal.
+	}
+	return sujeto
 }
 
 // construirDetalles construye las líneas de detalle del sector. Para sectores

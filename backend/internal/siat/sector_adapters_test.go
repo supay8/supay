@@ -35,12 +35,14 @@ func TestCompraVentaAdapterNormalizaPayloadTipado(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload = %T, se esperaba CompraVentaPayload", doc.Payload)
 	}
-	if payload.MontoTotal != 10.13 || payload.TipoCambio != 6.97 {
-		t.Fatalf("montos no normalizados: total=%v cambio=%v", payload.MontoTotal, payload.TipoCambio)
+	// Tras Fase A, MontoTotal y SubTotal se recalculan dinámicamente (quantity*price - discount)
+	// 2.35*4.57 -1.24 = 9.5, por lo que MontoTotal debe ser 9.5, no 10.13 (corrige valor quemado 1013/1018)
+	if payload.MontoTotal != 9.5 || payload.TipoCambio != 6.97 {
+		t.Fatalf("montos no normalizados: total=%v cambio=%v (esperado 9.5/6.97)", payload.MontoTotal, payload.TipoCambio)
 	}
 	item := payload.Items[0]
-	if item.Cantidad != 2.35 || item.PrecioUnitario != 4.57 || item.SubTotal != 10.13 {
-		t.Fatalf("detalle no normalizado: %+v", item)
+	if item.Cantidad != 2.35 || item.PrecioUnitario != 4.57 || item.SubTotal != 9.5 {
+		t.Fatalf("detalle no normalizado: %+v (esperado subtotal 9.5)", item)
 	}
 	if item.MontoDescuento == nil || *item.MontoDescuento != 1.24 {
 		t.Fatalf("descuento no normalizado: %v", item.MontoDescuento)

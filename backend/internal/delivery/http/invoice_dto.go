@@ -18,6 +18,15 @@ type invoiceCustomerDTO struct {
 	Complement     *string `json:"complement,omitempty"`
 }
 
+// invoiceReceiverDTO es la representación del receptor directo en una factura.
+type invoiceReceiverDTO struct {
+	Name           *string `json:"name,omitempty"`
+	DocumentType   *string `json:"document_type,omitempty"`
+	DocumentNumber *string `json:"document_number,omitempty"`
+	Complement     *string `json:"complement,omitempty"`
+	Email          *string `json:"email,omitempty"`
+}
+
 // invoiceItemDTO es la representación de un ítem de factura.
 type invoiceItemDTO struct {
 	ID                string          `json:"id"`
@@ -40,7 +49,7 @@ type invoiceItemDTO struct {
 type invoiceDTO struct {
 	ID                    string               `json:"id"`
 	CompanyId             string               `json:"company_id"`
-	CustomerId            string               `json:"customer_id"`
+	CustomerId            *string              `json:"customer_id,omitempty"`
 	PointOfSaleId         string               `json:"point_of_sale_id"`
 	IdempotencyKey        *string              `json:"idempotency_key,omitempty"`
 	CufdId                string               `json:"cufd_id,omitempty"`
@@ -68,7 +77,8 @@ type invoiceDTO struct {
 	FechaAnulacion        *time.Time           `json:"fecha_anulacion,omitempty"`
 	SiatReceptionCode     *string              `json:"siat_reception_code,omitempty"`
 	SiatMensajes          []siat.Mensaje       `json:"siat_mensajes,omitempty"`
-	Customer              invoiceCustomerDTO   `json:"customer"`
+	Customer              *invoiceCustomerDTO  `json:"customer,omitempty"`
+	Receiver              *invoiceReceiverDTO  `json:"receiver,omitempty"`
 	Items                 []invoiceItemDTO     `json:"items"`
 	CreatedAt             time.Time            `json:"created_at"`
 
@@ -124,6 +134,28 @@ func toInvoiceDTO(inv *domain.Invoice, includes map[string]bool) invoiceDTO {
 		includes = map[string]bool{}
 	}
 
+	var customerDTO *invoiceCustomerDTO
+	if inv.Customer.ID != "" {
+		customerDTO = &invoiceCustomerDTO{
+			ID:             inv.Customer.ID,
+			Name:           inv.Customer.Name,
+			DocumentType:   inv.Customer.DocumentType,
+			DocumentNumber: inv.Customer.DocumentNumber,
+			Complement:     inv.Customer.Complement,
+		}
+	}
+
+	var receiverDTO *invoiceReceiverDTO
+	if inv.ReceiverName != nil {
+		receiverDTO = &invoiceReceiverDTO{
+			Name:           inv.ReceiverName,
+			DocumentType:   inv.ReceiverDocumentType,
+			DocumentNumber: inv.ReceiverDocument,
+			Complement:     inv.ReceiverComplement,
+			Email:          inv.ReceiverEmail,
+		}
+	}
+
 	dto := invoiceDTO{
 		ID:                    inv.ID,
 		CompanyId:             inv.CompanyId,
@@ -155,14 +187,9 @@ func toInvoiceDTO(inv *domain.Invoice, includes map[string]bool) invoiceDTO {
 		FechaAnulacion:        inv.FechaAnulacion,
 		SiatReceptionCode:     inv.SiatReceptionCode,
 		CreatedAt:             inv.CreatedAt,
-		Customer: invoiceCustomerDTO{
-			ID:             inv.Customer.ID,
-			Name:           inv.Customer.Name,
-			DocumentType:   inv.Customer.DocumentType,
-			DocumentNumber: inv.Customer.DocumentNumber,
-			Complement:     inv.Customer.Complement,
-		},
-		Items: make([]invoiceItemDTO, 0, len(inv.Items)),
+		Customer:              customerDTO,
+		Receiver:              receiverDTO,
+		Items:                 make([]invoiceItemDTO, 0, len(inv.Items)),
 	}
 
 	if inv.SiatMensajes != nil && *inv.SiatMensajes != "" {

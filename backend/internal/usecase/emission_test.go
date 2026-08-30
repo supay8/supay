@@ -310,7 +310,7 @@ func testInvoice() *domain.Invoice {
 	return &domain.Invoice{
 		ID:               "inv-1",
 		CompanyId:        "comp-1",
-		CustomerId:       "cust-1",
+		CustomerId:       strPtr("cust-1"),
 		PointOfSaleId:    "pos-1",
 		CufdId:           "cufd-1",
 		InvoiceNumber:    1,
@@ -1384,7 +1384,7 @@ func TestCreateCustomerInline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if inv.CustomerId == "" {
+	if inv.CustomerId == nil || *inv.CustomerId == "" {
 		t.Fatal("CustomerId no asignado")
 	}
 	if len(customerRepo.created) != 1 {
@@ -1412,8 +1412,12 @@ func TestCreateReusaCustomerInline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if inv.CustomerId != "cust-1" {
-		t.Errorf("CustomerId=%q, se esperaba reusar cust-1", inv.CustomerId)
+	if inv.CustomerId == nil || *inv.CustomerId != "cust-1" {
+		val := ""
+		if inv.CustomerId != nil {
+			val = *inv.CustomerId
+		}
+		t.Errorf("CustomerId=%q, se esperaba reusar cust-1", val)
 	}
 	if len(customerRepo.created) != 0 {
 		t.Fatalf("no debió crear cliente; creados=%d", len(customerRepo.created))
@@ -1512,7 +1516,7 @@ func TestCreateRaceIdempotencia(t *testing.T) {
 	ganadora := &domain.Invoice{
 		ID:             "inv-ganador",
 		CompanyId:      "comp-1",
-		CustomerId:     "cust-1",
+		CustomerId:     strPtr("cust-1"),
 		PointOfSaleId:  "pos-1",
 		Status:         domain.InvoicePending,
 		IdempotencyKey: strPtr("orden-race"),
@@ -1553,5 +1557,196 @@ func TestCreateIgnoresEmitFlag(t *testing.T) {
 	}
 	if inv.Status != domain.InvoicePending {
 		t.Errorf("status=%s, se esperaba PENDING (Emit no afecta Create)", inv.Status)
+	}
+}
+
+func TestCreateWithReceiver(t *testing.T) {
+	uc, _, customerRepo, _ := createTestUsecaseBuilder()
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId: "pos-1",
+		Receiver: &CreateInvoiceReceiver{
+			DocumentType:   1, // CI
+			DocumentNumber: "12345678",
+			Name:           "Juan Perez",
+			Email:          strPtr("juan@email.com"),
+		},
+		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+
+	inv, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create with receiver: %v", err)
+	}
+
+	// Should not create a customer
+	if len(customerRepo.created) != 0 {
+		t.Fatalf("no debió crear cliente; creados=%d", len(customerRepo.created))
+	}
+
+	// CustomerId should be nil
+	if inv.CustomerId != nil {
+		t.Errorf("CustomerId=%q, se esperaba nil", *inv.CustomerId)
+	}
+
+	// Receiver snapshot should be persisted
+	if inv.ReceiverName == nil || *inv.ReceiverName != "Juan Perez" {
+		val := ""
+		if inv.ReceiverName != nil {
+			val = *inv.ReceiverName
+		}
+		t.Errorf("ReceiverName=%q", val)
+	}
+	if inv.ReceiverDocumentType == nil || *inv.ReceiverDocumentType != "CI" {
+		val := ""
+		if inv.ReceiverDocumentType != nil {
+			val = *inv.ReceiverDocumentType
+		}
+		t.Errorf("ReceiverDocumentType=%q", val)
+	}
+	if inv.ReceiverDocument == nil || *inv.ReceiverDocument != "12345678" {
+		val := ""
+		if inv.ReceiverDocument != nil {
+			val = *inv.ReceiverDocument
+		}
+		t.Errorf("ReceiverDocument=%q", val)
+	}
+	if inv.ReceiverEmail == nil || *inv.ReceiverEmail != "juan@email.com" {
+		val := ""
+		if inv.ReceiverEmail != nil {
+			val = *inv.ReceiverEmail
+		}
+		t.Errorf("ReceiverEmail=%q", val)
+	}
+}
+
+func TestCreateWithReceiverAssociatesExistingCustomer(t *testing.T) {
+	uc, _, customerRepo, _ := createTestUsecaseBuilder()
+
+	// Pre-create a customer with the same document
+	existingCustomer := &domain.Customer{
+		ID:             "cust-existing",
+		CompanyId:      "comp-1",
+		DocumentType:   "CI",
+		DocumentNumber: "12345678",
+		Name:           "Juan Perez Existente",
+		Complement:     strPtr("COMP"),
+	}
+	if err := customerRepo.Create(existingCustomer); err != nil {
+		t.Fatalf("setup customer: %v", err)
+	}
+
+	req := CreateInvoiceRequest{
+		PointOfSaleId: "pos-1",
+		Receiver: &CreateInvoiceReceiver{
+			DocumentType:   1, // CI
+			DocumentNumber: "12345678",
+			Name:           "Juan Perez", // Different name, but same document
+			Email:          strPtr("juan@email.com"),
+		},
+		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+	}
+
+	inv, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create with receiver: %v", err)
+	}
+
+	// Should associate existing customer
+	if inv.CustomerId == nil || *inv.CustomerId != "cust-existing" {
+		val := ""
+		if inv.CustomerId != nil {
+			val = *inv.CustomerId
+		}
+		t.Errorf("CustomerId=%q, se esperaba cust-existing", val)
+	}
+
+	// Receiver snapshot should still use the request data (not the customer data)
+	if inv.ReceiverName == nil || *inv.ReceiverName != "Juan Perez" {
+		val := ""
+		if inv.ReceiverName != nil {
+			val = *inv.ReceiverName
+		}
+		t.Errorf("ReceiverName=%q", val)
+	}
+	if inv.ReceiverDocument == nil || *inv.ReceiverDocument != "12345678" {
+		val := ""
+		if inv.ReceiverDocument != nil {
+			val = *inv.ReceiverDocument
+		}
+		t.Errorf("ReceiverDocument=%q", val)
+	}
+	if inv.ReceiverComplement != nil && *inv.ReceiverComplement != "" {
+		val := *inv.ReceiverComplement
+		t.Errorf("ReceiverComplement=%q, se esperaba vacío", val)
+	}
+}
+
+func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
+	uc, _, _, _ := createTestUsecaseBuilder()
+
+	tests := []struct {
+		name     string
+		req      CreateInvoiceRequest
+		wantErr  bool
+	}{
+		{
+			name: "none provided",
+			req: CreateInvoiceRequest{
+				PointOfSaleId: "pos-1",
+				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "customer_id and customer",
+			req: CreateInvoiceRequest{
+				PointOfSaleId: "pos-1",
+				CustomerId:    "cust-1",
+				Customer:      &CreateInvoiceInlineCustomer{DocumentType: "CI", DocumentNumber: "123", Name: "Test"},
+				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "customer_id and receiver",
+			req: CreateInvoiceRequest{
+				PointOfSaleId: "pos-1",
+				CustomerId:    "cust-1",
+				Receiver:      &CreateInvoiceReceiver{DocumentType: 1, DocumentNumber: "123", Name: "Test"},
+				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "customer and receiver",
+			req: CreateInvoiceRequest{
+				PointOfSaleId: "pos-1",
+				Customer:      &CreateInvoiceInlineCustomer{DocumentType: "CI", DocumentNumber: "123", Name: "Test"},
+				Receiver:      &CreateInvoiceReceiver{DocumentType: 1, DocumentNumber: "123", Name: "Test"},
+				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "three sources",
+			req: CreateInvoiceRequest{
+				PointOfSaleId: "pos-1",
+				CustomerId:    "cust-1",
+				Customer:      &CreateInvoiceInlineCustomer{DocumentType: "CI", DocumentNumber: "123", Name: "Test"},
+				Receiver:      &CreateInvoiceReceiver{DocumentType: 1, DocumentNumber: "123", Name: "Test"},
+				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := uc.Create(context.Background(), tt.req)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("error=%v, wantErr=%v", err, tt.wantErr)
+			}
+		})
 	}
 }

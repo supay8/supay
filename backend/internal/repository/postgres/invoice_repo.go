@@ -253,6 +253,11 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		FechaAnulacion:        inv.FechaAnulacion,
 		Status:                models.InvoiceStatus(inv.Status),
 		CreatedAt:             inv.CreatedAt,
+		ReceiverName:          inv.ReceiverName,
+		ReceiverDocumentType:  inv.ReceiverDocumentType,
+		ReceiverDocument:      inv.ReceiverDocument,
+		ReceiverComplement:    inv.ReceiverComplement,
+		ReceiverEmail:         inv.ReceiverEmail,
 	}
 	if m.ID == "" {
 		m.ID = uuid.NewString()
@@ -319,6 +324,11 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		FechaAnulacion:        m.FechaAnulacion,
 		Status:                domain.InvoiceStatus(m.Status),
 		CreatedAt:             m.CreatedAt,
+		ReceiverName:          m.ReceiverName,
+		ReceiverDocumentType:  m.ReceiverDocumentType,
+		ReceiverDocument:      m.ReceiverDocument,
+		ReceiverComplement:    m.ReceiverComplement,
+		ReceiverEmail:         m.ReceiverEmail,
 	}
 	inv.Company = *toDomainCompany(&m.Company)
 	inv.Customer = *toDomainCustomer(&m.Customer)

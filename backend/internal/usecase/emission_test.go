@@ -24,6 +24,29 @@ type fakeInvoiceRepo struct {
 	conflictingIdemKey string // simula violación del índice único al crear con esta key
 }
 
+func (f *fakeInvoiceRepo) GetByIDs(ids []string) ([]*domain.Invoice, error) {
+	var result []*domain.Invoice
+	for _, id := range ids {
+		if inv, exists := f.invoices[id]; exists {
+			result = append(result, inv)
+		}
+	}
+	return result, nil
+}
+func (f *fakeInvoiceRepo) ListByPointOfSale(posID string) ([]*domain.Invoice, error) {
+	out := make([]*domain.Invoice, 0)
+	for _, inv := range f.invoices {
+		if inv.PointOfSaleId == posID {
+			out = append(out, inv)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeInvoiceRepo) ReleaseStaleSending(d time.Duration) (int64, error) {
+	return 0, nil
+}
+
 func newFakeInvoiceRepo() *fakeInvoiceRepo {
 	return &fakeInvoiceRepo{invoices: map[string]*domain.Invoice{}}
 }
@@ -71,10 +94,6 @@ func (f *fakeInvoiceRepo) ListFiltered(filter domain.InvoiceListFilter) ([]*doma
 	return out, total, nil
 }
 
-func (f *fakeInvoiceRepo) ListByPointOfSale(string) ([]*domain.Invoice, error) {
-	return nil, nil
-}
-
 func (f *fakeInvoiceRepo) Update(inv *domain.Invoice) error {
 	f.updateCalls++
 	if f.updateErr != nil {
@@ -95,10 +114,6 @@ func (f *fakeInvoiceRepo) ClaimForEmission(id string) (bool, error) {
 	}
 	inv.Status = domain.InvoiceSending
 	return true, nil
-}
-
-func (f *fakeInvoiceRepo) ReleaseStaleSending(time.Duration) (int64, error) {
-	return 0, nil
 }
 
 func (f *fakeInvoiceRepo) ClaimStatus(id string, from, to domain.InvoiceStatus, fields map[string]any) (bool, error) {

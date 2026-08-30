@@ -4,3 +4,6 @@ firma_digital/
 *.pfx
 *.pem
 *.key
+
+storage/
+tmp/

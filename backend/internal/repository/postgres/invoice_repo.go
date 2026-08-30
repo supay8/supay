@@ -200,6 +200,22 @@ func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID s
 	return toDomainCufd(&cufd), nil
 }
 
+// get list of invoices by  IDS
+func (r *PostgresInvoiceRepository) GetByIDs(ids []string) ([]*domain.Invoice, error) {
+	var ms []models.Invoice
+	if err := r.db.Preload("Items").Preload("Customer").Preload("CufdRecord").
+		Where("id IN ?", ids).
+		Order("invoice_number ASC").Find(&ms).Error; err != nil {
+		return nil, err
+	}
+	res := make([]*domain.Invoice, 0, len(ms))
+	for i := range ms {
+		res = append(res, toDomainInvoice(&ms[i]))
+	}
+	return res, nil
+
+}
+
 func toModelInvoice(inv *domain.Invoice) models.Invoice {
 	m := models.Invoice{
 		ID:                    inv.ID,

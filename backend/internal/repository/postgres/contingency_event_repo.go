@@ -52,3 +52,21 @@ func (r *PostgresContingencyEventRepository) GetLatestByPointOfSale(pointOfSaleI
 		CreatedAt:     m.CreatedAt,
 	}, nil
 }
+
+func (r *PostgresContingencyEventRepository) GetBySiatCode(siatCode string) (*domain.ContingencyEvent, error) {
+	var m models.ContingencyEvent
+	if err := r.db.Where("siat_event_code = ?", siatCode).First(&m).Error; err != nil {
+		return nil, err
+	}
+	return &domain.ContingencyEvent{
+		ID:            m.ID,
+		PointOfSaleID: m.PointOfSaleId,
+		Reason:        string(m.Reason),
+		Description:   m.Description,
+		StartDate:     m.StartDate,
+		EndDate:       m.EndDate,
+		SiatEventCode: m.SiatEventCode,
+		IsSynced:      m.IsSynced,
+		CreatedAt:     m.CreatedAt,
+	}, nil
+}

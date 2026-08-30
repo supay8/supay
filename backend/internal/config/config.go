@@ -15,11 +15,12 @@ type Config struct {
 	SiatModalidad int
 	// APIKey protege la API HTTP: todas las rutas (excepto /health) exigen el
 	// header X-API-Key con este valor. Vacío deshabilita la protección.
-	APIKey         string
-	DeploymentMode string // selfhosted | cloud
-	StorageDriver  string // none | local | r2
-	StoragePath    string // base path para driver local
-	R2             R2Config
+	APIKey                 string
+	DeploymentMode         string // selfhosted | cloud
+	StorageDriver          string // none | local | r2
+	StoragePath            string // base path para driver local
+	R2                     R2Config
+	AllowCustomIssueDate   bool // dev-only: permite POST /invoices con issue_date arbitrario
 }
 
 // R2Config agrupa credenciales de Cloudflare R2 (solo en modo cloud + r2).
@@ -106,15 +107,18 @@ func Load() Config {
 		r2Cfg.Endpoint = "https://" + r2Cfg.AccountID + ".r2.cloudflarestorage.com"
 	}
 
+	allowCustomIssueDate := parseBoolEnv("ALLOW_CUSTOM_ISSUE_DATE", ambiente == siat.AmbientePruebas)
+
 	return Config{
-		Port:           getEnv("PORT", "8081"),
-		SIAT:           siatConfig,
-		SiatModalidad:  modalidad,
-		APIKey:         strings.TrimSpace(os.Getenv("API_KEY")),
-		DeploymentMode: deploymentMode,
-		StorageDriver:  storageDriver,
-		StoragePath:    storagePath,
-		R2:             r2Cfg,
+		Port:                 getEnv("PORT", "8081"),
+		SIAT:                 siatConfig,
+		SiatModalidad:        modalidad,
+		APIKey:               strings.TrimSpace(os.Getenv("API_KEY")),
+		DeploymentMode:       deploymentMode,
+		StorageDriver:        storageDriver,
+		StoragePath:          storagePath,
+		R2:                   r2Cfg,
+		AllowCustomIssueDate: allowCustomIssueDate,
 	}
 }
 
@@ -181,4 +185,17 @@ func parseInt64(value string, fallback int64) int64 {
 		return fallback
 	}
 	return parsed
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	if raw, ok := os.LookupEnv(key); ok {
+		trimmed := strings.ToLower(strings.TrimSpace(raw))
+		if trimmed == "true" || trimmed == "1" || trimmed == "yes" {
+			return true
+		}
+		if trimmed == "false" || trimmed == "0" || trimmed == "no" {
+			return false
+		}
+	}
+	return fallback
 }

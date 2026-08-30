@@ -102,10 +102,14 @@ func main() {
 	pdfService := pdf.NewServiceWithStorage(database.DB, pdfStorage)
 
 	credentialService := usecase.NewCredentialService(posRepo, cufdRepo, credentialClient, appCfg.SiatModalidad)
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo, credentialService, pdfService)
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo, credentialService, pdfService, appCfg.AllowCustomIssueDate)
+	invoiceUsecase.SetAllowCustomIssueDate(appCfg.AllowCustomIssueDate)
+	if appCfg.AllowCustomIssueDate {
+		log.Printf("🧪 ALLOW_CUSTOM_ISSUE_DATE=true (PILOTO/dev) — POST /invoices acepta issue_date arbitrario")
+	}
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
-	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo)
+	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo, invoiceRepo)
 	siatHandler := deliveryHttp.NewSiatHandler(siatUsecase, pdfService)
 	catalogHandler := deliveryHttp.NewCatalogHandler(siatUsecase)
 

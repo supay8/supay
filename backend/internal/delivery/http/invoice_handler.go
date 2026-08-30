@@ -40,7 +40,7 @@ func NewInvoiceHandler(uc InvoiceService) *InvoiceHandler {
 func (h *InvoiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req usecase.CreateInvoiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondValidation(w, "payload JSON inválido")
+		respondValidation(w, "payload JSON inválido: "+err.Error())
 		return
 	}
 	req.IdempotencyKey = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -190,7 +190,7 @@ func (h *InvoiceHandler) Annul(w http.ResponseWriter, r *http.Request) {
 		CodigoMotivo int `json:"codigo_motivo"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondValidation(w, "payload JSON inválido")
+		respondValidation(w, "payload JSON inválido: "+err.Error())
 		return
 	}
 	inv, err := h.uc.Annul(r.Context(), id, req.CodigoMotivo)

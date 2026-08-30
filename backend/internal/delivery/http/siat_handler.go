@@ -81,12 +81,13 @@ func (h *SiatHandler) RegistrarEventoSignificativo(w http.ResponseWriter, r *htt
 		"codigo_recepcion": res.Response.CodigoRecepcion,
 	})
 }
-
 func (h *SiatHandler) EnviarPaquete(w http.ResponseWriter, r *http.Request) {
 	var body usecase.PaqueteInput
+	log.Println(body)
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
+
 	res, err := h.siatUC.EnviarPaquete(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
 		respondError(w, err)

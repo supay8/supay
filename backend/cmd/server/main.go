@@ -38,6 +38,15 @@ func main() {
 	// 1. Conectar a PostgreSQL y migrar
 	database.ConnectDB()
 
+	if os.Getenv("AUTO_MIGRATE") == "true" {
+		log.Println("AUTO_MIGRATE=true: ejecutando migraciones de esquema y datos...")
+		err := database.Migrate()
+		if err != nil {
+			log.Fatalf("Error al ejecutar migraciones: %v", err)
+		}
+		log.Println("Migraciones completadas.")
+	}
+
 	// 2. Inyección de dependencias
 	companyRepo := postgres.NewPostgresCompanyRepository(database.DB)
 	companyUsecase := usecase.NewCompanyUsecase(companyRepo)

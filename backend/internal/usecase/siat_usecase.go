@@ -14,7 +14,6 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/siat"
-	"gorm.io/gorm"
 )
 
 // ErrSiatNoDisponible indica que el adaptador SIAT no pudo inicializarse
@@ -123,23 +122,6 @@ func (uc *SiatUsecase) actividadesHabilitadas(company *domain.Company) map[strin
 	return habilitadas
 }
 
-func codigoTipoDocumentoIdentidadSiatu(docType string) (int, error) {
-	switch strings.ToUpper(strings.TrimSpace(docType)) {
-	case "CI":
-		return 1, nil
-	case "CEX":
-		return 2, nil
-	case "PAS":
-		return 3, nil
-	case "NIT":
-		return 4, nil
-	case "OD":
-		return 5, nil
-	default:
-		return 0, domain.NewBadRequestError("tipo de documento de identidad no soportado: " + docType)
-	}
-}
-
 func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domain.Company, pos *domain.PointOfSale, cufd *domain.Cufd) (siat.SolicitudFactura, error) {
 	// Resuelve leyenda como en InvoiceUsecase.resolveLeyenda
 	actividad := ""
@@ -157,7 +139,9 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 			}
 		}
 	}
-	codigoDoc, err := codigoTipoDocumentoIdentidadSiatu(inv.Customer.DocumentType)
+	// El bloque de cliente del SIAT se construye SIEMPRE desde el Customer
+	// asociado (única fuente de verdad; mismo helper que la emisión normal).
+	cliente, err := clienteFromCustomer(inv.Customer)
 	if err != nil {
 		return siat.SolicitudFactura{}, err
 	}
@@ -250,14 +234,8 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 		Archivo:               inv.Archivo,
 		HashArchivo:           inv.HashArchivo,
 		Cuf:                   "",
-		Cliente: siat.ClienteFactura{
-			NombreRazonSocial:            inv.Customer.Name,
-			CodigoTipoDocumentoIdentidad: codigoDoc,
-			NumeroDocumento:              inv.Customer.DocumentNumber,
-			Complemento:                  inv.Customer.Complement,
-			CodigoCliente:                inv.Customer.ID,
-		},
-		Items: solItems,
+		Cliente:               cliente,
+		Items:                 solItems,
 	}, nil
 }
 
@@ -740,6 +718,7 @@ type FirmaResultado struct {
 // de venta + CUIS/CUFD vigente) y la mezcla con los datos específicos del
 // paquete enviados en el body (codigoEvento, descripcion, codigoEmision y
 // facturas).
+
 func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body PaqueteInput) (*siat.SolicitudPaqueteFactura, *domain.Company, *domain.PointOfSale, error) {
 	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
 	if err != nil {
@@ -762,35 +741,17 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		if len(body.FacturaIDs)+len(body.Facturas) > siat.MaxFacturasPorPaquete {
 			return nil, nil, nil, domain.NewBadRequestError(fmt.Sprintf("el paquete supera el límite de %d facturas", siat.MaxFacturasPorPaquete))
 		}
-		seen := make(map[string]bool, len(body.FacturaIDs))
-		for _, fid := range body.FacturaIDs {
-			fid = strings.TrimSpace(fid)
-			if fid == "" {
-				continue
-			}
-			if seen[fid] {
-				continue
-			}
-			seen[fid] = true
-			inv, err := uc.invoiceRepo.GetByID(fid)
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return nil, nil, nil, domain.NewNotFoundError("factura " + fid + " no encontrada")
-				}
-				return nil, nil, nil, err
-			}
-			if inv.CompanyId != company.ID {
-				return nil, nil, nil, domain.NewBadRequestError("la factura " + fid + " no pertenece a la empresa " + company.ID)
-			}
-			if inv.PointOfSaleId != pointOfSale.ID {
-				return nil, nil, nil, domain.NewBadRequestError("la factura " + fid + " no pertenece al punto de venta " + pointOfSale.ID)
-			}
-			if inv.Status == domain.InvoiceAccepted || inv.Status == domain.InvoiceCancelled {
-				return nil, nil, nil, domain.NewConflictError("la factura " + fid + " ya está emitida (status " + string(inv.Status) + ")")
-			}
+		invoices, err := uc.LoadInvoicesIDs(body.FacturaIDs)
+		if err != nil {
+			log.Println("No sepudo traer las facturas")
+		}
+		if len(invoices) != len(body.FacturaIDs) {
+			return nil, nil, nil, domain.NewBadRequestError("no se encontraron todas las facturas por IDs proporcionadas")
+		}
+		for _, inv := range invoices {
 			sol, err := uc.solicitudDesdeInvoice(inv, company, pointOfSale, cufd)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, domain.NewBadRequestError("error al construir solicitud de factura desde invoice: " + err.Error())
 			}
 			body.Facturas = append(body.Facturas, sol)
 		}
@@ -809,6 +770,23 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		f.Cuis = *pointOfSale.Cuis
 		f.Cufd = cufd.Cufd
 		f.CodigoControl = cufd.ControlCode
+
+		// SIAT XSD requiere minLength=1 para codigoCliente.
+		// Si viene como string vacío (""), convertir a nil para omitir del XML.
+		if f.Cliente.CodigoCliente != nil && *f.Cliente.CodigoCliente == "" {
+			f.Cliente.CodigoCliente = nil
+		}
+		// SIAT XSD requiere que 'complemento' esté presente antes que 'codigoCliente'.
+		// Si hay codigoCliente pero no complemento, enviamos string vacío (no nil)
+		// para mantener el orden del XSD y evitar rechazo 920.
+		if f.Cliente.CodigoCliente != nil && f.Cliente.Complemento == nil {
+			empty := ""
+			f.Cliente.Complemento = &empty
+		}
+		// Defensa adicional: asegurar que CodigoCliente nunca sea puntero a string vacío
+		if f.Cliente.CodigoCliente != nil && *f.Cliente.CodigoCliente == "" {
+			f.Cliente.CodigoCliente = nil
+		}
 
 		if f.FechaEmision.IsZero() {
 			f.FechaEmision = time.Now().In(siat.LaPaz)

@@ -310,7 +310,7 @@ func testInvoice() *domain.Invoice {
 	return &domain.Invoice{
 		ID:               "inv-1",
 		CompanyId:        "comp-1",
-		CustomerId:       strPtr("cust-1"),
+		CustomerId:       "cust-1",
 		PointOfSaleId:    "pos-1",
 		CufdId:           "cufd-1",
 		InvoiceNumber:    1,
@@ -337,6 +337,7 @@ func testInvoice() *domain.Invoice {
 			DocumentType:   "CI",
 			DocumentNumber: "1234567",
 			Name:           customerName,
+			CodigoCliente:  "CI1234567",
 		},
 		PointOfSale: domain.PointOfSale{
 			ID:               "pos-1",
@@ -500,8 +501,12 @@ func TestBuildSolicitudFactura(t *testing.T) {
 	if req.Cliente.CodigoTipoDocumentoIdentidad != 1 {
 		t.Errorf("tipoDocumento=%d", req.Cliente.CodigoTipoDocumentoIdentidad)
 	}
-	if req.Cliente.NumeroDocumento != "1234567" || req.Cliente.CodigoCliente != "cust-1" {
-		t.Errorf("cliente documento/codigo=%q/%q", req.Cliente.NumeroDocumento, req.Cliente.CodigoCliente)
+	custID := ""
+	if req.Cliente.CodigoCliente != nil {
+		custID = *req.Cliente.CodigoCliente
+	}
+	if req.Cliente.NumeroDocumento != "1234567" || custID != "CI1234567" {
+		t.Errorf("cliente documento/codigo=%q/%q", req.Cliente.NumeroDocumento, custID)
 	}
 	if len(req.Items) != 1 {
 		t.Fatalf("items=%d", len(req.Items))
@@ -1384,7 +1389,7 @@ func TestCreateCustomerInline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if inv.CustomerId == nil || *inv.CustomerId == "" {
+	if inv.CustomerId == "" {
 		t.Fatal("CustomerId no asignado")
 	}
 	if len(customerRepo.created) != 1 {
@@ -1392,6 +1397,9 @@ func TestCreateCustomerInline(t *testing.T) {
 	}
 	if customerRepo.created[0].Name != "CLIENTE NUEVO" {
 		t.Errorf("nombre=%q", customerRepo.created[0].Name)
+	}
+	if customerRepo.created[0].CodigoCliente != "NIT123456789" {
+		t.Errorf("codigo_cliente=%q, se esperaba NIT123456789 generado al crear", customerRepo.created[0].CodigoCliente)
 	}
 }
 
@@ -1412,12 +1420,13 @@ func TestCreateReusaCustomerInline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if inv.CustomerId == nil || *inv.CustomerId != "cust-1" {
-		val := ""
-		if inv.CustomerId != nil {
-			val = *inv.CustomerId
-		}
-		t.Errorf("CustomerId=%q, se esperaba reusar cust-1", val)
+	if inv.CustomerId != "cust-1" {
+		t.Errorf("CustomerId=%q, se esperaba reusar cust-1", inv.CustomerId)
+	}
+	// El nombre del cliente registrado prevalece: no se sincroniza con el
+	// inline (el cliente es la fuente fiscal de verdad).
+	if inv.Customer.Name != "Juan Perez" {
+		t.Errorf("Customer.Name=%q, se esperaba el nombre del cliente existente", inv.Customer.Name)
 	}
 	if len(customerRepo.created) != 0 {
 		t.Fatalf("no debió crear cliente; creados=%d", len(customerRepo.created))

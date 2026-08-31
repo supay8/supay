@@ -94,7 +94,6 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		rollback()
 		return nil, err
 	}
-
 	result, err := uc.siatService.EmitirFactura(ctx, *req)
 	if err != nil {
 		rollback()
@@ -471,6 +470,41 @@ func siatEstadoToDomain(codigoEstado int) (domain.InvoiceStatus, bool) {
 	}
 }
 
+// clienteFromCustomer construye el bloque ClienteFactura del SIAT desde el
+// Customer de la factura. El Customer es la única fuente de verdad de los
+// datos fiscales del receptor (inmutable tras facturar): no existe snapshot
+// alternativo. Usado por emisión normal, paquetes y contingencia.
+func clienteFromCustomer(c domain.Customer) (siat.ClienteFactura, error) {
+	if strings.TrimSpace(c.DocumentNumber) == "" || strings.TrimSpace(c.Name) == "" {
+		return siat.ClienteFactura{}, domain.NewConflictError("factura sin cliente asociado; toda factura debe referenciar un cliente")
+	}
+	codigoDoc, err := codigoTipoDocumentoIdentidad(c.DocumentType)
+	if err != nil {
+		return siat.ClienteFactura{}, err
+	}
+	complemento := c.Complement
+	var codigoCliente *string
+	if strings.TrimSpace(c.CodigoCliente) != "" {
+		codigo := c.CodigoCliente
+		codigoCliente = &codigo
+		// SIAT XSD requiere que 'complemento' esté presente antes que
+		// 'codigoCliente'. Si hay codigoCliente pero no complemento, se envía
+		// string vacío (no nil) para mantener el orden del XSD y evitar el
+		// rechazo 920.
+		if complemento == nil {
+			empty := ""
+			complemento = &empty
+		}
+	}
+	return siat.ClienteFactura{
+		NombreRazonSocial:            c.Name,
+		CodigoTipoDocumentoIdentidad: codigoDoc,
+		NumeroDocumento:              c.DocumentNumber,
+		Complemento:                  complemento,
+		CodigoCliente:                codigoCliente,
+	}, nil
+}
+
 // buildSolicitudFactura reúne los prerrequisitos de la factura y los mapea a
 // los códigos de catálogo SIN esperados por el SDK.
 func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain.Invoice) (*siat.SolicitudFactura, error) {
@@ -668,31 +702,9 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		usuario = company.UsuarioSiat
 	}
 
-	// Determine receiver data for SIAT
-	var receiverName, receiverDocType, receiverDocNum string
-	var receiverComplement *string
-	var receiverCodigoCliente string
-
-	if inv.Customer.ID != "" {
-		// Has associated customer - use customer data
-		receiverName = inv.Customer.Name
-		receiverDocType = inv.Customer.DocumentType
-		receiverDocNum = inv.Customer.DocumentNumber
-		receiverComplement = inv.Customer.Complement
-		receiverCodigoCliente = inv.Customer.ID
-	} else if inv.ReceiverName != nil {
-		// No customer, use receiver snapshot
-		receiverName = *inv.ReceiverName
-		receiverDocType = *inv.ReceiverDocumentType
-		receiverDocNum = *inv.ReceiverDocument
-		receiverComplement = inv.ReceiverComplement
-		receiverCodigoCliente = ""
-	} else {
-		// Fallback (should not happen with new validation)
-		return nil, domain.NewConflictError("factura sin datos de receptor")
-	}
-
-	codigoDoc, err := codigoTipoDocumentoIdentidad(receiverDocType)
+	// El bloque de cliente del SIAT se construye SIEMPRE desde el Customer
+	// asociado (única fuente de verdad; el cliente es inmutable tras facturar).
+	cliente, err := clienteFromCustomer(inv.Customer)
 	if err != nil {
 		return nil, err
 	}
@@ -729,14 +741,8 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		Archivo:               inv.Archivo,
 		HashArchivo:           inv.HashArchivo,
 		Cuf:                   valueOrEmpty(inv.Cuf),
-		Cliente: siat.ClienteFactura{
-			NombreRazonSocial:            receiverName,
-			CodigoTipoDocumentoIdentidad: codigoDoc,
-			NumeroDocumento:              receiverDocNum,
-			Complemento:                  receiverComplement,
-			CodigoCliente:                receiverCodigoCliente,
-		},
-		Items: items,
+		Cliente:               cliente,
+		Items:                 items,
 	}, nil
 }
 

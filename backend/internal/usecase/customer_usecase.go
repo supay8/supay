@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
 	"gorm.io/gorm"
@@ -39,6 +40,9 @@ func (uc *CustomerUsecase) Create(req CreateCustomerRequest) (*domain.Customer, 
 	if req.DocumentType == "" || req.DocumentNumber == "" {
 		return nil, domain.NewBadRequestError("el tipo y número de documento son obligatorios")
 	}
+	req.DocumentType = strings.ToUpper(strings.TrimSpace(req.DocumentType))
+	req.DocumentNumber = strings.TrimSpace(req.DocumentNumber)
+	req.Name = strings.TrimSpace(req.Name)
 	if !validDocumentType(req.DocumentType) {
 		return nil, domain.NewBadRequestError("tipo de documento inválido (CI, CEX, PAS, NIT, OD)")
 	}
@@ -54,12 +58,16 @@ func (uc *CustomerUsecase) Create(req CreateCustomerRequest) (*domain.Customer, 
 		return nil, domain.ErrCustomerDocumentConflict
 	}
 
+	// El cliente es create-only: el codigo_cliente se fija aquí y no hay vía
+	// de actualización posterior (los campos fiscales son inmutables tras
+	// facturar).
 	c := &domain.Customer{
 		CompanyId:      req.CompanyId,
 		DocumentType:   req.DocumentType,
 		DocumentNumber: req.DocumentNumber,
 		Complement:     req.Complement,
 		Name:           req.Name,
+		CodigoCliente:  generateCodigoCliente(req.DocumentType, req.DocumentNumber),
 	}
 	if err := uc.repo.Create(c); err != nil {
 		return nil, err

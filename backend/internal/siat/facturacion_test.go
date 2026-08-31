@@ -149,7 +149,8 @@ func TestEmitirFacturaCompraVentaPayload(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		Items: []ItemFactura{
 			{
@@ -263,7 +264,8 @@ func TestEmitirFacturaSectorEducativoPayload(t *testing.T) {
 			NombreRazonSocial:            "MARIA TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "7654321",
-			CodigoCliente:                "C-002",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-002"),
 		},
 		Items: []ItemFactura{
 			{
@@ -346,7 +348,8 @@ func TestEmitirFacturaTasaCeroPayload(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		Items: []ItemFactura{
 			{
@@ -696,7 +699,8 @@ func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		[]ItemFactura{
 			{
@@ -767,7 +771,7 @@ func TestBuildNotaCreditoDebitoDebitoPayload(t *testing.T) {
 			CodigoTipoDocumentoIdentidad: 4,
 			NumeroDocumento:              "9876543210",
 			Complemento:                  ptrStr("LP"),
-			CodigoCliente:                "C-002",
+			CodigoCliente:                ptrStr("C-002"),
 		},
 		[]ItemFactura{
 			{

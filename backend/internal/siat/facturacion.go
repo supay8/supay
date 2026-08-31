@@ -24,7 +24,7 @@ type ClienteFactura struct {
 	CodigoTipoDocumentoIdentidad int     `json:"codigoTipoDocumentoIdentidad"`
 	NumeroDocumento              string  `json:"numeroDocumento"`
 	Complemento                  *string `json:"complemento,omitempty"`
-	CodigoCliente                string  `json:"codigoCliente"`
+	CodigoCliente                *string `json:"codigoCliente,omitempty"`
 }
 
 // ItemFactura es una línea de detalle ya mapeada a los catálogos del SIN.
@@ -171,12 +171,10 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
-
 	perfil, err := PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
-
 	// CUF: debe usar el MISMO timestamp de la cabecera y el MISMO correlativo,
 	// y el tipoFacturaDocumento derivado del perfil (mismo valor que viajará en
 	// la solicitud de recepción). En la emisión individual el CUF se compone
@@ -346,7 +344,11 @@ func optionalStringPtr(value *string) *string {
 }
 
 func removeEmptyOptionalFacturaFields(data []byte) []byte {
-	for _, field := range []string{"telefono", "complemento", "montoDescuentoCreditoDebito"} {
+	// NOTA: "complemento" NO se elimina porque el XSD del SIAT requiere que
+	// el elemento complemento esté presente (aunque sea vacío) antes que
+	// codigoCliente para mantener la secuencia válida. Si se elimina, el
+	// SIAT rechaza con código 920: "One of '{complemento}' is expected".
+	for _, field := range []string{"telefono", "montoDescuentoCreditoDebito"} {
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?></`+field+`>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?/>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`(?s)<`+field+`(?:\s[^>]*)?>\s*</`+field+`>`).ReplaceAll(data, nil)

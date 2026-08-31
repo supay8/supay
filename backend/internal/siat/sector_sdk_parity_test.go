@@ -139,7 +139,7 @@ func assertSDKRoots(t *testing.T, profile *SectorProfile, sdkCase sdkSectorCase)
 			Municipio: "LA PAZ", Direccion: "AV. TEST 123", CodigoMetodoPago: 1, CodigoMoneda: 1,
 			TipoCambio: 1, MontoTotal: 100, CodigoDocumentoSector: profile.Codigo, Layout: profile.Layout,
 			DatosSector: jsonRaw(datosDeEjemplo(profile)), Cliente: ClienteFactura{
-				NombreRazonSocial: "CLIENTE TEST", CodigoTipoDocumentoIdentidad: 1, NumeroDocumento: "1234567", CodigoCliente: "C-001",
+				NombreRazonSocial: "CLIENTE TEST", CodigoTipoDocumentoIdentidad: 1, NumeroDocumento: "1234567", CodigoCliente: ptrStr("C-001"),
 			}, Items: []ItemFactura{{ActividadEconomica: "473000", CodigoProductoSin: 12345, CodigoProducto: "P-001", Descripcion: "Item", Cantidad: 1, UnidadMedida: 1, PrecioUnitario: 100, SubTotal: 100}},
 		}
 		built, _, _, err := buildFacturaSDK(req, goSiat.EmisionOnline)

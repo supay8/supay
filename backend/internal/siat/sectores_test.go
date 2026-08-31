@@ -103,7 +103,7 @@ func TestBuildFacturaTodosLosSectores(t *testing.T) {
 					NombreRazonSocial:            "CLIENTE TEST",
 					CodigoTipoDocumentoIdentidad: 1,
 					NumeroDocumento:              "1234567",
-					CodigoCliente:                "C-001",
+					CodigoCliente:                ptrStr("C-001"),
 				},
 				Items: []ItemFactura{{
 					ActividadEconomica: "473000",
@@ -180,7 +180,7 @@ func TestSectorNoSoportadoRechazaEmision(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		Items: []ItemFactura{{
 			ActividadEconomica: "473000",

@@ -83,7 +83,7 @@ func TestCompraVentaBuilderSeleccionaModalidad(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "123",
-			CodigoCliente:                "C-1",
+			CodigoCliente:                ptrStr("C-1"),
 		},
 		Items: []ItemFactura{{
 			ActividadEconomica: "473000",

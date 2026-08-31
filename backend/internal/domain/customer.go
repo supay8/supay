@@ -37,6 +37,6 @@ type CustomerRepository interface {
 	Create(c *Customer) error
 	GetByID(id string) (*Customer, error)
 	GetByCompanyAndDocument(companyID, documentType, documentNumber string) (*Customer, error)
-	GetByCompanyAndFiscalIdentity(companyID string, customer *Customer) (*Customer, error)
+	GetByCompanyAndFiscalIdentity(companyID string, documentType, documentNumber string, complement *string, name string, email string) (*Customer, error)
 	List(companyID string) ([]*Customer, error)
 }

@@ -238,7 +238,17 @@ func generateCodigoCliente(docType, docNumber string) string {
 // difiera (los datos fiscales no se sincronizan: el cliente es inmutable tras
 // facturar).
 func (uc *InvoiceUsecase) resolveCustomer(companyID string, req CreateInvoiceRequest) (*domain.Customer, error) {
-	customer := &domain.Customer{
+	// 1. Intentar buscar el cliente existente
+	existingCustomer, err := uc.customerRepo.GetByCompanyAndFiscalIdentity(companyID, req.ClientDocumentType, req.ClientDocumentNumber, req.ClientComplement, req.ClientName, req.ClientEmail)
+	if err == nil && existingCustomer != nil {
+		return existingCustomer, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	// 2. Si no existe, construir y registrar la nueva entidad
+	newCustomer := &domain.Customer{
 		CompanyId:      companyID,
 		DocumentType:   req.ClientDocumentType,
 		DocumentNumber: req.ClientDocumentNumber,
@@ -248,28 +258,12 @@ func (uc *InvoiceUsecase) resolveCustomer(companyID string, req CreateInvoiceReq
 		CodigoCliente:  generateCodigoCliente(req.ClientDocumentType, req.ClientDocumentNumber),
 	}
 
-	customer, err := uc.customerRepo.GetByCompanyAndFiscalIdentity(companyID, customer)
-	if err == nil && customer != nil {
-		return customer, nil
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := uc.customerRepo.Create(newCustomer); err != nil {
 		return nil, err
 	}
 
-	if err := uc.customerRepo.Create(customer); err != nil {
-		// Race: otro request creó el mismo documento (índice único
-		// idx_company_doc). Se asocia el existente.
-		if errors.Is(err, domain.ErrCustomerDocumentConflict) {
-			existing, err2 := uc.customerRepo.GetByCompanyAndDocument(companyID, customer.DocumentType, customer.DocumentNumber)
-			if err2 == nil && existing != nil {
-				return existing, nil
-			}
-		}
-		return nil, err
-	}
-	return customer, nil
+	return newCustomer, nil
 }
-
 func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) (*domain.Invoice, error) {
 	if req.PointOfSaleId == "" {
 		return nil, domain.NewBadRequestError("el point_of_sale_id es obligatorio")

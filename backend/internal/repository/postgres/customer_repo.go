@@ -22,6 +22,11 @@ func NewPostgresCustomerRepository(db *gorm.DB) domain.CustomerRepository {
 // la inmutabilidad tras facturación se refuerza con el trigger
 // trg_customers_immutability en la base de datos.
 func (r *PostgresCustomerRepository) Create(c *domain.Customer) error {
+	log.Println("Creating customer", c.Name)
+	log.Println("customer email", *c.Email)
+	log.Println("customer name", c.Name)
+	log.Println("customer document type", c.DocumentType)
+	log.Println("customer document number", c.DocumentNumber)
 	dbModel := models.Customer{
 		ID:             uuid.NewString(),
 		CompanyId:      c.CompanyId,
@@ -62,21 +67,12 @@ func (r *PostgresCustomerRepository) GetByCompanyAndDocument(companyID, document
 	return toDomainCustomer(&m), nil
 }
 
-func (r *PostgresCustomerRepository) GetByCompanyAndFiscalIdentity(companyID string, customer *domain.Customer) (*domain.Customer, error) {
+func (r *PostgresCustomerRepository) GetByCompanyAndFiscalIdentity(companyID string, documentType, documentNumber string, complement *string, name string, email string) (*domain.Customer, error) {
 
 	var m models.Customer
-	if customer.Email == nil {
-		customer.Email = new(string)
-		*customer.Email = ""
-	}
 
-	log.Println("company id", companyID)
-	log.Println("customer email", *customer.Email)
-	log.Println("customer name", customer.Name)
-	log.Println("customer document type", customer.DocumentType)
-	log.Println("customer document number", customer.DocumentNumber)
 	if err := r.db.Where("company_id = ? AND document_type = ? AND document_number = ? AND email = ? AND name = ?",
-		companyID, models.DocumentType(customer.DocumentType), customer.DocumentNumber, *customer.Email, customer.Name).First(&m).Error; err != nil {
+		companyID, models.DocumentType(documentType), documentNumber, email, name).First(&m).Error; err != nil {
 		return nil, err
 	}
 	return toDomainCustomer(&m), nil

@@ -52,18 +52,10 @@ type InvoiceItem struct {
 	SectorData json.RawMessage `json:"sector_data,omitempty"`
 }
 
-type ReceiverSnapshot struct {
-	Name           string
-	DocumentType   string
-	DocumentNumber string
-	Complement     *string
-	Email          *string
-}
-
 type Invoice struct {
 	ID                    string          `json:"id"`
 	CompanyId             string          `json:"company_id"`
-	CustomerId            *string         `json:"customer_id,omitempty"`
+	CustomerId            string          `json:"customer_id"`
 	PointOfSaleId         string          `json:"point_of_sale_id"`
 	IdempotencyKey        *string         `json:"idempotency_key,omitempty"`
 	CufdId                string          `json:"cufd_id"`
@@ -96,12 +88,6 @@ type Invoice struct {
 	FechaAnulacion        *time.Time      `json:"fecha_anulacion,omitempty"`
 	Status                InvoiceStatus   `json:"status"`
 	CreatedAt             time.Time       `json:"created_at"`
-
-	ReceiverName           *string `json:"receiver_name,omitempty"`
-	ReceiverDocumentType   *string `json:"receiver_document_type,omitempty"`
-	ReceiverDocument       *string `json:"receiver_document,omitempty"`
-	ReceiverComplement     *string `json:"receiver_complement,omitempty"`
-	ReceiverEmail          *string `json:"receiver_email,omitempty"`
 
 	Company     Company       `json:"company"`
 	Customer    Customer      `json:"customer"`

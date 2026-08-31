@@ -300,13 +300,18 @@ type ContingencyEvent struct {
 	Invoices    []Invoice   `gorm:"foreignKey:ContingencyEventId"`
 }
 
+// Customer es el registro fiscal del receptor. Create-only: la inmutabilidad
+// de los campos fiscales una vez facturado se refuerza con el trigger
+// trg_customers_immutability (ver internal/repository/database/db.go).
 type Customer struct {
 	ID             string       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId      string       `gorm:"type:uuid;index:idx_company_doc,priority:1;not null"`
-	DocumentType   DocumentType `gorm:"type:varchar(20);index:idx_company_doc,priority:2;not null"`
-	DocumentNumber string       `gorm:"type:varchar(30);index:idx_company_doc,priority:3;not null"`
+	CompanyId      string       `gorm:"type:uuid;not null"`
+	DocumentType   DocumentType `gorm:"type:varchar(20);not null"`
+	DocumentNumber string       `gorm:"type:varchar(30);not null"`
 	Complement     *string      `gorm:"type:varchar(10)"`
 	Name           string       `gorm:"type:varchar(150);not null"`
+	Email          *string      `gorm:"type:varchar(150)"`
+	CodigoCliente  string       `gorm:"type:varchar(50);not null;default:''"`
 	CreatedAt      time.Time
 
 	Company  Company   `gorm:"foreignKey:CompanyId"`
@@ -316,7 +321,7 @@ type Customer struct {
 type Invoice struct {
 	ID                    string         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	CompanyId             string         `gorm:"type:uuid;not null"`
-	CustomerId            *string        `gorm:"type:uuid;index"`
+	CustomerId            string         `gorm:"type:uuid;index;not null"`
 	PointOfSaleId         string         `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;uniqueIndex:idx_invoice_idem_key,priority:1;not null"`
 	IdempotencyKey        *string        `gorm:"type:varchar(100);uniqueIndex:idx_invoice_idem_key,priority:2"`
 	CufdId                string         `gorm:"type:uuid;not null"`
@@ -350,12 +355,6 @@ type Invoice struct {
 	FechaAnulacion        *time.Time
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
-
-	ReceiverName           *string `gorm:"type:varchar(150)"`
-	ReceiverDocumentType   *string `gorm:"type:varchar(20)"`
-	ReceiverDocument       *string `gorm:"type:varchar(30)"`
-	ReceiverComplement     *string `gorm:"type:varchar(10)"`
-	ReceiverEmail          *string `gorm:"type:varchar(150)"`
 
 	Company          Company           `gorm:"foreignKey:CompanyId"`
 	Customer         Customer          `gorm:"foreignKey:CustomerId"`

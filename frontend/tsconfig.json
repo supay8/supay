@@ -6,7 +6,9 @@
   ],
   "compilerOptions": {
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@supay/dashboard/*": ["../packages/dashboard/src/*"],
+      "@supay/dashboard": ["../packages/dashboard/src/index.ts"]
     }
   }
 }

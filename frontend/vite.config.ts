@@ -8,7 +8,13 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(__dirname, "../packages/dashboard/src"),
+      "@frontend": path.resolve(__dirname, "./src"),
+      "@supay/dashboard": path.resolve(__dirname, "../packages/dashboard/src"),
+      "@supay/dashboard/styles.css": path.resolve(
+        __dirname,
+        "../packages/dashboard/src/styles.css"
+      ),
     },
   },
 })

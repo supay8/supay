@@ -22,7 +22,9 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@supay/dashboard": ["../packages/dashboard/src/index.ts"],
+      "@supay/dashboard/*": ["../packages/dashboard/src/*"]
     }
   },
   "include": ["src"]

@@ -13,12 +13,14 @@ import (
 	"time"
 
 	appconfig "github.com/brandsrx/supay/internal/config"
+	"github.com/brandsrx/supay/internal/crypto"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/repository/database"
 	"github.com/brandsrx/supay/internal/repository/postgres"
 	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/storage"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/joho/godotenv"
 )
@@ -79,26 +81,52 @@ func main() {
 
 	invoiceRepo := postgres.NewPostgresInvoiceRepository(database.DB)
 
-	// 3. Servicio SIAT sobre el SDK go-siat (CUIS y CUFD)
-	var siatService *siat.Service
-	if err := appCfg.SIAT.Validate(); err == nil {
-		svc, svcErr := siat.NewService(appCfg.SIAT)
-		if svcErr != nil {
-			log.Printf("⚠️ No se pudo inicializar el servicio SIAT: %v", svcErr)
-		} else {
-			siatService = svc
-			log.Printf("✅ Servicio SIAT listo: ambiente=%d base=%s", appCfg.SIAT.CodigoAmbiente, appCfg.SIAT.BaseURL)
+	// 3. Capa criptográfica + SiatClientProvider (multi-tenant)
+	var cryptoSvc *crypto.Service
+	if strings.TrimSpace(appCfg.EncryptionKey) != "" {
+		svc, err := crypto.New(appCfg.EncryptionKey)
+		if err != nil {
+			log.Fatalf("❌ ENCRYPTION_KEY inválida: %v", err)
 		}
+		cryptoSvc = svc
+		log.Printf("🔐 Cifrado AES-GCM activo (ENCRYPTION_KEY configurada)")
 	} else {
-		log.Printf("⚠️ Configuración SIAT inválida o incompleta: %v", err)
+		log.Printf("⚠️ ENCRYPTION_KEY no configurada: credenciales SIAT por empresa no estarán cifradas (configure para producción)")
+	}
+
+	certificateRepo := postgres.NewPostgresCertificateRepository(database.DB)
+	// CertStorage abstracto: local (self-hosted, ./storage/certs), r2 (SaaS bucket privado supay-certs, creación manual, SSE-S3), memory/none solo tests
+	certStorage, err := storage.NewCertStorageFromConfig(appCfg)
+	if err != nil {
+		log.Fatalf("❌ Cert storage no disponible (STORAGE_DRIVER=%s): %v", appCfg.StorageDriver, err)
+	}
+	log.Printf("🔐 Cert storage: driver=%s bucket=%s", appCfg.StorageDriver, appCfg.R2.Bucket)
+	siatProvider := siat.NewSiatClientProviderWithStorage(companyRepo, certificateRepo, cryptoSvc, certStorage, siat.ProviderInfra{
+		BaseURL:        appCfg.SiatInfra.BaseURL,
+		CodigoAmbiente: appCfg.SiatInfra.CodigoAmbiente,
+		Timeout:        appCfg.SiatInfra.Timeout,
+		TraceId:        appCfg.SiatInfra.TraceId,
+		UserAgent:      appCfg.SiatInfra.UserAgent,
+		Modalidad:      appCfg.SiatInfra.Modalidad,
+	})
+	log.Printf("✅ SiatClientProvider listo: base=%s ambiente=%d (multi-tenant por CompanyId)", appCfg.SiatInfra.BaseURL, appCfg.SiatInfra.CodigoAmbiente)
+
+	// Legacy single-tenant service (fallback si no hay provider por empresa). Ya no bloquea arranque.
+	var siatService *siat.Service
+	var legacyCfg = appCfg.SIAT
+	if legacyCfg.Token != "" && legacyCfg.Nit != 0 && legacyCfg.CodigoSistema != "" {
+		if err := legacyCfg.Validate(); err == nil {
+			if svc, svcErr := siat.NewService(legacyCfg); svcErr == nil {
+				siatService = svc
+				log.Printf("✅ Servicio SIAT legacy listo (fallback): ambiente=%d base=%s", legacyCfg.CodigoAmbiente, legacyCfg.BaseURL)
+			}
+		}
 	}
 
 	var emissionService usecase.SiatEmissionService
 	if siatService != nil {
 		emissionService = siatService
 	}
-	// Credenciales lazy: la emisión solicita CUIS/CUFD on-demand en lugar de
-	// exigir el alta manual explícita.
 	var credentialClient usecase.SiatCredentialClient
 	if siatService != nil {
 		credentialClient = siatService
@@ -110,28 +138,35 @@ func main() {
 	log.Printf("📄 PDF storage: driver=%s deployment=%s path=%s", appCfg.StorageDriver, appCfg.DeploymentMode, appCfg.StoragePath)
 	pdfService := pdf.NewServiceWithStorage(database.DB, pdfStorage)
 
-	credentialService := usecase.NewCredentialService(posRepo, cufdRepo, credentialClient, appCfg.SiatModalidad)
-	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatModalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo, credentialService, pdfService, appCfg.AllowCustomIssueDate)
+	credentialService := usecase.NewCredentialServiceWithProvider(posRepo, cufdRepo, siatProvider, appCfg.SiatInfra.Modalidad)
+	if credentialClient != nil && siatProvider == nil {
+		credentialService = usecase.NewCredentialService(posRepo, cufdRepo, credentialClient, appCfg.SiatInfra.Modalidad)
+	}
+	invoiceUsecase := usecase.NewInvoiceUsecase(invoiceRepo, customerRepo, companyRepo, posRepo, catalogRepo, cufdRepo, emissionService, appCfg.SiatInfra.Modalidad, productRepo, syncStateRepo, siatLeyendaRepo, siatDocSectorRepo, credentialService, pdfService, appCfg.AllowCustomIssueDate, siatProvider)
 	invoiceUsecase.SetAllowCustomIssueDate(appCfg.AllowCustomIssueDate)
 	if appCfg.AllowCustomIssueDate {
 		log.Printf("🧪 ALLOW_CUSTOM_ISSUE_DATE=true (PILOTO/dev) — POST /invoices acepta issue_date arbitrario")
 	}
 	invoiceHandler := deliveryHttp.NewInvoiceHandler(invoiceUsecase)
 
-	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatModalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo, invoiceRepo)
+	siatUsecase := usecase.NewSiatUsecase(companyRepo, posRepo, cufdRepo, tipoPVRepo, catalogRepo, contingencyRepo, sentPackageRepo, siatService, appCfg.SiatInfra.Modalidad, sinProductRepo, syncStateRepo, siatActividadRepo, siatLeyendaRepo, siatDocSectorRepo, invoiceRepo, siatProvider)
+
+	certificateUsecase := usecase.NewCertificateUsecase(certificateRepo, companyRepo, cryptoSvc, certStorage)
+	certificateHandler := deliveryHttp.NewCertificateHandler(certificateUsecase)
 	siatHandler := deliveryHttp.NewSiatHandler(siatUsecase, pdfService)
 	catalogHandler := deliveryHttp.NewCatalogHandler(siatUsecase)
 
 	// 4. Router
 	router := deliveryHttp.NewRouter(deliveryHttp.Handlers{
-		Company:  companyHandler,
-		Pos:      posHandler,
-		Branch:   branchHandler,
-		Customer: customerHandler,
-		Product:  productHandler,
-		Invoice:  invoiceHandler,
-		Siat:     siatHandler,
-		Catalog:  catalogHandler,
+		Company:     companyHandler,
+		Pos:         posHandler,
+		Branch:      branchHandler,
+		Customer:    customerHandler,
+		Product:     productHandler,
+		Invoice:     invoiceHandler,
+		Siat:        siatHandler,
+		Catalog:     catalogHandler,
+		Certificate: certificateHandler,
 	}, appCfg.APIKey)
 
 	srv := &http.Server{

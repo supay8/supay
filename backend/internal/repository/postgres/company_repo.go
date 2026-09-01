@@ -16,12 +16,17 @@ func NewPostgresCompanyRepository(db *gorm.DB) domain.CompanyRepository {
 }
 
 func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
+	modalidad := c.Modalidad
+	if modalidad == 0 {
+		modalidad = 1
+	}
 	dbModel := models.Company{
 		ID:              uuid.NewString(),
 		Nit:             c.Nit,
 		BusinessName:    c.BusinessName,
 		CodigoSistema:   c.CodigoSistema,
 		Ambiente:        models.SiatEnvironment(c.Ambiente),
+		Modalidad:       modalidad,
 		Municipio:       c.Municipio,
 		Direccion:       c.Direccion,
 		Telefono:        c.Telefono,
@@ -66,6 +71,7 @@ func toDomainCompany(dbModel *models.Company) *domain.Company {
 		BusinessName:    dbModel.BusinessName,
 		CodigoSistema:   dbModel.CodigoSistema,
 		Ambiente:        domain.SiatEnvironment(dbModel.Ambiente),
+		Modalidad:       dbModel.Modalidad,
 		Municipio:       dbModel.Municipio,
 		Direccion:       dbModel.Direccion,
 		Telefono:        dbModel.Telefono,
@@ -87,6 +93,10 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	dbModel.BusinessName = c.BusinessName
 	dbModel.CodigoSistema = c.CodigoSistema
 	dbModel.Ambiente = models.SiatEnvironment(c.Ambiente)
+	dbModel.Modalidad = c.Modalidad
+	if dbModel.Modalidad == 0 {
+		dbModel.Modalidad = 1
+	}
 	dbModel.Municipio = c.Municipio
 	dbModel.Direccion = c.Direccion
 	dbModel.Telefono = c.Telefono

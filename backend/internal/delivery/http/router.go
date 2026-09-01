@@ -14,14 +14,15 @@ const maxBodyBytes int64 = 10 << 20
 
 // Handlers agrupa todos los handlers HTTP de la aplicación.
 type Handlers struct {
-	Company  *CompanyHandler
-	Pos      *PosHandler
-	Branch   *BranchHandler
-	Customer *CustomerHandler
-	Product  *ProductHandler
-	Invoice  *InvoiceHandler
-	Siat     *SiatHandler
-	Catalog  *CatalogHandler
+	Company     *CompanyHandler
+	Pos         *PosHandler
+	Branch      *BranchHandler
+	Customer    *CustomerHandler
+	Product     *ProductHandler
+	Invoice     *InvoiceHandler
+	Siat        *SiatHandler
+	Catalog     *CatalogHandler
+	Certificate *CertificateHandler
 }
 
 // NewRouter construye el router de Chi con todas las rutas de la API.
@@ -45,6 +46,7 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 		if apiKey != "" {
 			r.Use(RequireAPIKey(apiKey))
 		}
+		r.Use(InjectCompanyID)
 
 		r.Post("/setup", h.Siat.Setup)
 
@@ -53,6 +55,13 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 			r.Get("/", h.Company.GetByNit)
 			r.Patch("/{id}", h.Company.Update)
 			r.Delete("/{id}", h.Company.Delete)
+
+			if h.Certificate != nil {
+				r.Post("/{id}/certificates", h.Certificate.Create)
+				r.Get("/{id}/certificates", h.Certificate.List)
+				r.Get("/{id}/certificates/active", h.Certificate.GetActive)
+				r.Delete("/{id}/certificates/{certId}", h.Certificate.Delete)
+			}
 
 			if h.Catalog != nil {
 				r.Get("/{id}/actividades-economicas", h.Catalog.ListCompanyActividadesEconomicas)

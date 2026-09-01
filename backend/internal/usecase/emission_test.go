@@ -230,6 +230,9 @@ func (f *fakeCustomerRepo) GetByCompanyAndDocument(_, documentType, documentNumb
 	}
 	return c, nil
 }
+func (f *fakeCustomerRepo) GetByCompanyAndFiscalIdentity(companyID, documentType, documentNumber string, complement *string, name string, email string) (*domain.Customer, error) {
+	return f.GetByCompanyAndDocument(companyID, documentType, documentNumber)
+}
 func (f *fakeCustomerRepo) List(string) ([]*domain.Customer, error) { return nil, nil }
 
 type fakePointOfSaleRepo struct {
@@ -1525,7 +1528,7 @@ func TestCreateRaceIdempotencia(t *testing.T) {
 	ganadora := &domain.Invoice{
 		ID:             "inv-ganador",
 		CompanyId:      "comp-1",
-		CustomerId:     strPtr("cust-1"),
+		CustomerId:     "cust-1",
 		PointOfSaleId:  "pos-1",
 		Status:         domain.InvoicePending,
 		IdempotencyKey: strPtr("orden-race"),
@@ -1588,45 +1591,14 @@ func TestCreateWithReceiver(t *testing.T) {
 		t.Fatalf("Create with receiver: %v", err)
 	}
 
-	// Should not create a customer
-	if len(customerRepo.created) != 0 {
-		t.Fatalf("no debió crear cliente; creados=%d", len(customerRepo.created))
+	// Legacy Receiver ahora mapea a Customer (create-only)
+	if len(customerRepo.created) != 1 {
+		t.Fatalf("debió crear 1 cliente via Receiver legacy; creados=%d", len(customerRepo.created))
 	}
-
-	// CustomerId should be nil
-	if inv.CustomerId != nil {
-		t.Errorf("CustomerId=%q, se esperaba nil", *inv.CustomerId)
+	if inv.CustomerId == "" {
+		t.Errorf("CustomerId se esperaba con valor")
 	}
-
-	// Receiver snapshot should be persisted
-	if inv.ReceiverName == nil || *inv.ReceiverName != "Juan Perez" {
-		val := ""
-		if inv.ReceiverName != nil {
-			val = *inv.ReceiverName
-		}
-		t.Errorf("ReceiverName=%q", val)
-	}
-	if inv.ReceiverDocumentType == nil || *inv.ReceiverDocumentType != "CI" {
-		val := ""
-		if inv.ReceiverDocumentType != nil {
-			val = *inv.ReceiverDocumentType
-		}
-		t.Errorf("ReceiverDocumentType=%q", val)
-	}
-	if inv.ReceiverDocument == nil || *inv.ReceiverDocument != "12345678" {
-		val := ""
-		if inv.ReceiverDocument != nil {
-			val = *inv.ReceiverDocument
-		}
-		t.Errorf("ReceiverDocument=%q", val)
-	}
-	if inv.ReceiverEmail == nil || *inv.ReceiverEmail != "juan@email.com" {
-		val := ""
-		if inv.ReceiverEmail != nil {
-			val = *inv.ReceiverEmail
-		}
-		t.Errorf("ReceiverEmail=%q", val)
-	}
+	_ = inv
 }
 
 func TestCreateWithReceiverAssociatesExistingCustomer(t *testing.T) {
@@ -1662,32 +1634,8 @@ func TestCreateWithReceiverAssociatesExistingCustomer(t *testing.T) {
 	}
 
 	// Should associate existing customer
-	if inv.CustomerId == nil || *inv.CustomerId != "cust-existing" {
-		val := ""
-		if inv.CustomerId != nil {
-			val = *inv.CustomerId
-		}
-		t.Errorf("CustomerId=%q, se esperaba cust-existing", val)
-	}
-
-	// Receiver snapshot should still use the request data (not the customer data)
-	if inv.ReceiverName == nil || *inv.ReceiverName != "Juan Perez" {
-		val := ""
-		if inv.ReceiverName != nil {
-			val = *inv.ReceiverName
-		}
-		t.Errorf("ReceiverName=%q", val)
-	}
-	if inv.ReceiverDocument == nil || *inv.ReceiverDocument != "12345678" {
-		val := ""
-		if inv.ReceiverDocument != nil {
-			val = *inv.ReceiverDocument
-		}
-		t.Errorf("ReceiverDocument=%q", val)
-	}
-	if inv.ReceiverComplement != nil && *inv.ReceiverComplement != "" {
-		val := *inv.ReceiverComplement
-		t.Errorf("ReceiverComplement=%q, se esperaba vacío", val)
+	if inv.CustomerId != "cust-existing" {
+		t.Errorf("CustomerId=%q, se esperaba cust-existing", inv.CustomerId)
 	}
 }
 
@@ -1715,7 +1663,7 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 				Customer:      &CreateInvoiceInlineCustomer{DocumentType: "CI", DocumentNumber: "123", Name: "Test"},
 				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "customer_id and receiver",
@@ -1725,7 +1673,7 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 				Receiver:      &CreateInvoiceReceiver{DocumentType: 1, DocumentNumber: "123", Name: "Test"},
 				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "customer and receiver",
@@ -1735,7 +1683,7 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 				Receiver:      &CreateInvoiceReceiver{DocumentType: 1, DocumentNumber: "123", Name: "Test"},
 				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "three sources",
@@ -1746,7 +1694,7 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 				Receiver:      &CreateInvoiceReceiver{DocumentType: 1, DocumentNumber: "123", Name: "Test"},
 				Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 

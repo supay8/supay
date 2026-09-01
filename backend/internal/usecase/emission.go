@@ -85,16 +85,17 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		}
 	}
 
-	if uc.siatService == nil {
-		rollback()
-		return nil, ErrSiatNoDisponible
-	}
 	req, err := uc.buildSolicitudFactura(ctx, inv)
 	if err != nil {
 		rollback()
 		return nil, err
 	}
-	result, err := uc.siatService.EmitirFactura(ctx, *req)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		rollback()
+		return nil, err
+	}
+	result, err := svc.EmitirFactura(ctx, *req)
 	if err != nil {
 		rollback()
 		return nil, fmt.Errorf("error de emisión: %w", err)
@@ -198,16 +199,16 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
 		return nil, domain.NewConflictError("la factura no ha sido emitida (no tiene cuf asignado)")
 	}
-	if uc.siatService == nil {
-		return nil, ErrSiatNoDisponible
-	}
 
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
 	}
-
-	result, err := uc.siatService.VerificarEstado(ctx, *req)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.VerificarEstado(ctx, *req)
 	if err != nil {
 		return nil, fmt.Errorf("error de verificación: %w", err)
 	}
@@ -247,9 +248,6 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	}
 	log.Println("[DEBUG] bloque Anuul 2 ")
 
-	if uc.siatService == nil {
-		return nil, ErrSiatNoDisponible
-	}
 	log.Println("[DEBUG] bloque Anuul 3")
 
 	req, err := uc.buildSolicitudDocumento(inv)
@@ -258,7 +256,11 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	}
 	log.Println("[DEBUG] bloque Anuul 4 ")
 
-	result, err := uc.siatService.AnularFactura(ctx, *req, codigoMotivo)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.AnularFactura(ctx, *req, codigoMotivo)
 	if err != nil {
 		return nil, fmt.Errorf("error de anulación: %w", err)
 	}
@@ -320,16 +322,16 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
 		return nil, domain.NewConflictError("la factura no tiene cuf asignado")
 	}
-	if uc.siatService == nil {
-		return nil, ErrSiatNoDisponible
-	}
 
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
 	}
-
-	result, err := uc.siatService.RevertirAnulacion(ctx, *req)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.RevertirAnulacion(ctx, *req)
 	if err != nil {
 		return nil, fmt.Errorf("error de reversión de anulación: %w", err)
 	}
@@ -411,7 +413,7 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 
 	modalidad := inv.Modalidad
 	if modalidad <= 0 {
-		modalidad = uc.modalidad
+		modalidad = uc.effectiveModalidadForCompany(&inv.Company)
 	}
 	if modalidad <= 0 {
 		modalidad = siat.ModalidadElectronica
@@ -563,7 +565,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 
 	modalidad := inv.Modalidad
 	if modalidad <= 0 {
-		modalidad = uc.modalidad
+		modalidad = uc.effectiveModalidadForCompany(&company)
 	}
 	if modalidad <= 0 {
 		modalidad = siat.ModalidadElectronica

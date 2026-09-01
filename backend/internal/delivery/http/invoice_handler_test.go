@@ -165,7 +165,7 @@ func sampleInvoice() *domain.Invoice {
 	return &domain.Invoice{
 		ID:            "inv-1",
 		CompanyId:     "comp-1",
-		CustomerId:    strPtr("cust-1"),
+		CustomerId:    "cust-1",
 		PointOfSaleId: "pos-1",
 		CufdId:        "cufd-1",
 		InvoiceNumber: 42,
@@ -476,10 +476,7 @@ func TestGetByIDExponeCamposSectoriales(t *testing.T) {
 	if dto.ContingencyEventId == nil || *dto.ContingencyEventId != eventID {
 		t.Error("contingency_event_id no expuesto")
 	}
-	custVal := ""
-	if dto.CustomerId != nil {
-		custVal = *dto.CustomerId
-	}
+	custVal := dto.CustomerId
 	if dto.CufdId != cufdID || dto.CompanyId != "comp-1" || dto.PointOfSaleId != "pos-1" || custVal != "cust-1" {
 		t.Errorf("referencias incompletas: company=%q pos=%q customer=%q cufd=%q",
 			dto.CompanyId, dto.PointOfSaleId, custVal, dto.CufdId)

@@ -28,10 +28,38 @@ type InvoiceUsecase struct {
 	leyendaRepo          domain.SiatLeyendaRepository
 	docSectorRepo        domain.SiatActividadDocSectorRepository
 	siatService          SiatEmissionService
+	siatProvider         siat.SiatClientProvider
 	credentials          CredentialProvider
 	modalidad            int
 	pdfService           PdfGenerator
 	allowCustomIssueDate bool
+}
+
+// SetSiatProvider inyecta el provider multi-tenant.
+func (uc *InvoiceUsecase) SetSiatProvider(p siat.SiatClientProvider) { uc.siatProvider = p }
+
+func (uc *InvoiceUsecase) resolveEmissionService(ctx context.Context, companyID string) (SiatEmissionService, error) {
+	if uc.siatProvider != nil && companyID != "" {
+		if svc, err := uc.siatProvider.GetForCompany(ctx, companyID); err == nil {
+			return svc, nil
+		} else if uc.siatService == nil {
+			return nil, err
+		}
+	}
+	if uc.siatService == nil {
+		return nil, ErrSiatNoDisponible
+	}
+	return uc.siatService, nil
+}
+
+func (uc *InvoiceUsecase) effectiveModalidadForCompany(company *domain.Company) int {
+	if company != nil && company.Modalidad != 0 {
+		return company.Modalidad
+	}
+	if uc.modalidad != 0 {
+		return uc.modalidad
+	}
+	return siat.ModalidadElectronica
 }
 
 // PdfGenerator genera y persiste PDFs (interfaz para evitar import cycle con internal/pdf).
@@ -66,6 +94,8 @@ func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain
 			uc.pdfService = typed
 		case bool:
 			uc.allowCustomIssueDate = typed
+		case siat.SiatClientProvider:
+			uc.siatProvider = typed
 		}
 	}
 	return uc
@@ -163,6 +193,12 @@ type CreateInvoiceRequest struct {
 	// CompanyId es opcional: si se omite se deriva del point_of_sale_id.
 	CompanyId     string `json:"company_id,omitempty"`
 	PointOfSaleId string `json:"point_of_sale_id"`
+	// CustomerId es alias legacy para compatibilidad con tests; preferir ClientDocument*.
+	CustomerId string `json:"customer_id,omitempty"`
+	// Customer inline legacy (tests): preferir ClientDocument*.
+	Customer *CreateInvoiceInlineCustomer `json:"customer,omitempty"`
+	// Receiver deprecated: compatibilidad con tests viejos (mapear a ClientDocument*).
+	Receiver *CreateInvoiceReceiver `json:"receiver,omitempty"`
 	// CustomerId / Customer: toda factura referencia un Customer (única
 	// fuente de verdad de los datos fiscales del receptor). El modo receiver
 	// (receptor directo sin cliente) fue eliminado.
@@ -208,6 +244,32 @@ func cadenaOpcional(v *string) string {
 	return strings.TrimSpace(*v)
 }
 
+// CreateInvoiceReceiver deprecated: kept for test compatibility. Maps int code to string type.
+type CreateInvoiceReceiver struct {
+	DocumentType   int     `json:"document_type"`
+	DocumentNumber string  `json:"document_number"`
+	Complement     *string `json:"complement,omitempty"`
+	Name           string  `json:"name"`
+	Email          *string `json:"email,omitempty"`
+}
+
+func documentTypeCodeToString(code int) string {
+	switch code {
+	case 1:
+		return "CI"
+	case 2:
+		return "CEX"
+	case 3:
+		return "PAS"
+	case 4:
+		return "NIT"
+	case 5:
+		return "OD"
+	default:
+		return "CI"
+	}
+}
+
 func documentTypeStringToCode(docType string) int {
 	switch strings.ToUpper(strings.TrimSpace(docType)) {
 	case "CI":
@@ -238,6 +300,12 @@ func generateCodigoCliente(docType, docNumber string) string {
 // difiera (los datos fiscales no se sincronizan: el cliente es inmutable tras
 // facturar).
 func (uc *InvoiceUsecase) resolveCustomer(companyID string, req CreateInvoiceRequest) (*domain.Customer, error) {
+	if strings.TrimSpace(req.ClientDocumentNumber) == "" || strings.TrimSpace(req.ClientName) == "" {
+		return nil, domain.NewBadRequestError("cliente requerido: client_document_number y client_name son obligatorios (o use customer_id/customer/receiver)")
+	}
+	if strings.TrimSpace(req.ClientDocumentType) == "" {
+		req.ClientDocumentType = "CI"
+	}
 	// 1. Intentar buscar el cliente existente
 	existingCustomer, err := uc.customerRepo.GetByCompanyAndFiscalIdentity(companyID, req.ClientDocumentType, req.ClientDocumentNumber, req.ClientComplement, req.ClientName, req.ClientEmail)
 	if err == nil && existingCustomer != nil {
@@ -318,9 +386,55 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		return nil, err
 	}
 
-	customer, err := uc.resolveCustomer(req.CompanyId, req)
-	if err != nil {
-		return nil, err
+	// Alias legacy: si viene Customer inline, mapear a ClientDocument*
+	if req.Customer != nil {
+		if strings.TrimSpace(req.ClientDocumentType) == "" {
+			req.ClientDocumentType = req.Customer.DocumentType
+		}
+		if strings.TrimSpace(req.ClientDocumentNumber) == "" {
+			req.ClientDocumentNumber = req.Customer.DocumentNumber
+		}
+		if strings.TrimSpace(req.ClientName) == "" {
+			req.ClientName = req.Customer.Name
+		}
+		if req.ClientComplement == nil {
+			req.ClientComplement = req.Customer.Complement
+		}
+	}
+	if req.Receiver != nil {
+		if strings.TrimSpace(req.ClientDocumentType) == "" {
+			req.ClientDocumentType = documentTypeCodeToString(req.Receiver.DocumentType)
+		}
+		if strings.TrimSpace(req.ClientDocumentNumber) == "" {
+			req.ClientDocumentNumber = req.Receiver.DocumentNumber
+		}
+		if strings.TrimSpace(req.ClientName) == "" {
+			req.ClientName = req.Receiver.Name
+		}
+		if req.ClientComplement == nil {
+			req.ClientComplement = req.Receiver.Complement
+		}
+		if strings.TrimSpace(req.ClientEmail) == "" && req.Receiver.Email != nil {
+			req.ClientEmail = *req.Receiver.Email
+		}
+	}
+	var customer *domain.Customer
+	if strings.TrimSpace(req.CustomerId) != "" {
+		customer, err = uc.customerRepo.GetByID(req.CustomerId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, domain.NewNotFoundError("cliente no encontrado")
+			}
+			return nil, err
+		}
+		if customer.CompanyId != req.CompanyId {
+			return nil, domain.NewBadRequestError("el cliente no pertenece a la empresa")
+		}
+	} else {
+		customer, err = uc.resolveCustomer(req.CompanyId, req)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Todo borrador requiere un CUFD vigente para el punto de venta; la

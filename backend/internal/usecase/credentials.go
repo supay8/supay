@@ -44,17 +44,50 @@ type CredentialService struct {
 	cufdRepo    CredentialCufdStore
 	siatService SiatCredentialClient
 	modalidad   int
+	provider    siat.SiatClientProvider
 }
 
 func NewCredentialService(posRepo CredentialPosStore, cufdRepo CredentialCufdStore, siatService SiatCredentialClient, modalidad int) *CredentialService {
 	return &CredentialService{posRepo: posRepo, cufdRepo: cufdRepo, siatService: siatService, modalidad: modalidad}
 }
 
+// NewCredentialServiceWithProvider crea el servicio con resolución por empresa via provider.
+func NewCredentialServiceWithProvider(posRepo CredentialPosStore, cufdRepo CredentialCufdStore, provider siat.SiatClientProvider, modalidad int) *CredentialService {
+	return &CredentialService{posRepo: posRepo, cufdRepo: cufdRepo, provider: provider, modalidad: modalidad}
+}
+
+// SetProvider inyecta el provider multi-tenant después de construir (para wiring sin ciclo).
+func (s *CredentialService) SetProvider(p siat.SiatClientProvider) { s.provider = p }
+
 func (s *CredentialService) effectiveModalidad() int {
 	if s.modalidad <= 0 {
 		return siat.ModalidadElectronica
 	}
 	return s.modalidad
+}
+
+func (s *CredentialService) effectiveModalidadForCompany(company *domain.Company) int {
+	if company != nil && company.Modalidad != 0 {
+		return company.Modalidad
+	}
+	return s.effectiveModalidad()
+}
+
+func (s *CredentialService) resolveClient(ctx context.Context, company *domain.Company) (SiatCredentialClient, error) {
+	if s.provider != nil && company != nil && company.ID != "" {
+		if svc, err := s.provider.GetForCompany(ctx, company.ID); err == nil && svc != nil {
+			return svc, nil
+		} else if s.siatService == nil {
+			if err != nil {
+				return nil, err
+			}
+			return nil, ErrSiatNoDisponible
+		}
+	}
+	if s.siatService == nil {
+		return nil, ErrSiatNoDisponible
+	}
+	return s.siatService, nil
 }
 
 // EnsureCuis garantiza que el punto de venta tenga un CUIS persistido. Si ya
@@ -149,21 +182,22 @@ func (s *CredentialService) RefreshCufd(ctx context.Context, company *domain.Com
 }
 
 func (s *CredentialService) requestCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*siat.RespuestaCuis, error) {
-	if s.siatService == nil {
-		return nil, ErrSiatNoDisponible
+	client, err := s.resolveClient(ctx, company)
+	if err != nil {
+		return nil, err
 	}
 	req := siat.SolicitudCuis{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:    company.CodigoSistema,
 		Nit:              company.Nit,
 		CodigoSucursal:   pos.CodigoSucursal,
-		CodigoModalidad:  s.effectiveModalidad(),
+		CodigoModalidad:  s.effectiveModalidadForCompany(company),
 		CodigoPuntoVenta: resolveCodigoPuntoVenta(pos),
 	}
 	if pos.Cuis != nil && *pos.Cuis != "" {
 		req.Cuis = pos.Cuis
 	}
-	resp, err := s.siatService.SolicitarCUIS(ctx, req)
+	resp, err := client.SolicitarCUIS(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +208,9 @@ func (s *CredentialService) requestCuis(ctx context.Context, company *domain.Com
 }
 
 func (s *CredentialService) requestCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*siat.RespuestaCufd, error) {
-	if s.siatService == nil {
-		return nil, ErrSiatNoDisponible
+	client, err := s.resolveClient(ctx, company)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.EnsureCuis(ctx, company, pos); err != nil {
 		return nil, err
@@ -186,10 +221,10 @@ func (s *CredentialService) requestCufd(ctx context.Context, company *domain.Com
 		Nit:              company.Nit,
 		CodigoSucursal:   pos.CodigoSucursal,
 		Cuis:             *pos.Cuis,
-		CodigoModalidad:  s.effectiveModalidad(),
+		CodigoModalidad:  s.effectiveModalidadForCompany(company),
 		CodigoPuntoVenta: resolveCodigoPuntoVenta(pos),
 	}
-	resp, err := s.siatService.SolicitarCUFD(ctx, req)
+	resp, err := client.SolicitarCUFD(ctx, req)
 	if err != nil {
 		return nil, err
 	}

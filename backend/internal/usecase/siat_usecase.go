@@ -39,9 +39,18 @@ type SiatUsecase struct {
 	docSectorRepo   domain.SiatActividadDocSectorRepository
 	invoiceRepo     domain.InvoiceRepository
 
-	siatService *siat.Service
-	credentials *CredentialService
-	modalidad   int
+	siatService  *siat.Service
+	siatProvider siat.SiatClientProvider
+	credentials  *CredentialService
+	modalidad    int
+}
+
+// SetSiatProvider inyecta el provider multi-tenant (resolución por CompanyId).
+func (uc *SiatUsecase) SetSiatProvider(p siat.SiatClientProvider) {
+	uc.siatProvider = p
+	if uc.credentials != nil {
+		uc.credentials.SetProvider(p)
+	}
 }
 
 func NewSiatUsecase(
@@ -89,16 +98,45 @@ func NewSiatUsecase(
 			uc.docSectorRepo = typed
 		case domain.InvoiceRepository:
 			uc.invoiceRepo = typed
+		case siat.SiatClientProvider:
+			uc.siatProvider = typed
+			if uc.credentials != nil {
+				uc.credentials.SetProvider(typed)
+			}
 		}
 	}
 	return uc
 }
 
 func (uc *SiatUsecase) requireService() error {
+	if uc.siatProvider != nil {
+		return nil
+	}
 	if uc.siatService == nil {
 		return ErrSiatNoDisponible
 	}
 	return nil
+}
+
+func (uc *SiatUsecase) resolveService(ctx context.Context, companyID string) (*siat.Service, error) {
+	if uc.siatProvider != nil && companyID != "" {
+		if svc, err := uc.siatProvider.GetForCompany(ctx, companyID); err == nil {
+			return svc, nil
+		} else if uc.siatService == nil {
+			return nil, err
+		}
+	}
+	if uc.siatService == nil {
+		return nil, ErrSiatNoDisponible
+	}
+	return uc.siatService, nil
+}
+
+func (uc *SiatUsecase) effectiveModalidadForCompany(company *domain.Company) int {
+	if company != nil && company.Modalidad != 0 {
+		return company.Modalidad
+	}
+	return uc.effectiveModalidad()
 }
 
 func (uc *SiatUsecase) actividadesHabilitadas(company *domain.Company) map[string]bool {
@@ -505,7 +543,11 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 	}
 	log.Println("req....")
 	log.Println(req)
-	result, err := uc.siatService.RegistrarEventoSignificativo(ctx, req)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.RegistrarEventoSignificativo(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -732,7 +774,7 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		return nil, nil, nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
 	}
 
-	modalidad := uc.effectiveModalidad()
+	modalidad := uc.effectiveModalidadForCompany(company)
 	// Si vienen solo IDs (flujo contingencia offline por lotes), expandir a SolicitudFactura desde BD
 	if len(body.FacturaIDs) > 0 {
 		if uc.invoiceRepo == nil {
@@ -933,7 +975,11 @@ func (uc *SiatUsecase) EnviarPaquete(ctx context.Context, companyID, posID strin
 		return nil, domain.NewBadRequestError("codigoEvento es obligatorio: registre primero un evento significativo (POST /evento-significativo/{companyId}/{pointOfSaleId}) y use el codigoRecepcion de la respuesta, o envíelo vacío para tomar el último evento registrado")
 	}
 
-	result, err := uc.siatService.EnviarPaqueteFactura(ctx, *req)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.EnviarPaqueteFactura(ctx, *req)
 	if err != nil {
 		return nil, err
 	}
@@ -970,7 +1016,11 @@ func (uc *SiatUsecase) ValidarPaquete(ctx context.Context, companyID, posID stri
 		req.CodigoTipoFactura = body.CodigoTipoFact
 	}
 
-	result, err := uc.siatService.ValidarPaqueteFactura(ctx, *req, body.CodigoRecepcion)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.ValidarPaqueteFactura(ctx, *req, body.CodigoRecepcion)
 	if err != nil {
 		return nil, err
 	}
@@ -1006,7 +1056,7 @@ func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body Masiva
 
 		body.Facturas = append(body.Facturas, solFactura)
 	}
-	modalidad := uc.effectiveModalidad()
+	modalidad := uc.effectiveModalidadForCompany(company)
 
 	// Resolver documento-sector desde la primera factura del lote o desde la
 	// empresa (catálogo actividadesDocumentoSector).
@@ -1059,7 +1109,11 @@ func (uc *SiatUsecase) EnviarMasiva(ctx context.Context, companyID, posID string
 	if err != nil {
 		return nil, err
 	}
-	result, err := uc.siatService.EnviarMasivaFacturas(ctx, *req)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.EnviarMasivaFacturas(ctx, *req)
 	if err != nil {
 		return nil, err
 	}
@@ -1090,7 +1144,11 @@ func (uc *SiatUsecase) ValidarMasiva(ctx context.Context, companyID, posID strin
 		req.CodigoTipoFactura = body.CodigoTipoFact
 	}
 
-	result, err := uc.siatService.ValidarMasivaFacturas(ctx, *req, body.CodigoRecepcion)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.ValidarMasivaFacturas(ctx, *req, body.CodigoRecepcion)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,7 +1196,11 @@ func (uc *SiatUsecase) EnviarCompras(ctx context.Context, companyID, posID strin
 		FechaEnvio:       body.FechaEnvio,
 	}
 
-	result, err := uc.siatService.EnviarCompras(ctx, req)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.EnviarCompras(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1159,7 +1221,11 @@ func (uc *SiatUsecase) FirmarFactura(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	result, err := uc.siatService.FirmarFacturaXML(ctx, body.Xml)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.FirmarFacturaXML(ctx, body.Xml)
 	if err != nil {
 		return nil, err
 	}
@@ -1242,6 +1308,10 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 		Cuis:             *pointOfSale.Cuis,
 	}
 
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
 	out := &SincronizacionResultado{Company: company, PointOfSale: pointOfSale}
 
 	if opRaw != "" {
@@ -1249,7 +1319,7 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 		if !ok {
 			return nil, domain.NewBadRequestError("Operación de sincronización desconocida: " + opRaw)
 		}
-		result, err := uc.siatService.Sincronizar(ctx, req, op)
+		result, err := svc.Sincronizar(ctx, req, op)
 		if err != nil {
 			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: company.ID, PointOfSaleID: pointOfSale.ID, Operation: string(op), Status: "FAILED", Error: err.Error()})
 			return nil, err
@@ -1261,7 +1331,7 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 		return out, nil
 	}
 	for _, op := range siat.SincronizacionOperations {
-		result, err := uc.siatService.Sincronizar(ctx, req, op)
+		result, err := svc.Sincronizar(ctx, req, op)
 		if err != nil {
 			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: company.ID, PointOfSaleID: pointOfSale.ID, Operation: string(op), Status: "FAILED", Error: err.Error()})
 			out.Errors = append(out.Errors, SincronizacionOpError{Operation: string(op), Error: err.Error()})
@@ -1808,7 +1878,7 @@ func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, pos
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
-		Modalidad:             uc.effectiveModalidad(),
+		Modalidad:             uc.effectiveModalidadForCompany(company),
 		NumeroFactura:         body.NumeroFactura,
 		CodigoSucursal:        pointOfSale.CodigoSucursal,
 		CodigoPuntoVenta:      pointOfSale.CodigoPuntoVenta,
@@ -1836,7 +1906,11 @@ func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, pos
 		Items:                 body.Items,
 	}
 
-	result, err := uc.siatService.EmitirDocumentoAjuste(ctx, req)
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.EmitirDocumentoAjuste(ctx, req)
 	if err != nil {
 		return nil, err
 	}

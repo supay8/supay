@@ -26,14 +26,8 @@ func NewStorageFromConfig(cfg config.Config) (Storage, error) {
 		slog.Info("pdf storage: local", "path", cfg.StoragePath)
 		return st, nil
 	case "r2":
-		if strings.ToLower(cfg.DeploymentMode) == "selfhosted" {
-			slog.Warn("pdf storage: R2 solicitado en modo selfhosted, forzando local (disco)")
-			st, err := NewLocalStorage(cfg.StoragePath)
-			if err != nil {
-				return nil, err
-			}
-			slog.Info("pdf storage: local (fallback selfhosted)", "path", cfg.StoragePath)
-			return st, nil
+		if strings.EqualFold(strings.TrimSpace(cfg.DeploymentMode), "selfhosted") {
+			return nil, fmt.Errorf("pdf storage: STORAGE_DRIVER=r2 incompatible con DEPLOYMENT_MODE=selfhosted (self-hosted solo local; para SaaS use DEPLOYMENT_MODE=cloud con R2_BUCKET)")
 		}
 		// Si R2 está incompleto (sin bucket), no hacer fatal: warn + fallback a noop para no bloquear arranque en dev.
 		if strings.TrimSpace(cfg.R2.Bucket) == "" {

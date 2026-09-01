@@ -73,6 +73,7 @@ type Company struct {
 	BusinessName    string          `gorm:"type:varchar(150);not null"`
 	CodigoSistema   string          `gorm:"type:varchar(100);not null"`
 	Ambiente        SiatEnvironment `gorm:"type:varchar(20);default:'PILOTO'"`
+	Modalidad       int             `gorm:"type:int;default:1;not null"`
 	Municipio       string          `gorm:"type:varchar(100);not null;default:''"`
 	Direccion       string          `gorm:"type:text;not null;default:''"`
 	Telefono        string          `gorm:"type:varchar(50);not null;default:''"`
@@ -273,18 +274,6 @@ type Cufd struct {
 	Invoices    []Invoice   `gorm:"foreignKey:CufdId"`
 }
 
-type Cuis struct {
-	ID            string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	PointOfSaleId string    `gorm:"type:uuid;index;not null"`
-	Cuis          string    `gorm:"type:varchar(200);not null"`
-	ValidFrom     time.Time `gorm:"not null"`
-	ValidTo       time.Time `gorm:"not null"`
-	Active        bool      `gorm:"default:true;not null"`
-	CreatedAt     time.Time
-
-	PointOfSale PointOfSale `gorm:"foreignKey:PointOfSaleId"`
-}
-
 type ContingencyEvent struct {
 	ID            string            `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	PointOfSaleId string            `gorm:"type:uuid;index:idx_contingency_pos_start;not null"`
@@ -437,6 +426,14 @@ type Certificate struct {
 	RenewedFrom  *string   `gorm:"type:uuid"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+
+	// Credenciales fiscales por empresa (cifradas AES-GCM, nunca texto plano)
+	EncryptedToken       string  `gorm:"type:text;not null;default:''"`
+	EncryptedP12Password string  `gorm:"type:text;not null;default:''"`
+	P12StorageRef        string  `gorm:"type:text;not null;default:''"`
+	Modalidad            *int    `gorm:"type:int"`
+	Ambiente             *string `gorm:"type:varchar(20)"`
+	Nit                  string  `gorm:"type:varchar(20);not null;default:''"`
 
 	Company Company `gorm:"foreignKey:CompanyId"`
 }

@@ -348,7 +348,7 @@ func removeEmptyOptionalFacturaFields(data []byte) []byte {
 	// el elemento complemento esté presente (aunque sea vacío) antes que
 	// codigoCliente para mantener la secuencia válida. Si se elimina, el
 	// SIAT rechaza con código 920: "One of '{complemento}' is expected".
-	for _, field := range []string{"telefono", "montoDescuentoCreditoDebito"} {
+	for _, field := range []string{"telefono", "montoDescuentoCreditoDebito", "cafc"} {
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?></`+field+`>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?/>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`(?s)<`+field+`(?:\s[^>]*)?>\s*</`+field+`>`).ReplaceAll(data, nil)

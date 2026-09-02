@@ -75,6 +75,7 @@ func (r *PostgresProductRepository) UpsertMapping(companyID string, mapping doma
 		}
 		m := models.ProductMapping{
 			ID: mapping.ID, ProductId: product.ID, CodigoProductoSin: mapping.CodigoProductoSin,
+			SinProductId:    mapping.SinProductID,
 			CodigoActividad: mapping.CodigoActividad, CodigoDocumentoSector: mapping.CodigoDocumentoSector,
 			UnidadMedida: mapping.UnidadMedida, IsDefault: mapping.IsDefault, Active: true,
 			SyncedAt: mapping.SyncedAt,
@@ -90,7 +91,7 @@ func toDomainProduct(m *models.Product) *domain.Product {
 	out := &domain.Product{ID: m.ID, CompanyID: m.CompanyId, SKU: m.SKU, Name: m.Name, Active: m.Active, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 	out.Mappings = make([]domain.ProductMapping, 0, len(m.Mappings))
 	for _, mapping := range m.Mappings {
-		out.Mappings = append(out.Mappings, domain.ProductMapping{ID: mapping.ID, ProductID: mapping.ProductId, CodigoProductoSin: mapping.CodigoProductoSin, CodigoActividad: mapping.CodigoActividad, CodigoDocumentoSector: mapping.CodigoDocumentoSector, UnidadMedida: mapping.UnidadMedida, IsDefault: mapping.IsDefault, Active: mapping.Active, SyncedAt: mapping.SyncedAt})
+		out.Mappings = append(out.Mappings, domain.ProductMapping{ID: mapping.ID, ProductID: mapping.ProductId, SinProductID: mapping.SinProductId, CodigoProductoSin: mapping.CodigoProductoSin, CodigoActividad: mapping.CodigoActividad, CodigoDocumentoSector: mapping.CodigoDocumentoSector, UnidadMedida: mapping.UnidadMedida, IsDefault: mapping.IsDefault, Active: mapping.Active, SyncedAt: mapping.SyncedAt})
 	}
 	return out
 }

@@ -20,7 +20,7 @@ var catalogoSectores = []*SectorProfile{
 
 	sector(2, "Alquiler de Bienes Inmuebles", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
 		b(invoices.NewAlquilerBienInmuebleBuilder, invoices.NewAlquilerBienInmuebleCabeceraBuilder, invoices.NewAlquilerBienInmuebleDetalleBuilder),
-		campo("periodo_facturado", "WithPeriodoFacturado", "string", true)),
+		campoE("periodo_facturado", "WithPeriodoFacturado", "string", true, "Período facturado", "2026-08")),
 
 	sector(3, "Comercial de Exportación", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
 		b(invoices.NewComercialExportacionBuilder, invoices.NewComercialExportacionCabeceraBuilder, invoices.NewComercialExportacionDetalleBuilder)),
@@ -111,6 +111,10 @@ var catalogoSectores = []*SectorProfile{
 		invoices.NewNotaCreditoDebitoBuilder, invoices.NewNotaCreditoDebitoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoBuilder,
 		notasCampos()...),
 
+	notaLayout(24, "Nota Fiscal de Crédito-Débito", "nota_fiscal_credito_debito",
+		invoices.NewNotaFiscalCreditoDebitoBuilder, invoices.NewNotaFiscalCreditoDebitoCabeceraBuilder, invoices.NewNotaDetalleFiscalCreditoDebitoBuilder,
+		notasCampos()...),
+
 	sector(28, "Comercial de Exportación de Servicios", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
 		b(invoices.NewComercialExportacionServicioBuilder, invoices.NewComercialExportacionServicioCabeceraBuilder, invoices.NewComercialExportacionServicioDetalleBuilder)),
 
@@ -137,6 +141,9 @@ var catalogoSectores = []*SectorProfile{
 
 	sector(31, "Suministro de Energía", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
 		b(invoices.NewSuministroEnergiaBuilder, invoices.NewSuministroEnergiaCabeceraBuilder, invoices.NewSuministroEnergiaDetalleBuilder)),
+
+	sector(33, "Tasa Cero IVA Ley N° 1613", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
+		buildersSector{}),
 
 	sector(34, "Seguros", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
 		b(invoices.NewSegurosBuilder, invoices.NewSegurosCabeceraBuilder, invoices.NewSegurosDetalleBuilder)),
@@ -169,7 +176,7 @@ var catalogoSectores = []*SectorProfile{
 
 	sector(42, "Alquiler Zona Franca", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
 		b(invoices.NewAlquilerZFBuilder, invoices.NewAlquilerZFCabeceraBuilder, invoices.NewAlquilerZFDetalleBuilder),
-		campo("periodo_facturado", "WithPeriodoFacturado", "string", true)),
+		campoE("periodo_facturado", "WithPeriodoFacturado", "string", true, "Período facturado", "2026-08")),
 
 	sector(43, "Comercial de Exportación Hidrocarburos", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
 		b(invoices.NewComercialExportacionHidroBuilder, invoices.NewComercialExportacionHidroCabeceraBuilder, invoices.NewComercialExportacionHidroDetalleBuilder)),
@@ -183,13 +190,21 @@ var catalogoSectores = []*SectorProfile{
 	sectorEducativoSinCredito(46, "Sector Educativo Zona Franca",
 		b(invoices.NewSectorEducativoZFBuilder, invoices.NewSectorEducativoZFCabeceraBuilder, invoices.NewSectorEducativoZFDetalleBuilder)),
 
-	nota(47, "Nota Crédito Débito Descuentos",
-		invoices.NewNotaCreditoDebitoDescuentoBuilder, invoices.NewNotaCreditoDebitoDescuentoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoDescuentoBuilder,
-		notasCampos()...),
+	func() *SectorProfile {
+		p := nota(47, "Nota Crédito Débito Descuentos",
+			invoices.NewNotaCreditoDebitoDescuentoBuilder, invoices.NewNotaCreditoDebitoDescuentoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoDescuentoBuilder,
+			notasCampos()...)
+		p.DetallePar = true
+		return p
+	}(),
 
-	nota(48, "Nota Crédito Débito ICE",
-		invoices.NewNotaCreditoDebitoIceBuilder, invoices.NewNotaCreditoDebitoIceCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoIceBuilder,
-		notasCampos()...),
+	func() *SectorProfile {
+		p := nota(48, "Nota Crédito Débito ICE",
+			invoices.NewNotaCreditoDebitoIceBuilder, invoices.NewNotaCreditoDebitoIceCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoIceBuilder,
+			notasCampos()...)
+		p.DetallePar = true
+		return p
+	}(),
 
 	sector(49, "Telecomunicaciones Zona Franca", TipoDocumentoFacturaSinCredito, FachadaTelecomunicaciones,
 		b(invoices.NewTelecomunicacionesZFBuilder, invoices.NewTelecomunicacionesZFCabeceraBuilder, invoices.NewTelecomunicacionesZFDetalleBuilder),
@@ -235,7 +250,7 @@ func sector(codigo int, nombre string, tipoDoc int, fachada FachadaSDK, bs build
 // sectorAjuste crea el perfil de un documento de ajuste (notas): se envía por el
 // servicio DocumentoAjuste del SIAT en lugar de recepcionFactura.
 func sectorAjuste(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
-	p := sector(codigo, nombre, TipoDocumentoNotaCreditoDebito, FachadaPorModalidad, b(facturaCtor, cabeceraCtor, detalleCtor), campos...)
+	p := sector(codigo, nombre, TipoDocumentoNotaCreditoDebito, FachadaDocumentoAjuste, b(facturaCtor, cabeceraCtor, detalleCtor), campos...)
 	p.Operacion = OperacionDocumentoAjuste
 	return p
 }
@@ -243,29 +258,44 @@ func sectorAjuste(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleC
 // nota crea un documento de ajuste con los campos estándar de las notas de
 // crédito/débito (24, 47, 48).
 func nota(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
-	return sectorAjuste(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
+	p := sectorAjuste(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
+	if codigo == SectorNotaCreditoDebito {
+		p.Layout = string(LayoutNotaCreditoDebito)
+	}
+	return p
+}
+
+func notaLayout(codigo int, nombre, layout string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
+	p := nota(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
+	p.Layout = layout
+	return p
 }
 
 // experimental marca los sectores sin homologación interna aún: se emiten con su
-// builder real pero solo aceptan datos_sector vacíos.
+// builder real pero la guarda de buildFacturaSDK rechaza su emisión con un error
+// explícito que nombra los campos del SDK que Supay no setea (Paso 2).
 func experimental(codigo int, nombre string, tipoDoc int, bs buildersSector) *SectorProfile {
 	p := sector(codigo, nombre, tipoDoc, FachadaPorModalidad, bs)
-	p.Experimental = true
+	// Soportado queda false: la guarda de buildFacturaSDK produce un error claro
+	// nombrando los campos faltantes en vez de emitir un XML incompleto.
+	if codigo == 52 {
+		p.Modalidades = []int{ModalidadElectronica}
+	}
 	return p
 }
 
 func sectorEducativo(codigo int, nombre string, bs buildersSector) *SectorProfile {
 	return sector(codigo, nombre, TipoDocumentoFacturaConCredito, FachadaPorModalidad, bs,
-		campo("nombre_estudiante", "WithNombreEstudiante", "string", true),
-		campo("periodo_facturado", "WithPeriodoFacturado", "string", true))
+		campoE("nombre_estudiante", "WithNombreEstudiante", "string", true, "Nombre del estudiante", "Juan Pérez"),
+		campoE("periodo_facturado", "WithPeriodoFacturado", "string", true, "Período facturado", "2026-08"))
 }
 
 // sectorEducativoSinCredito variante sin derecho a crédito fiscal: el sector
 // educativo dentro de zona franca (46).
 func sectorEducativoSinCredito(codigo int, nombre string, bs buildersSector) *SectorProfile {
 	return sector(codigo, nombre, TipoDocumentoFacturaSinCredito, FachadaPorModalidad, bs,
-		campo("nombre_estudiante", "WithNombreEstudiante", "string", true),
-		campo("periodo_facturado", "WithPeriodoFacturado", "string", true))
+		campoE("nombre_estudiante", "WithNombreEstudiante", "string", true, "Nombre del estudiante", "Juan Pérez"),
+		campoE("periodo_facturado", "WithPeriodoFacturado", "string", true, "Período facturado", "2026-08"))
 }
 
 func b(facturaCtor, cabeceraCtor, detalleCtor any) buildersSector {
@@ -296,17 +326,25 @@ func campo(json, metodo, tipo string, requerido bool) CampoSector {
 	return CampoSector{JSON: json, Metodo: metodo, Tipo: tipo, Requerido: requerido}
 }
 
+// campoE es campo con etiqueta y ejemplo para formularios dinámicos.
+func campoE(json, metodo, tipo string, requerido bool, etiqueta, ejemplo string) CampoSector {
+	c := campo(json, metodo, tipo, requerido)
+	c.Etiqueta = etiqueta
+	c.Ejemplo = ejemplo
+	return c
+}
+
 // notasCampos declara los campos específicos del XSD de notas de crédito/débito
 // (sectores 24, 47 y 48).
 func notasCampos() []CampoSector {
 	return []CampoSector{
-		campo("numero_autorizacion_cuf", "WithNumeroAutorizacionCuf", "string", true),
-		campo("fecha_emision_factura", "WithFechaEmisionFactura", "fecha", true),
-		campo("monto_total_original", "WithMontoTotalOriginal", "float", true),
-		campo("monto_total_devuelto", "WithMontoTotalDevuelto", "float", true),
-		campo("monto_efectivo_credito_debito", "WithMontoEfectivoCreditoDebito", "float", true),
-		campo("monto_descuento_credito_debito", "WithMontoDescuentoCreditoDebito", "float", false),
-		campo("numero_nota_credito_debito", "WithNumeroNotaCreditoDebito", "int", false),
+		campoE("numero_autorizacion_cuf", "WithNumeroAutorizacionCuf", "string", true, "CUF de la factura original", "7894561237894561237894561237894561237894561237894561237894561237894561AA"),
+		campoE("fecha_emision_factura", "WithFechaEmisionFactura", "fecha", true, "Fecha de emisión de la factura original", "2026-08-24T00:00:00.000"),
+		campoE("monto_total_original", "WithMontoTotalOriginal", "float", true, "Monto total de la factura original", "100.00"),
+		campoE("monto_total_devuelto", "WithMontoTotalDevuelto", "float", true, "Monto devuelto por la nota", "25.00"),
+		campoE("monto_efectivo_credito_debito", "WithMontoEfectivoCreditoDebito", "float", true, "Monto efectivo de la nota", "75.00"),
+		campoE("monto_descuento_credito_debito", "WithMontoDescuentoCreditoDebito", "float", false, "Descuento de la nota", "0.00"),
+		campoE("numero_nota_credito_debito", "WithNumeroNotaCreditoDebito", "int", false, "Número de nota de crédito/débito", "1"),
 	}
 }
 

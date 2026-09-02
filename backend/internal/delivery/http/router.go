@@ -14,13 +14,15 @@ const maxBodyBytes int64 = 10 << 20
 
 // Handlers agrupa todos los handlers HTTP de la aplicación.
 type Handlers struct {
-	Company  *CompanyHandler
-	Pos      *PosHandler
-	Branch   *BranchHandler
-	Customer *CustomerHandler
-	Product  *ProductHandler
-	Invoice  *InvoiceHandler
-	Siat     *SiatHandler
+	Company     *CompanyHandler
+	Pos         *PosHandler
+	Branch      *BranchHandler
+	Customer    *CustomerHandler
+	Product     *ProductHandler
+	Invoice     *InvoiceHandler
+	Siat        *SiatHandler
+	Catalog     *CatalogHandler
+	Certificate *CertificateHandler
 }
 
 // NewRouter construye el router de Chi con todas las rutas de la API.
@@ -44,15 +46,38 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 		if apiKey != "" {
 			r.Use(RequireAPIKey(apiKey))
 		}
+		r.Use(InjectCompanyID)
+
+		r.Post("/setup", h.Siat.Setup)
 
 		r.Route("/companies", func(r chi.Router) {
 			r.Post("/", h.Company.Create)
 			r.Get("/", h.Company.GetByNit)
 			r.Patch("/{id}", h.Company.Update)
 			r.Delete("/{id}", h.Company.Delete)
+
+			if h.Certificate != nil {
+				r.Post("/{id}/certificates", h.Certificate.Create)
+				r.Get("/{id}/certificates", h.Certificate.List)
+				r.Get("/{id}/certificates/active", h.Certificate.GetActive)
+				r.Delete("/{id}/certificates/{certId}", h.Certificate.Delete)
+			}
+
+			if h.Catalog != nil {
+				r.Get("/{id}/actividades-economicas", h.Catalog.ListCompanyActividadesEconomicas)
+				r.Route("/{id}/catalogs", func(r chi.Router) {
+					r.Get("/readiness", h.Catalog.Readiness)
+					r.Get("/actividades-economicas", h.Catalog.ListActividadesEconomicas)
+					r.Get("/documentos-sector", h.Catalog.ListDocumentosSector)
+					r.Get("/leyendas-factura", h.Catalog.ListLeyendasFactura)
+					r.Get("/productos-sin", h.Catalog.ListProductosSin)
+					r.Get("/emision-bootstrap", h.Catalog.EmisionBootstrap)
+					r.Get("/{catalogSlug}", h.Catalog.ListParametric)
+				})
+			}
 		})
 
-		r.Route("/point-of-sale", func(r chi.Router) {
+		r.Route("/point-of-sales", func(r chi.Router) {
 			r.Post("/", h.Pos.Create)
 			r.Get("/", h.Pos.List)
 			r.Get("/{id}", h.Pos.GetByID)
@@ -83,6 +108,19 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 			r.Get("/invoice/{invoiceId}/pdf", h.Siat.DownloadPDF)
 		})
 
+		r.Route("/catalogs", func(r chi.Router) {
+			if h.Catalog != nil {
+				r.Get("/perfiles-documento-sector", h.Catalog.ListPerfilesDocumentoSector)
+				r.Get("/perfiles-documento-sector/{codigo}", h.Catalog.GetPerfilDocumentoSector)
+			}
+			// Rutas legadas (compatibilidad). Preferir /companies/{id}/catalogs/...
+			r.Get("/activites-document-sectors", h.Siat.ListActivitesDocumentSectors)
+			r.Get("/products", h.Siat.ListSinProducts)
+			r.Get("/readiness", h.Siat.CatalogReadiness)
+			r.Get("/{companyId}", h.Siat.GetCatalog)
+			r.Get("/{companyId}/{tipo}", h.Siat.GetCatalog)
+		})
+
 		r.Route("/customers", func(r chi.Router) {
 			r.Post("/", h.Customer.Create)
 			r.Get("/", h.Customer.List)
@@ -97,9 +135,11 @@ func NewRouter(h Handlers, apiKey string) http.Handler {
 
 		r.Route("/invoices", func(r chi.Router) {
 			r.Post("/", h.Invoice.Create)
-			r.Get("/", h.Invoice.ListByPointOfSale)
+			r.Get("/", h.Invoice.List)
 			r.Get("/sectores", h.Invoice.Sectores)
 			r.Get("/{id}", h.Invoice.GetByID)
+			r.Get("/{id}/xml", h.Invoice.DownloadXML)
+			r.Get("/{id}/pdf", h.Siat.DownloadPDF)
 			r.Post("/{id}/emit", h.Invoice.Emit)
 			r.Get("/{id}/siat-status", h.Invoice.SiatStatus)
 			r.Post("/{id}/annul", h.Invoice.Annul)

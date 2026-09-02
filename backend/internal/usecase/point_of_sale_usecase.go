@@ -34,15 +34,15 @@ type UpdatePointOfSaleRequest struct {
 
 func (uc *PointOfSaleUsecase) Register(req RegisterPointOfSaleRequest) (*domain.PointOfSale, error) {
 	if req.CompanyId == "" {
-		return nil, errors.New("el company_id es obligatorio")
+		return nil, domain.NewBadRequestError("el company_id es obligatorio")
 	}
 	if req.Description == "" {
-		return nil, errors.New("la descripción es obligatoria")
+		return nil, domain.NewBadRequestError("la descripción es obligatoria")
 	}
 
 	// Regla de negocio: Verificar que la empresa exista
 	if _, err := uc.companyRepo.GetByID(req.CompanyId); err != nil {
-		return nil, errors.New("empresa no encontrada")
+		return nil, domain.NewNotFoundError("empresa no encontrada")
 	}
 
 	pos := &domain.PointOfSale{
@@ -74,7 +74,7 @@ func (uc *PointOfSaleUsecase) GetByID(id string) (*domain.PointOfSale, error) {
 	pos, err := uc.repo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("punto de venta no encontrado")
+			return nil, domain.NewNotFoundError("punto de venta no encontrado")
 		}
 		return nil, err
 	}
@@ -87,13 +87,13 @@ func (uc *PointOfSaleUsecase) List(companyID string) ([]*domain.PointOfSale, err
 
 func (uc *PointOfSaleUsecase) Update(req UpdatePointOfSaleRequest, id string) (*domain.PointOfSale, error) {
 	if id == "" {
-		return nil, errors.New("el ID es obligatorio")
+		return nil, domain.NewBadRequestError("el id es obligatorio")
 	}
 
 	// Verificar si el punto de venta existe
 	existing, err := uc.repo.GetByID(id)
 	if err != nil {
-		return nil, errors.New("punto de venta no encontrado")
+		return nil, domain.NewNotFoundError("punto de venta no encontrado")
 	}
 
 	if req.Description != nil {
@@ -124,7 +124,7 @@ func (uc *PointOfSaleUsecase) Delete(id string) error {
 	// Verificar si el punto de venta existe
 	_, err := uc.repo.GetByID(id)
 	if err != nil {
-		return errors.New("punto de venta no encontrado")
+		return domain.NewNotFoundError("punto de venta no encontrado")
 	}
 
 	return uc.repo.Delete(id)

@@ -34,7 +34,7 @@ func facturaDePrueba(numero int64) SolicitudFactura {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		Items: []ItemFactura{
 			{

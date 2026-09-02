@@ -40,6 +40,14 @@ func (o OperacionDocumento) String() string {
 	return "recepcion_factura"
 }
 
+// SectorLayout identifies the XML model when a document-sector has variants.
+type SectorLayout string
+
+const (
+	LayoutNotaCreditoDebito       SectorLayout = "nota_credito_debito"
+	LayoutNotaFiscalCreditoDebito SectorLayout = "nota_fiscal_credito_debito"
+)
+
 // FachadaSDK identifica la fachada del SDK go-siat que atiende al sector. Cada
 // fachada es un endpoint SOAP distinto del SIAT; enviar un sector por la fachada
 // equivocada produce el rechazo 932 (CODIGO DOCUMENTO SECTOR NO CORRESPONDE AL
@@ -59,6 +67,8 @@ func (f FachadaSDK) String() string {
 		return "entidad_financiera"
 	case FachadaBoletoAereo:
 		return "boleto_aereo"
+	case FachadaDocumentoAjuste:
+		return "documento_ajuste"
 	default:
 		return "por_modalidad"
 	}
@@ -71,6 +81,7 @@ const (
 	FachadaServicioBasico                       // sectores 13, 40
 	FachadaEntidadFinanciera                    // sector 15
 	FachadaBoletoAereo                          // sector 30 (sin recepción individual ni paquetes)
+	FachadaDocumentoAjuste                      // sectores 24, 29, 47 y 48
 )
 
 // Códigos de documento-sector con tratamiento especial en el flujo de Supay.
@@ -88,8 +99,13 @@ const (
 type CampoSector struct {
 	JSON      string `json:"clave"`
 	Metodo    string `json:"-"`
-	Tipo      string `json:"tipo"` // string | int | float | fecha
+	Tipo      string `json:"tipo"` // string | int | float | fecha | json
 	Requerido bool   `json:"requerido"`
+	// Etiqueta y Ejemplo alimentan formularios dinámicos de los clientes
+	// (GET /invoices/sectores). Opcional: la API humaniza la clave cuando
+	// Etiqueta está vacía.
+	Etiqueta string `json:"etiqueta,omitempty"`
+	Ejemplo  string `json:"ejemplo,omitempty"`
 }
 
 // SectorProfile describe cómo emitir un documento-sector del SIAT: metadatos
@@ -98,6 +114,7 @@ type CampoSector struct {
 type SectorProfile struct {
 	Codigo               int                `json:"codigo_documento_sector"`
 	Nombre               string             `json:"nombre"`
+	Layout               string             `json:"layout,omitempty"`
 	TipoFacturaDocumento int                `json:"tipo_factura_documento"`
 	Operacion            OperacionDocumento `json:"operacion"`
 	Fachada              FachadaSDK         `json:"-"`
@@ -105,14 +122,35 @@ type SectorProfile struct {
 	// DetalleUnico marca los sectores prevalorados (23, 36): su XSD acepta una
 	// sola línea, que se envía con WithDetalle en lugar de AddDetalle.
 	DetalleUnico bool `json:"detalle_unico,omitempty"`
-	Experimental bool `json:"experimental"`
+	// DetallePar marca los sectores donde cada ítem lógico genera dos nodos
+	// <detalle> en el XML (par original/devolución): codigoDetalleTransaccion 1
+	// y 2 con los mismos valores. Aplica únicamente a los sectores 47 y 48
+	// (Nota Crédito Débito Descuentos/ICE), cuyo XSD exige minOccurs=2 y el SIAT
+	// suma por código de transacción. Con DetallePar=true, WithNroItem es
+	// secuencial 1,2,3,4... y el par se genera automáticamente.
+	DetallePar bool `json:"detalle_par,omitempty"`
+	// Soportado marca los perfiles con casos aceptados por el SIAT (homologados).
+	// Reemplaza al antiguo flag Experimental, que solo significaba "acepta
+	// datos_sector vacío" y no protegía nada. Un perfil no Soportado produce un
+	// error explícito en buildFacturaSDK que nombra los campos del SDK que Supay
+	// nunca setea (camposNoCubiertos), evitando emitir un documento fiscal
+	// incompleto que el SIAT rechazaría.
+	Soportado bool `json:"soportado"`
 	// MontoSujetoIvaCero marca los sectores donde montoTotalSujetoIva se envía
 	// en 0 (tasa cero); en el resto viaja igual al monto total.
-	MontoSujetoIvaCero bool          `json:"-"`
-	Campos             []CampoSector `json:"campos_especificos"`
+	MontoSujetoIvaCero bool `json:"-"`
+	// Campos declara los campos sectoriales de CABECERA del documento. Se
+	// aplican al builder de cabecera mediante los métodos With* declarados.
+	Campos []CampoSector `json:"campos_especificos"`
+	// CamposDetalle declara los campos sectoriales de DETALLE (ítem). Se aplican
+	// al builder de detalle de cada item a través de ItemFactura.DatosSector,
+	// utilizando la misma reflexión que Campos. Un sector sin CamposDetalle
+	// mantiene el comportamiento anterior (solo campos comunes del detalle).
+	CamposDetalle []CampoSector `json:"campos_detalle,omitempty"`
 	// Modalidades limita las modalidades habilitadas para el sector. Un perfil
 	// vacío acepta ambas modalidades, que es el comportamiento del SDK actual.
-	Modalidades []int `json:"modalidades,omitempty"`
+	Modalidades []int          `json:"modalidades,omitempty"`
+	Facade      FacadeSelector `json:"-"`
 
 	builders buildersSector `json:"-"`
 	adapter  SectorAdapter  `json:"-"`
@@ -147,21 +185,82 @@ type buildersSector struct {
 	detalle  func() any
 }
 
+// FacadeSelector makes the endpoint choice visible while keeping modality
+// selection as a separate decision.
+type FacadeSelector struct {
+	name        string
+	fixed       FachadaSDK
+	byModalidad bool
+}
+
+func FacadeFija(nombre string) FacadeSelector {
+	for _, fachada := range []FachadaSDK{
+		FachadaCompraVenta, FachadaTelecomunicaciones, FachadaServicioBasico,
+		FachadaEntidadFinanciera, FachadaBoletoAereo, FachadaDocumentoAjuste,
+	} {
+		if fachada.String() == nombre {
+			return FacadeSelector{name: nombre, fixed: fachada}
+		}
+	}
+	return FacadeSelector{name: nombre}
+}
+
+func FacadePorModalidad() FacadeSelector {
+	return FacadeSelector{name: "por_modalidad", fixed: FachadaPorModalidad, byModalidad: true}
+}
+
+func (f FacadeSelector) String() string {
+	if f.name != "" {
+		return f.name
+	}
+	return f.fixed.String()
+}
+
+func (f FacadeSelector) IsByModalidad() bool { return f.byModalidad }
+
+func (f FacadeSelector) Fixed() FachadaSDK { return f.fixed }
+
+type SectorKey struct {
+	Codigo int
+	Layout string
+}
+
+// SectorRegistry stores opaque SDK builder factories. Layout is part of the
+// key because sector 24 intentionally has two document models.
+type SectorRegistry struct {
+	entries map[SectorKey]*SectorProfile
+}
+
+var sectorRegistry *SectorRegistry
 var registroSectores map[int]*SectorProfile
 
 func init() {
+	sectorRegistry = &SectorRegistry{entries: make(map[SectorKey]*SectorProfile, len(catalogoSectores))}
 	registroSectores = make(map[int]*SectorProfile, len(catalogoSectores))
+	marcarSoportados()
 	for _, p := range catalogoSectores {
-		if _, duplicado := registroSectores[p.Codigo]; duplicado {
-			panic(fmt.Sprintf("siat sectores: código %d registrado dos veces", p.Codigo))
+		key := SectorKey{Codigo: p.Codigo, Layout: p.Layout}
+		if _, duplicado := sectorRegistry.entries[key]; duplicado {
+			panic(fmt.Sprintf("siat sectores: código %d layout %q registrado dos veces", p.Codigo, p.Layout))
 		}
 		if p.Codigo == SectorCompraVenta {
 			p.adapter = compraVentaAdapter{}
 		} else if p.adapter == nil {
 			p.adapter = genericSectorAdapter{}
 		}
-		registroSectores[p.Codigo] = p
+		p.Facade = facadeSelectorFor(p.Fachada)
+		sectorRegistry.entries[key] = p
+		if _, exists := registroSectores[p.Codigo]; !exists {
+			registroSectores[p.Codigo] = p
+		}
 	}
+}
+
+func facadeSelectorFor(fachada FachadaSDK) FacadeSelector {
+	if fachada == FachadaPorModalidad {
+		return FacadePorModalidad()
+	}
+	return FacadeFija(fachada.String())
 }
 
 func (p *SectorProfile) ValidarModalidad(modalidad int) error {
@@ -183,12 +282,27 @@ func (p *SectorProfile) ValidarModalidad(modalidad int) error {
 // registrado (p.ej. los inexistentes 25-27, 32 o el 33 sin builder) produce
 // error antes de llegar al SIAT (que lo rechazaría con 931).
 func PerfilSector(codigo int) (*SectorProfile, error) {
+	if codigo == SectorNotaCreditoDebito {
+		return nil, fmt.Errorf("el sector %d tiene múltiples layouts; especifique uno de %q o %q", codigo, LayoutNotaCreditoDebito, LayoutNotaFiscalCreditoDebito)
+	}
+	return PerfilSectorLayout(codigo, "")
+}
+
+func PerfilSectorLayout(codigo int, layout string) (*SectorProfile, error) {
 	if codigo <= 0 {
 		codigo = SectorCompraVenta
 	}
-	p, ok := registroSectores[codigo]
+	if codigo == SectorNotaCreditoDebito && strings.TrimSpace(layout) == "" {
+		return nil, fmt.Errorf("el sector %d tiene múltiples layouts; especifique uno de %q o %q", codigo, LayoutNotaCreditoDebito, LayoutNotaFiscalCreditoDebito)
+	}
+	if layout == "" {
+		if p, ok := registroSectores[codigo]; ok {
+			return p, nil
+		}
+	}
+	p, ok := sectorRegistry.entries[SectorKey{Codigo: codigo, Layout: layout}]
 	if !ok {
-		return nil, fmt.Errorf("siat sectores: el documento-sector %d no está soportado; consulte los perfiles disponibles", codigo)
+		return nil, fmt.Errorf("siat sectores: el documento-sector %d layout %q no está soportado; consulte los perfiles disponibles", codigo, layout)
 	}
 	return p, nil
 }
@@ -196,11 +310,16 @@ func PerfilSector(codigo int) (*SectorProfile, error) {
 // PerfilesSector lista todos los perfiles registrados ordenados por código
 // (metadata para GET /invoices/sectores).
 func PerfilesSector() []*SectorProfile {
-	out := make([]*SectorProfile, 0, len(registroSectores))
-	for _, p := range registroSectores {
+	out := make([]*SectorProfile, 0, len(sectorRegistry.entries))
+	for _, p := range sectorRegistry.entries {
 		out = append(out, p)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Codigo < out[j].Codigo })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Codigo == out[j].Codigo {
+			return out[i].Layout < out[j].Layout
+		}
+		return out[i].Codigo < out[j].Codigo
+	})
 	return out
 }
 
@@ -222,6 +341,10 @@ func (p *SectorProfile) EsAjuste() bool {
 	return p.Operacion == OperacionDocumentoAjuste
 }
 
+func (p *SectorProfile) HasBuilder() bool {
+	return p.builders.factura != nil && p.builders.cabecera != nil
+}
+
 // PrepararDatosSector es el punto de entrada para las capas superiores: valida
 // datos_sector aplicando antes la fusión de los campos legados educativos
 // (nombre_estudiante/periodo_facturado) cuando el perfil corresponde (11/46).
@@ -229,6 +352,14 @@ func (p *SectorProfile) PrepararDatosSector(req SolicitudFactura) (map[string]an
 	doc, err := p.adapter.Prepare(p, req)
 	if err != nil {
 		return nil, err
+	}
+	// El XSD de las notas exige que el nodo descuento preceda al monto
+	// efectivo, incluso cuando no existe descuento. El SDK omite el nodo si
+	// recibe nil, por lo que normalizamos el valor ausente a cero.
+	if p.EsAjuste() {
+		if _, ok := doc.Values["monto_descuento_credito_debito"]; !ok {
+			doc.Values["monto_descuento_credito_debito"] = float64(0)
+		}
 	}
 	return doc.Values, nil
 }
@@ -238,22 +369,45 @@ func (p *SectorProfile) PrepararDatosSector(req SolicitudFactura) (map[string]an
 // requeridos. Devuelve los valores normalizados (string/int64/float64/time.Time)
 // listos para aplicarse sobre el builder de cabecera.
 func (p *SectorProfile) ValidarDatosSector(datos json.RawMessage) (map[string]any, error) {
+	return validarCamposSectoriales(p.Codigo, p.Nombre, "datos_sector", p.Campos, datos)
+}
+
+// ValidarDatosDetalle valida los datos sectoriales de un ítem contra la
+// declaración de CamposDetalle del perfil, reutilizando el mismo contrato de
+// validación que la cabecera. Un item sin DatosSector (datos nil o vacío) es
+// completamente válido y devuelve un mapa vacío.
+func (p *SectorProfile) ValidarDatosDetalle(datos json.RawMessage) (map[string]any, error) {
+	if len(p.CamposDetalle) == 0 && (len(datos) == 0 || string(datos) == "null") {
+		return map[string]any{}, nil
+	}
+	if len(p.CamposDetalle) == 0 {
+		// El perfil no declara CamposDetalle pero el item trajo datos_sector:
+		// no hay campos que reconocer, todas las claves son desconocidas.
+		return validarCamposSectoriales(p.Codigo, p.Nombre, "datos_sector_detalle", p.CamposDetalle, datos)
+	}
+	return validarCamposSectoriales(p.Codigo, p.Nombre, "datos_sector_detalle", p.CamposDetalle, datos)
+}
+
+// validarCamposSectoriales es el contrato unificado de validación para datos
+// sectoriales de cabecera y detalle. Decodifica el JSON, detecta claves
+// desconocidas, valida tipos y campos requeridos, y normaliza los valores.
+func validarCamposSectoriales(codigo int, nombre, contexto string, campos []CampoSector, datos json.RawMessage) (map[string]any, error) {
 	brutos := map[string]any{}
-	if len(datos) > 0 {
+	if len(datos) > 0 && string(datos) != "null" {
 		if err := json.Unmarshal(datos, &brutos); err != nil {
-			return nil, fmt.Errorf("siat sectores %d: datos_sector no es un objeto JSON válido: %w", p.Codigo, err)
+			return nil, fmt.Errorf("siat sectores %d: %s no es un objeto JSON válido: %w", codigo, contexto, err)
 		}
 	}
 	desconocidos := map[string]bool{}
 	for k := range brutos {
 		desconocidos[k] = true
 	}
-	valores := make(map[string]any, len(p.Campos))
+	valores := make(map[string]any, len(campos))
 	var faltantes []string
-	for _, campo := range p.Campos {
+	for _, campo := range campos {
 		delete(desconocidos, campo.JSON)
 		crudo, presente := brutos[campo.JSON]
-		valor, err := normalizarValorCampo(p.Codigo, campo, crudo, presente)
+		valor, err := normalizarValorCampo(codigo, campo, crudo, presente)
 		if err != nil {
 			return nil, err
 		}
@@ -267,8 +421,8 @@ func (p *SectorProfile) ValidarDatosSector(datos json.RawMessage) (map[string]an
 	}
 	if len(faltantes) > 0 {
 		sort.Strings(faltantes)
-		return nil, fmt.Errorf("siat sectores %d (%s): faltan campos obligatorios en datos_sector: %s",
-			p.Codigo, p.Nombre, strings.Join(faltantes, ", "))
+		return nil, fmt.Errorf("siat sectores %d (%s): faltan campos obligatorios en %s: %s",
+			codigo, nombre, contexto, strings.Join(faltantes, ", "))
 	}
 	if len(desconocidos) > 0 {
 		claves := make([]string, 0, len(desconocidos))
@@ -276,8 +430,8 @@ func (p *SectorProfile) ValidarDatosSector(datos json.RawMessage) (map[string]an
 			claves = append(claves, k)
 		}
 		sort.Strings(claves)
-		return nil, fmt.Errorf("siat sectores %d (%s): claves no reconocidas en datos_sector: %s",
-			p.Codigo, p.Nombre, strings.Join(claves, ", "))
+		return nil, fmt.Errorf("siat sectores %d (%s): claves no reconocidas en %s: %s",
+			codigo, nombre, contexto, strings.Join(claves, ", "))
 	}
 	return valores, nil
 }
@@ -290,7 +444,7 @@ func normalizarValorCampo(codigo int, campo CampoSector, crudo any, presente boo
 	case "string":
 		s, ok := crudo.(string)
 		if !ok {
-			return nil, fmt.Errorf("siat sectores %d: datos_sector.%s debe ser string", codigo, campo.JSON)
+			return nil, fmt.Errorf("siat sectores %d: %s debe ser string", codigo, campo.JSON)
 		}
 		s = strings.TrimSpace(s)
 		if s == "" {
@@ -300,26 +454,35 @@ func normalizarValorCampo(codigo int, campo CampoSector, crudo any, presente boo
 	case "int":
 		f, ok := toFloat(crudo)
 		if !ok {
-			return nil, fmt.Errorf("siat sectores %d: datos_sector.%s debe ser numérico entero", codigo, campo.JSON)
+			return nil, fmt.Errorf("siat sectores %d: %s debe ser numérico entero", codigo, campo.JSON)
 		}
 		return int64(f), nil
 	case "float":
 		f, ok := toFloat(crudo)
 		if !ok {
-			return nil, fmt.Errorf("siat sectores %d: datos_sector.%s debe ser numérico", codigo, campo.JSON)
+			return nil, fmt.Errorf("siat sectores %d: %s debe ser numérico", codigo, campo.JSON)
 		}
 		return f, nil
 	case "fecha":
 		s, ok := crudo.(string)
 		if !ok {
-			return nil, fmt.Errorf("siat sectores %d: datos_sector.%s debe ser fecha (YYYY-MM-DD o RFC3339)", codigo, campo.JSON)
+			return nil, fmt.Errorf("siat sectores %d: %s debe ser fecha (YYYY-MM-DD o RFC3339)", codigo, campo.JSON)
 		}
 		for _, layout := range []string{"2006-01-02T15:04:05Z07:00", "2006-01-02T15:04:05", "2006-01-02"} {
 			if t, err := time.ParseInLocation(layout, strings.TrimSpace(s), LaPaz); err == nil {
 				return t, nil
 			}
 		}
-		return nil, fmt.Errorf("siat sectores %d: datos_sector.%s tiene formato de fecha inválido (%q)", codigo, campo.JSON, s)
+		return nil, fmt.Errorf("siat sectores %d: %s tiene formato de fecha inválido (%q)", codigo, campo.JSON, s)
+	case "json":
+		// El tipo "json" acepta cualquier valor JSON válido (string, número,
+		// objeto, arreglo). Se pasa como json.RawMessage para que el aplicador
+		// reflexivo lo convierta al tipo exacto del parámetro del builder.
+		b, err := json.Marshal(crudo)
+		if err != nil {
+			return nil, fmt.Errorf("siat sectores %d: %s no se pudo serializar como JSON: %w", codigo, campo.JSON, err)
+		}
+		return json.RawMessage(b), nil
 	default:
 		return nil, fmt.Errorf("siat sectores %d: campo %s declara tipo desconocido %q", codigo, campo.JSON, campo.Tipo)
 	}
@@ -341,4 +504,30 @@ func toFloat(v any) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// sectoresSoportadosInicial lista los códigos de documento-sector con casos
+// aceptados por el SIAT (homologados). El sector 24 aparece dos veces (ambos
+// layouts). El sector 16 (Hotel) se marcará Soportado al cerrar el Paso 4.
+var sectoresSoportadosInicial = map[int]bool{
+	SectorCompraVenta:       true, // 1
+	SectorTasaCero:          true, // 8
+	SectorEducativo:         true, // 11
+	SectorNotaCreditoDebito: true, // 24 (ambos layouts)
+	29:                      true,
+	46:                      true,
+	47:                      true,
+	48:                      true,
+}
+
+// marcarSoportados recorre el catálogo y marca Soportado=true a los perfiles
+// cuyo código está en sectoresSoportadosInicial. Los demás quedan false: la
+// guarda de buildFacturaSDK los rechazará con un error explícito nombrando los
+// campos del SDK que Supay no setea (camposNoCubiertos).
+func marcarSoportados() {
+	for _, p := range catalogoSectores {
+		if sectoresSoportadosInicial[p.Codigo] {
+			p.Soportado = true
+		}
+	}
 }

@@ -181,19 +181,39 @@ func (s *Service) SolicitarCUFD(ctx context.Context, req SolicitudCufd) (*Respue
 // withDynamicConfig sobreescribe la identidad del contribuyente (NIT, sistema,
 // ambiente) por empresa en el contexto de la petición, sin tocar la config global.
 func withDynamicConfig(ctx context.Context, base goSiat.Config, ambiente int, sistema, nit string) context.Context {
-	cfg := base
-	if ambiente > 0 {
-		cfg.CodigoAmbiente = ambiente
+	// The SDK identity is configured once in goSiat.Config. Keep the arguments
+	// for source compatibility with older callers, but never replace the global
+	// identity per request.
+	return goSiat.WithDynamicConfig(ctx, base)
+}
+
+func applyIdentityValues(cfg goSiat.Config, ambiente *int, sistema *string, nit *string) error {
+	if *ambiente == 0 {
+		*ambiente = cfg.CodigoAmbiente
+	} else if *ambiente != cfg.CodigoAmbiente {
+		return fmt.Errorf("siat identidad: codigoAmbiente de la solicitud (%d) no coincide con Config (%d)", *ambiente, cfg.CodigoAmbiente)
 	}
-	if strings.TrimSpace(sistema) != "" {
-		cfg.CodigoSistema = sistema
+	if strings.TrimSpace(*sistema) == "" {
+		*sistema = cfg.CodigoSistema
+	} else if strings.TrimSpace(*sistema) != strings.TrimSpace(cfg.CodigoSistema) {
+		return fmt.Errorf("siat identidad: codigoSistema de la solicitud no coincide con Config")
 	}
-	if strings.TrimSpace(nit) != "" {
-		if parsed, err := strconv.ParseInt(strings.TrimSpace(nit), 10, 64); err == nil && parsed > 0 {
-			cfg.Nit = parsed
-		}
+	if strings.TrimSpace(*nit) == "" {
+		*nit = strconv.FormatInt(cfg.Nit, 10)
+	} else if parsed := parseNit(*nit); parsed != cfg.Nit {
+		return fmt.Errorf("siat identidad: nit de la solicitud no coincide con Config")
 	}
-	return goSiat.WithDynamicConfig(ctx, cfg)
+	return nil
+}
+
+func (s *Service) applyIdentity(req *SolicitudFactura) error {
+	cfg := s.sdk.Config()
+	return applyIdentityValues(cfg, &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit)
+}
+
+func (s *Service) applyDocumentIdentity(req *SolicitudDocumento) error {
+	cfg := s.sdk.Config()
+	return applyIdentityValues(cfg, &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit)
 }
 
 // toMensajes convierte la lista de mensajes del SIAT (tipo interno del SDK) a

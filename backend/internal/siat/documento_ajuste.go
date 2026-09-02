@@ -42,8 +42,9 @@ type SolicitudDocumentoAjuste struct {
 	CufFacturaOriginal string `json:"cufFacturaOriginal"`
 
 	// CodigoDocumentoSector y CodigoTipoFactura del documento ajustado.
-	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
-	CodigoTipoFactura     int `json:"codigoTipoFactura"`
+	CodigoDocumentoSector int    `json:"codigoDocumentoSector"`
+	Layout                string `json:"layout,omitempty"`
+	CodigoTipoFactura     int    `json:"codigoTipoFactura"`
 
 	// Datos del emisor
 	RazonSocialEmisor string  `json:"razonSocialEmisor"`
@@ -92,6 +93,7 @@ type SolicitudAnulacionDocumentoAjuste struct {
 	Cuis                  string `json:"cuis"`
 	Cufd                  string `json:"cufd"`
 	CodigoDocumentoSector int    `json:"codigoDocumentoSector"`
+	Layout                string `json:"layout,omitempty"`
 	CodigoTipoFactura     int    `json:"codigoTipoFactura"`
 }
 
@@ -140,6 +142,7 @@ func (s *Service) EmitirDocumentoAjuste(ctx context.Context, req SolicitudDocume
 		TipoCambio:            req.TipoCambio,
 		Leyenda:               req.Leyenda,
 		CodigoDocumentoSector: req.CodigoDocumentoSector,
+		Layout:                req.Layout,
 		CodigoTipoFactura:     req.CodigoTipoFactura,
 		DatosSector:           datos,
 		Items:                 req.Items,
@@ -230,22 +233,28 @@ func (s SolicitudAnulacionDocumentoAjuste) solicitudDocumento() SolicitudDocumen
 		Cuis:                  s.Cuis,
 		Cufd:                  s.Cufd,
 		CodigoDocumentoSector: sector,
+		Layout:                s.Layout,
 		CodigoTipoFactura:     tipo,
 	}
 }
 
 func (s SolicitudDocumentoAjuste) validate() error {
-	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+	if s.CodigoAmbiente != 0 && s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
 		return fmt.Errorf("siat documento ajuste: codigoAmbiente inválido")
-	}
-	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat documento ajuste: codigoSistema es obligatorio")
-	}
-	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat documento ajuste: nit es obligatorio")
 	}
 	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
 		return fmt.Errorf("siat documento ajuste: modalidad inválida (%d)", s.Modalidad)
+	}
+	sector := s.CodigoDocumentoSector
+	if sector <= 0 {
+		sector = SectorNotaCreditoDebito
+	}
+	perfil, err := PerfilSectorLayout(sector, s.Layout)
+	if err != nil {
+		return fmt.Errorf("siat documento ajuste: %w", err)
+	}
+	if !perfil.EsAjuste() {
+		return fmt.Errorf("siat documento ajuste: sector %d no es un documento de ajuste", sector)
 	}
 	if strings.TrimSpace(s.CufFacturaOriginal) == "" {
 		return fmt.Errorf("siat documento ajuste: cufFacturaOriginal es obligatorio")

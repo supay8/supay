@@ -26,6 +26,42 @@ import (
 	goSiat "github.com/ron86i/go-siat/v2"
 )
 
+type ajusteRespuestaTest struct {
+	Transaccion     bool
+	CodigoEstado    int
+	CodigoRecepcion string
+}
+
+type ajusteContentTest struct {
+	RespuestaRecepcionFactura ajusteRespuestaTest
+}
+
+type ajusteBodyTest struct {
+	Content ajusteContentTest
+}
+
+type ajusteSOAPResponseTest struct {
+	Body ajusteBodyTest
+}
+
+func TestExtraerResultadoFacturacionAceptaRespuestaDocumentoAjuste(t *testing.T) {
+	resp := &ajusteSOAPResponseTest{Body: ajusteBodyTest{Content: ajusteContentTest{
+		RespuestaRecepcionFactura: ajusteRespuestaTest{
+			Transaccion:     true,
+			CodigoEstado:    908,
+			CodigoRecepcion: "RECEPCION-24",
+		},
+	}}}
+
+	transaccion, estado, recepcion, _, err := extraerResultadoFacturacion(resp)
+	if err != nil {
+		t.Fatalf("extraerResultadoFacturacion: %v", err)
+	}
+	if !transaccion || estado != 908 || recepcion != "RECEPCION-24" {
+		t.Fatalf("respuesta incorrecta: transaccion=%v estado=%d recepcion=%q", transaccion, estado, recepcion)
+	}
+}
+
 func TestEmpaquetaArchivo(t *testing.T) {
 	data := []byte(`<factura><numeroFactura>100</numeroFactura></factura>`)
 
@@ -113,7 +149,8 @@ func TestEmitirFacturaCompraVentaPayload(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		Items: []ItemFactura{
 			{
@@ -227,7 +264,8 @@ func TestEmitirFacturaSectorEducativoPayload(t *testing.T) {
 			NombreRazonSocial:            "MARIA TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "7654321",
-			CodigoCliente:                "C-002",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-002"),
 		},
 		Items: []ItemFactura{
 			{
@@ -310,7 +348,8 @@ func TestEmitirFacturaTasaCeroPayload(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		Items: []ItemFactura{
 			{
@@ -645,6 +684,7 @@ func buildSolicitudNota(t *testing.T, numeroFactura int64, cufOriginal string, f
 		TipoCambio:            1,
 		Leyenda:               "Ley N° 453",
 		CodigoDocumentoSector: SectorNotaCreditoDebito,
+		Layout:                string(LayoutNotaCreditoDebito),
 		DatosSector:           datos,
 		Cliente:               cliente,
 		Items:                 items,
@@ -659,7 +699,8 @@ func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
 			NombreRazonSocial:            "CLIENTE TEST",
 			CodigoTipoDocumentoIdentidad: 1,
 			NumeroDocumento:              "1234567",
-			CodigoCliente:                "C-001",
+			Complemento:                  ptrStr(""),
+			CodigoCliente:                ptrStr("C-001"),
 		},
 		[]ItemFactura{
 			{
@@ -700,6 +741,9 @@ func TestBuildNotaCreditoDebitoPayload(t *testing.T) {
 	if !strings.Contains(xmlStr, "<numeroNotaCreditoDebito>501</numeroNotaCreditoDebito>") {
 		t.Error("numeroNotaCreditoDebito debe ser 501")
 	}
+	if !strings.Contains(xmlStr, "<numeroFactura>501</numeroFactura>") {
+		t.Error("numeroFactura de la factura original debe ser 501")
+	}
 	if !strings.Contains(xmlStr, "<numeroAutorizacionCuf>CUF-FACTURA-ORIGINAL-ABC123</numeroAutorizacionCuf>") {
 		t.Error("numeroAutorizacionCuf debe contener el CUF de la factura original")
 	}
@@ -727,7 +771,7 @@ func TestBuildNotaCreditoDebitoDebitoPayload(t *testing.T) {
 			CodigoTipoDocumentoIdentidad: 4,
 			NumeroDocumento:              "9876543210",
 			Complemento:                  ptrStr("LP"),
-			CodigoCliente:                "C-002",
+			CodigoCliente:                ptrStr("C-002"),
 		},
 		[]ItemFactura{
 			{

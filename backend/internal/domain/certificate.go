@@ -13,7 +13,9 @@ const (
 )
 
 // Certificate gestiona los certificados digitales (P12/PEM) usados para
-// firmar facturas electrónicas ante el SIAT.
+// firmar facturas electrónicas ante el SIAT. Los campos sensibles (token
+// delegado, password P12, bytes P12) se persisten cifrados con AES-GCM
+// usando la master key del sistema; nunca en texto plano.
 type Certificate struct {
 	ID           string            `json:"id"`
 	CompanyId    string            `json:"company_id"`
@@ -30,6 +32,14 @@ type Certificate struct {
 	RenewedFrom  *string           `json:"renewed_from,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
+
+	// Credenciales fiscales por empresa (cifradas en reposo)
+	EncryptedToken       string  `json:"-"` // token delegado SIAT cifrado (AES-GCM base64)
+	EncryptedP12Password string  `json:"-"` // password .p12 cifrado
+	P12StorageRef        string  `json:"p12_storage_ref,omitempty"` // ref R2/local al .p12 cifrado (ej. r2://bucket/certs/<id>.enc)
+	Modalidad            *int    `json:"modalidad,omitempty"`       // 1 electrónica, 2 computarizada (override por cert)
+	Ambiente             *string `json:"ambiente,omitempty"`        // PILOTO | PRODUCCION (override por cert)
+	Nit                  string  `json:"nit,omitempty"`             // denormalizado para trazabilidad, fuente Company.Nit
 
 	Company Company `json:"company"`
 }

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
 	"gorm.io/gorm"
@@ -34,19 +35,22 @@ func validDocumentType(dt string) bool {
 
 func (uc *CustomerUsecase) Create(req CreateCustomerRequest) (*domain.Customer, error) {
 	if req.CompanyId == "" {
-		return nil, errors.New("el company_id es obligatorio")
+		return nil, domain.NewBadRequestError("el company_id es obligatorio")
 	}
 	if req.DocumentType == "" || req.DocumentNumber == "" {
-		return nil, errors.New("el tipo y número de documento son obligatorios")
+		return nil, domain.NewBadRequestError("el tipo y número de documento son obligatorios")
 	}
+	req.DocumentType = strings.ToUpper(strings.TrimSpace(req.DocumentType))
+	req.DocumentNumber = strings.TrimSpace(req.DocumentNumber)
+	req.Name = strings.TrimSpace(req.Name)
 	if !validDocumentType(req.DocumentType) {
-		return nil, errors.New("tipo de documento inválido (CI, CEX, PAS, NIT, OD)")
+		return nil, domain.NewBadRequestError("tipo de documento inválido (CI, CEX, PAS, NIT, OD)")
 	}
 	if req.Name == "" {
-		return nil, errors.New("el nombre es obligatorio")
+		return nil, domain.NewBadRequestError("el nombre es obligatorio")
 	}
 	if _, err := uc.companyRepo.GetByID(req.CompanyId); err != nil {
-		return nil, errors.New("empresa no encontrada")
+		return nil, domain.NewNotFoundError("empresa no encontrada")
 	}
 
 	existing, err := uc.repo.GetByCompanyAndDocument(req.CompanyId, req.DocumentType, req.DocumentNumber)
@@ -54,12 +58,16 @@ func (uc *CustomerUsecase) Create(req CreateCustomerRequest) (*domain.Customer, 
 		return nil, domain.ErrCustomerDocumentConflict
 	}
 
+	// El cliente es create-only: el codigo_cliente se fija aquí y no hay vía
+	// de actualización posterior (los campos fiscales son inmutables tras
+	// facturar).
 	c := &domain.Customer{
 		CompanyId:      req.CompanyId,
 		DocumentType:   req.DocumentType,
 		DocumentNumber: req.DocumentNumber,
 		Complement:     req.Complement,
 		Name:           req.Name,
+		CodigoCliente:  generateCodigoCliente(req.DocumentType, req.DocumentNumber),
 	}
 	if err := uc.repo.Create(c); err != nil {
 		return nil, err
@@ -71,7 +79,7 @@ func (uc *CustomerUsecase) GetByID(id string) (*domain.Customer, error) {
 	c, err := uc.repo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("cliente no encontrado")
+			return nil, domain.NewNotFoundError("cliente no encontrado")
 		}
 		return nil, err
 	}

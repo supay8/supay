@@ -1,32 +1,199 @@
 package http
 
 import (
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"reflect"
+
+	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/usecase"
+	"gorm.io/gorm"
+
+	goSiat "github.com/ron86i/go-siat/v2"
 )
 
-// respondError es la salida uniforme de errores HTTP: envelope JSON
-// {"error": "..."}, mapeo del error a status vía errToStatus y log del detalle
-// completo server-side. En errores 5xx el mensaje interno no viaja al cliente
-// para no filtrar detalles de SOAP/repositorio.
-func respondError(w http.ResponseWriter, err error) {
-	status := errToStatus(err)
-	if status >= 500 {
-		slog.Error("request fallido", "status", status, "error", err)
-		writeJSONError(w, status, publicMessage(status))
-		return
-	}
-	slog.Warn("request rechazado", "status", status, "error", err)
-	writeJSONError(w, status, err.Error())
+// Taxonomía de códigos de error del contrato HTTP. Los clientes (y el SDK)
+// programan contra estos códigos, nunca contra los mensajes: el texto puede
+// cambiar, el código no.
+const (
+	codeValidation      = "VALIDATION_ERROR"
+	codeNotFound        = "NOT_FOUND"
+	codeConflict        = "CONFLICT"
+	codeUnauthorized    = "UNAUTHORIZED"
+	codeSiatRejected    = "SIAT_REJECTED"
+	codeSiatUnavailable = "SIAT_UNAVAILABLE"
+	codeInternal        = "INTERNAL"
+)
+
+// errorDetail es un mensaje individual dentro de un error (p.ej. cada
+// observación devuelta por el SIAT en un rechazo).
+type errorDetail struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
-func publicMessage(status int) string {
-	switch status {
-	case http.StatusBadGateway:
-		return "el servicio SIAT no respondió correctamente"
-	case http.StatusServiceUnavailable:
-		return "el servicio SIAT no está disponible"
-	default:
-		return "error interno del servidor"
+// errorBody es el payload estándar de error.
+type errorBody struct {
+	Code      string        `json:"code"`
+	Message   string        `json:"message"`
+	InvoiceID string        `json:"invoice_id,omitempty"`
+	Details   []errorDetail `json:"details,omitempty"`
+}
+
+// errorEnvelope es la forma única de error en toda la API:
+// {"error": {"code": "...", "message": "...", "details": [...]}}.
+type errorEnvelope struct {
+	Error errorBody `json:"error"`
+}
+
+// classifyError mapea cualquier error de la aplicación a su status HTTP y
+// cuerpo público. Es el ÚNICO punto de mapeo error→respuesta.
+func classifyError(err error) (int, errorBody) {
+	var rejected *usecase.EmissionRejectedError
+	if errors.As(err, &rejected) {
+		details := make([]errorDetail, 0, len(rejected.Mensajes))
+		for _, m := range rejected.Mensajes {
+			details = append(details, errorDetail{Code: m.Codigo, Message: m.Descripcion})
+		}
+		return http.StatusUnprocessableEntity, errorBody{
+			Code:    codeSiatRejected,
+			Message: "el documento fue rechazado por el SIAT",
+			Details: details,
+		}
 	}
+
+	if errors.Is(err, usecase.ErrSiatNoDisponible) {
+		return http.StatusServiceUnavailable, errorBody{
+			Code:    codeSiatUnavailable,
+			Message: "el servicio SIAT no está disponible",
+		}
+	}
+
+	var siatErr *goSiat.SiatError
+	if errors.As(err, &siatErr) {
+		if goSiat.IsNetworkError(err) || goSiat.IsRetryable(err) {
+			return http.StatusServiceUnavailable, errorBody{
+				Code:    codeSiatUnavailable,
+				Message: "el servicio SIAT no está disponible",
+			}
+		}
+		return http.StatusBadGateway, errorBody{
+			Code:    codeSiatUnavailable,
+			Message: "el servicio SIAT no respondió correctamente",
+		}
+	}
+
+	var badRequest *domain.BadRequestError
+	var notFound *domain.NotFoundError
+	switch {
+	case isConflict(err):
+		return http.StatusConflict, errorBody{Code: codeConflict, Message: err.Error()}
+	case errors.As(err, &badRequest):
+		return http.StatusBadRequest, errorBody{Code: codeValidation, Message: err.Error()}
+	case errors.As(err, &notFound), errors.Is(err, gorm.ErrRecordNotFound):
+		return http.StatusNotFound, errorBody{Code: codeNotFound, Message: err.Error()}
+	default:
+		// Error no tipado: se trata como interno. El detalle nunca viaja al
+		// cliente (puede contener SQL, URLs de SOAP, etc.), solo se loguea.
+		return http.StatusInternalServerError, errorBody{
+			Code:    codeInternal,
+			Message: "error interno del servidor",
+		}
+	}
+}
+
+// isConflict reconoce los errores centinela de dominio (conflictos de
+// unicidad y dependencias al eliminar) además de ConflictError tipado.
+func isConflict(err error) bool {
+	var conflict *domain.ConflictError
+	if errors.As(err, &conflict) {
+		return true
+	}
+	switch err {
+	case domain.ErrCompanyNitConflict,
+		domain.ErrCompanyHasDependencies,
+		domain.ErrCustomerDocumentConflict,
+		domain.ErrBranchSucursalConflict,
+		domain.ErrPointOfSaleCodeConflict,
+		domain.ErrPointOfSaleHasDependencies:
+		return true
+	}
+	return false
+}
+
+// respondError es la salida uniforme de errores HTTP: clasifica el error,
+// loguea el detalle completo server-side y escribe el envelope estándar.
+func respondError(w http.ResponseWriter, err error) {
+	status, body := classifyError(err)
+	if status >= 500 {
+		slog.Error("request fallido", "status", status, "error", err)
+	} else {
+		slog.Warn("request rechazado", "status", status, "error", err)
+	}
+	writeErrorBody(w, status, body)
+}
+
+// respondErrorWithInvoiceID es igual a respondError pero anexa el invoice_id
+// en el cuerpo cuando la operación ya creó/identificó una factura (p.ej. emisión
+// rechazada por el SIAT). El invoiceID puede estar vacío; en ese caso delega a
+// respondError sin modificar el envelope.
+func respondErrorWithInvoiceID(w http.ResponseWriter, err error, invoiceID string) {
+	if invoiceID == "" {
+		respondError(w, err)
+		return
+	}
+	status, body := classifyError(err)
+	body.InvoiceID = invoiceID
+	if status >= 500 {
+		slog.Error("request fallido", "status", status, "invoice_id", invoiceID, "error", err)
+	} else {
+		slog.Warn("request rechazado", "status", status, "invoice_id", invoiceID, "error", err)
+	}
+	writeErrorBody(w, status, body)
+}
+
+// respondValidation responde 400 VALIDATION_ERROR con un mensaje público
+// (payload ilegible, parámetro faltante, etc.).
+func respondValidation(w http.ResponseWriter, message string) {
+	writeErrorBody(w, http.StatusBadRequest, errorBody{Code: codeValidation, Message: message})
+}
+
+// respondNotFound responde 404 NOT_FOUND con un mensaje público.
+func respondNotFound(w http.ResponseWriter, message string) {
+	writeErrorBody(w, http.StatusNotFound, errorBody{Code: codeNotFound, Message: message})
+}
+
+// writeErrorBody serializa el envelope de error.
+func writeErrorBody(w http.ResponseWriter, status int, body errorBody) {
+	writeJSON(w, status, errorEnvelope{Error: body})
+}
+
+// listResponse es el envelope estándar de listados. limit/offset solo
+// aparecen en los listados paginados.
+type listResponse struct {
+	Items  any `json:"items"`
+	Total  int `json:"total"`
+	Limit  int `json:"limit,omitempty"`
+	Offset int `json:"offset,omitempty"`
+}
+
+// respondList escribe un listado con envelope. Para listados sin paginación,
+// pasar limit=offset=0 (los campos se omiten del JSON). Un slice nil se
+// serializa como items: [] en lugar de null.
+func respondList(w http.ResponseWriter, items any, total, limit, offset int) {
+	if items == nil {
+		items = []any{}
+	} else if rv := reflect.ValueOf(items); rv.Kind() == reflect.Slice && rv.IsNil() {
+		items = reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+	}
+	writeJSON(w, http.StatusOK, listResponse{Items: items, Total: total, Limit: limit, Offset: offset})
+}
+
+// writeJSON serializa un payload con el status indicado.
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
 }

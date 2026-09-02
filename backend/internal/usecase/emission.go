@@ -55,15 +55,15 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	inv, err := uc.invoiceRepo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("factura no encontrada")
+			return nil, domain.NewNotFoundError("factura no encontrada")
 		}
 		return nil, err
 	}
 	if inv.Status != domain.InvoicePending {
 		if inv.Status == domain.InvoiceSending {
-			return nil, errors.New("la factura ya está en proceso de emisión")
+			return nil, domain.NewConflictError("la factura ya está en proceso de emisión")
 		}
-		return nil, errors.New("solo se pueden emitir facturas en estado PENDING")
+		return nil, domain.NewConflictError("solo se pueden emitir facturas en estado PENDING")
 	}
 
 	// Claim atómico PENDING->SENDING: evita emisiones duplicadas concurrentes.
@@ -72,7 +72,7 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		return nil, err
 	}
 	if !claimed {
-		return nil, errors.New("la factura ya está en proceso de emisión")
+		return nil, domain.NewConflictError("la factura ya está en proceso de emisión")
 	}
 
 	// Un fallo de transporte o de prerrequisitos revierte a PENDING (reintentable);
@@ -85,29 +85,36 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		}
 	}
 
-	if uc.siatService == nil {
-		rollback()
-		return nil, errors.New("el servicio SIAT no está disponible")
-	}
-	req, err := uc.buildSolicitudFactura(inv)
+	req, err := uc.buildSolicitudFactura(ctx, inv)
 	if err != nil {
 		rollback()
 		return nil, err
 	}
-	log.Println("viendo la factura")
-	log.Println(req)
-	result, err := uc.siatService.EmitirFactura(ctx, *req)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		rollback()
+		return nil, err
+	}
+	result, err := svc.EmitirFactura(ctx, *req)
 	if err != nil {
 		rollback()
 		return nil, fmt.Errorf("error de emisión: %w", err)
 	}
 
-	inv.Cuf = &result.Cuf
+	if strings.TrimSpace(result.Cuf) != "" {
+		inv.Cuf = &result.Cuf
+	}
 	if result.Xml != "" {
 		inv.Xml = &result.Xml
 	}
 	if result.XmlHash != "" {
 		inv.XmlHash = &result.XmlHash
+	}
+	if result.Archivo != "" {
+		inv.Archivo = result.Archivo
+		if result.XmlHash != "" {
+			inv.HashArchivo = result.XmlHash
+		}
 	}
 	if result.CodigoRecepcion != "" {
 		inv.SiatReceptionCode = &result.CodigoRecepcion
@@ -126,13 +133,10 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	} else {
 		inv.Status = domain.InvoiceRejected
 	}
-	log.Println("bloque 2")
 
 	if err := uc.persistResultadoConReintentos(inv, result); err != nil {
 		return nil, err
 	}
-	log.Println("bloque 3")
-	log.Println(result)
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
 			CodigoEstado:    result.CodigoEstado,
@@ -140,7 +144,14 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 			Mensajes:        result.Mensajes,
 		}
 	}
-	log.Println("bloque 4")
+
+	// Hook PDF: persiste en disco (local) o R2 (cloud) según STORAGE_DRIVER.
+	// Con STORAGE_DRIVER=none es no-op. No bloquea la respuesta (async + WithoutCancel).
+	if uc.pdfService != nil && result.Transaccion {
+		invID := inv.ID
+		// Detach del ctx del request: la generación puede tardar ~100ms.
+		go uc.pdfService.GenerateAndPersist(context.WithoutCancel(ctx), invID)
+	}
 
 	return inv, nil
 }
@@ -181,23 +192,23 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 	inv, err := uc.invoiceRepo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("factura no encontrada")
+			return nil, domain.NewNotFoundError("factura no encontrada")
 		}
 		return nil, err
 	}
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
-		return nil, errors.New("la factura no ha sido emitida (no tiene CUF asignado)")
-	}
-	if uc.siatService == nil {
-		return nil, errors.New("el servicio SIAT no está disponible")
+		return nil, domain.NewConflictError("la factura no ha sido emitida (no tiene cuf asignado)")
 	}
 
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
 	}
-
-	result, err := uc.siatService.VerificarEstado(ctx, *req)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.VerificarEstado(ctx, *req)
 	if err != nil {
 		return nil, fmt.Errorf("error de verificación: %w", err)
 	}
@@ -217,37 +228,44 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 // CONFIRMADA) se persiste el estado, el motivo y la fecha de anulación.
 func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
+	log.Println("Funcion emission.go ejecutandose")
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("factura no encontrada")
+			return nil, domain.NewNotFoundError("factura no encontrada")
 		}
 		return nil, err
 	}
 
 	if inv.Status != domain.InvoiceAccepted {
-		return nil, errors.New("solo se pueden anular facturas en estado ACCEPTED")
+		return nil, domain.NewConflictError("solo se pueden anular facturas en estado ACCEPTED")
 	}
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
-		return nil, errors.New("la factura no tiene CUF asignado")
+		return nil, domain.NewConflictError("la factura no tiene cuf asignado")
 	}
-
+	log.Println("[DEBUG] bloque Anuul 1 ")
 	if err := uc.validateMotivoAnulacion(inv.CompanyId, codigoMotivo); err != nil {
 		return nil, err
 	}
+	log.Println("[DEBUG] bloque Anuul 2 ")
 
-	if uc.siatService == nil {
-		return nil, errors.New("el servicio SIAT no está disponible")
-	}
+	log.Println("[DEBUG] bloque Anuul 3")
 
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
 	}
+	log.Println("[DEBUG] bloque Anuul 4 ")
 
-	result, err := uc.siatService.AnularFactura(ctx, *req, codigoMotivo)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.AnularFactura(ctx, *req, codigoMotivo)
 	if err != nil {
 		return nil, fmt.Errorf("error de anulación: %w", err)
 	}
+	log.Println("[DEBUG] bloque Anuul 5 ", result)
+
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
 			CodigoEstado:    result.CodigoEstado,
@@ -255,6 +273,7 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 			Mensajes:        result.Mensajes,
 		}
 	}
+	log.Println("[DEBUG] bloque Anuul 6 ")
 
 	now := time.Now()
 	fields := map[string]any{
@@ -271,7 +290,7 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 		return nil, err
 	}
 	if !claimed {
-		return nil, errors.New("la factura ya no está en estado ACCEPTED (posible anulación concurrente)")
+		return nil, domain.NewConflictError("la factura ya no está en estado ACCEPTED (posible anulación concurrente)")
 	}
 
 	inv.Status = domain.InvoiceCancelled
@@ -293,26 +312,26 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 	inv, err := uc.invoiceRepo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("factura no encontrada")
+			return nil, domain.NewNotFoundError("factura no encontrada")
 		}
 		return nil, err
 	}
 	if inv.Status != domain.InvoiceCancelled {
-		return nil, errors.New("solo se pueden revertir anulaciones de facturas en estado CANCELLED")
+		return nil, domain.NewConflictError("solo se pueden revertir anulaciones de facturas en estado CANCELLED")
 	}
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
-		return nil, errors.New("la factura no tiene CUF asignado")
-	}
-	if uc.siatService == nil {
-		return nil, errors.New("el servicio SIAT no está disponible")
+		return nil, domain.NewConflictError("la factura no tiene cuf asignado")
 	}
 
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
 	}
-
-	result, err := uc.siatService.RevertirAnulacion(ctx, *req)
+	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
+	if err != nil {
+		return nil, err
+	}
+	result, err := svc.RevertirAnulacion(ctx, *req)
 	if err != nil {
 		return nil, fmt.Errorf("error de reversión de anulación: %w", err)
 	}
@@ -338,7 +357,7 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 		return nil, err
 	}
 	if !claimed {
-		return nil, errors.New("la factura ya no está en estado CANCELLED (posible reversión concurrente)")
+		return nil, domain.NewConflictError("la factura ya no está en estado CANCELLED (posible reversión concurrente)")
 	}
 
 	inv.Status = domain.InvoiceAccepted
@@ -360,7 +379,7 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.SolicitudDocumento, error) {
 	pos := inv.PointOfSale
 	if pos.Cuis == nil || strings.TrimSpace(*pos.Cuis) == "" {
-		return nil, errors.New("el punto de venta no tiene CUIS activo")
+		return nil, domain.NewConflictError("el punto de venta no tiene cuis activo")
 	}
 
 	// Obtener CUFD vigente del punto de venta, o caer al registrado con la factura.
@@ -376,7 +395,7 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		}
 	}
 	if cufd == nil || strings.TrimSpace(cufd.Cufd) == "" {
-		return nil, errors.New("la factura no tiene CUFD asociado y el punto de venta no tiene CUFD vigente; solicite uno nuevo (POST /siat/cufd/...)")
+		return nil, domain.NewConflictError("la factura no tiene un cufd vigente asociado; solicítelo primero")
 	}
 
 	// Validar vigencia del CUFD: el SIAT rechaza operaciones con CUFD vencido.
@@ -392,7 +411,10 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		codigoPuntoVenta = *pos.SiatCode
 	}
 
-	modalidad := uc.modalidad
+	modalidad := inv.Modalidad
+	if modalidad <= 0 {
+		modalidad = uc.effectiveModalidadForCompany(&inv.Company)
+	}
 	if modalidad <= 0 {
 		modalidad = siat.ModalidadElectronica
 	}
@@ -402,6 +424,7 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		CodigoSistema:         inv.Company.CodigoSistema,
 		Nit:                   inv.Company.Nit,
 		Modalidad:             modalidad,
+		Layout:                inv.Layout,
 		Cuf:                   *inv.Cuf,
 		CodigoSucursal:        pos.CodigoSucursal,
 		CodigoPuntoVenta:      codigoPuntoVenta,
@@ -427,7 +450,7 @@ func (uc *InvoiceUsecase) validateMotivoAnulacion(companyID string, codigoMotivo
 			return nil
 		}
 	}
-	return fmt.Errorf("motivo de anulación %d no es válido; consulte el catálogo motivoAnulacion", codigoMotivo)
+	return domain.NewBadRequestError(fmt.Sprintf("motivo de anulación %d no es válido; consulte el catálogo motivoAnulacion", codigoMotivo))
 }
 
 // siatEstadoToDomain mapea el CodigoEstado de una respuesta de verificación del
@@ -449,34 +472,87 @@ func siatEstadoToDomain(codigoEstado int) (domain.InvoiceStatus, bool) {
 	}
 }
 
+// clienteFromCustomer construye el bloque ClienteFactura del SIAT desde el
+// Customer de la factura. El Customer es la única fuente de verdad de los
+// datos fiscales del receptor (inmutable tras facturar): no existe snapshot
+// alternativo. Usado por emisión normal, paquetes y contingencia.
+func clienteFromCustomer(c domain.Customer) (siat.ClienteFactura, error) {
+	if strings.TrimSpace(c.DocumentNumber) == "" || strings.TrimSpace(c.Name) == "" {
+		return siat.ClienteFactura{}, domain.NewConflictError("factura sin cliente asociado; toda factura debe referenciar un cliente")
+	}
+	codigoDoc, err := codigoTipoDocumentoIdentidad(c.DocumentType)
+	if err != nil {
+		return siat.ClienteFactura{}, err
+	}
+	complemento := c.Complement
+	var codigoCliente *string
+	if strings.TrimSpace(c.CodigoCliente) != "" {
+		codigo := c.CodigoCliente
+		codigoCliente = &codigo
+		// SIAT XSD requiere que 'complemento' esté presente antes que
+		// 'codigoCliente'. Si hay codigoCliente pero no complemento, se envía
+		// string vacío (no nil) para mantener el orden del XSD y evitar el
+		// rechazo 920.
+		if complemento == nil {
+			empty := ""
+			complemento = &empty
+		}
+	}
+	return siat.ClienteFactura{
+		NombreRazonSocial:            c.Name,
+		CodigoTipoDocumentoIdentidad: codigoDoc,
+		NumeroDocumento:              c.DocumentNumber,
+		Complemento:                  complemento,
+		CodigoCliente:                codigoCliente,
+	}, nil
+}
+
 // buildSolicitudFactura reúne los prerrequisitos de la factura y los mapea a
 // los códigos de catálogo SIN esperados por el SDK.
-func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.SolicitudFactura, error) {
+func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain.Invoice) (*siat.SolicitudFactura, error) {
 	company := inv.Company
 	pos := inv.PointOfSale
 
+	// CUIS lazy: si falta y hay servicio de credenciales, se solicita en
+	// línea; si no, se mantiene el error accionable.
 	if pos.Cuis == nil || strings.TrimSpace(*pos.Cuis) == "" {
-		return nil, errors.New("el punto de venta no tiene CUIS activo; solicítelo primero (POST /siat/cuis/{companyId}/{pointOfSaleId})")
-	}
-
-	// Intentar usar el CUFD más reciente del punto de venta; si no hay,
-	// caer al CUFD registrado con la factura.
-	cufd := inv.CufdRecord
-	if uc.cufdRepo != nil {
-		if active, err := uc.cufdRepo.GetActiveByPos(inv.PointOfSaleId); err == nil && active != nil {
-			cufd = *active
+		if uc.credentials != nil {
+			if err := uc.credentials.EnsureCuis(ctx, &company, &pos); err != nil {
+				return nil, err
+			}
 		}
 	}
-	if cufd.ID == "" || !cufd.Active {
-		return nil, errors.New("la factura no tiene un CUFD vigente asociado; solicítelo primero (POST /siat/cufd/{companyId}/{pointOfSaleId})")
+	if pos.Cuis == nil || strings.TrimSpace(*pos.Cuis) == "" {
+		return nil, domain.NewConflictError("el punto de venta no tiene cuis activo; solicítelo primero")
 	}
-	now := time.Now().In(siat.LaPaz)
-	if now.Before(cufd.ValidFrom) || now.After(cufd.ValidTo) {
-		return nil, errors.New("el CUFD asociado a la factura está vencido; solicite uno nuevo")
+
+	// CUFD: con credenciales se resuelve lazy (renueva si venció); sin
+	// ellas se usa el vigente del punto de venta o el de la factura.
+	var cufd domain.Cufd
+	if uc.credentials != nil {
+		ensured, err := uc.credentials.EnsureCufd(ctx, &company, &pos)
+		if err != nil {
+			return nil, err
+		}
+		cufd = *ensured
+	} else {
+		cufd = inv.CufdRecord
+		if uc.cufdRepo != nil {
+			if active, err := uc.cufdRepo.GetActiveByPos(inv.PointOfSaleId); err == nil && active != nil {
+				cufd = *active
+			}
+		}
+		if cufd.ID == "" || !cufd.Active {
+			return nil, domain.NewConflictError("la factura no tiene un cufd vigente asociado; solicítelo primero")
+		}
+		now := time.Now().In(siat.LaPaz)
+		if now.Before(cufd.ValidFrom) || now.After(cufd.ValidTo) {
+			return nil, domain.NewConflictError("el cufd asociado a la factura está vencido; solicite uno nuevo")
+		}
 	}
 
 	if company.CodigoActividad == nil || strings.TrimSpace(*company.CodigoActividad) == "" {
-		return nil, errors.New("la empresa no tiene definida su actividad económica (codigo_actividad)")
+		return nil, domain.NewConflictError("la empresa no tiene definida su actividad económica (codigo_actividad)")
 	}
 	actividad := strings.TrimSpace(*company.CodigoActividad)
 
@@ -487,14 +563,12 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		codigoPuntoVenta = *pos.SiatCode
 	}
 
-	modalidad := uc.modalidad
+	modalidad := inv.Modalidad
+	if modalidad <= 0 {
+		modalidad = uc.effectiveModalidadForCompany(&company)
+	}
 	if modalidad <= 0 {
 		modalidad = siat.ModalidadElectronica
-	}
-
-	codigoDoc, err := codigoTipoDocumentoIdentidad(inv.Customer.DocumentType)
-	if err != nil {
-		return nil, err
 	}
 
 	leyenda, err := uc.resolveLeyenda(inv.CompanyId, actividad)
@@ -508,11 +582,20 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		telefonoPtr = &telefono
 	}
 
+	habilitadas := uc.actividadesHabilitadas(&company)
 	items := make([]siat.ItemFactura, 0, len(inv.Items))
 	for i, it := range inv.Items {
 		itemActividad := actividad
 		if it.CodigoActividad != nil && strings.TrimSpace(*it.CodigoActividad) != "" {
 			itemActividad = strings.TrimSpace(*it.CodigoActividad)
+		} else {
+			// Herencia por defecto de actividad principal si no viene definida
+			itemActividad = actividad
+		}
+		// Multiactividad controlada: validar existencia en habilitadas (Warn, no bloquea)
+		if len(habilitadas) > 0 && !habilitadas[itemActividad] {
+			slog.Warn("emission: actividad item no habilitada en padrón, se emite con advertencia (evitar 1017)",
+				"invoice_id", inv.ID, "item", i+1, "actividad_item", itemActividad, "actividad_principal", actividad, "habilitadas", habilitadas)
 		}
 
 		var codigoProductoSin int64
@@ -522,7 +605,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 			}
 		}
 		if codigoProductoSin <= 0 {
-			return nil, fmt.Errorf("el ítem %d (%s) no tiene un codigoProductoSin válido; sincronice el catálogo y asigne el código SIN", i+1, it.Description)
+			return nil, domain.NewBadRequestError(fmt.Sprintf("el ítem %d (%s) no tiene un codigo_producto_sin válido; sincronice el catálogo y asigne el código SIN", i+1, it.Description))
 		}
 
 		unidadMedida := 1
@@ -536,6 +619,13 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 			descuentoPtr = &descuento
 		}
 
+		// Subtotal dinámico estricto: corrige valores quemados/desalineados (1013/1018)
+		subtotalCalc := siat.CalcularSubtotal(it.Quantity, it.UnitPrice, descuentoPtr)
+		if it.Subtotal != 0 && round2(it.Subtotal) != subtotalCalc {
+			slog.Warn("emission: subtotal item auto-corregido",
+				"invoice_id", inv.ID, "item", i+1, "descripcion", it.Description,
+				"subtotal_previo", it.Subtotal, "subtotal_corregido", subtotalCalc)
+		}
 		items = append(items, siat.ItemFactura{
 			ActividadEconomica: itemActividad,
 			CodigoProductoSin:  codigoProductoSin,
@@ -545,8 +635,19 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 			UnidadMedida:       unidadMedida,
 			PrecioUnitario:     it.UnitPrice,
 			MontoDescuento:     descuentoPtr,
-			SubTotal:           it.Subtotal,
+			SubTotal:           subtotalCalc,
+			DatosSector:        it.SectorData,
 		})
+	}
+	// MontoTotal dinámico: suma estricta de subtotales (auto-corrección con Warn)
+	var montoCorregido float64
+	for _, it := range items {
+		montoCorregido += it.SubTotal
+	}
+	montoCorregido = round2(montoCorregido)
+	if round2(inv.Total) != montoCorregido {
+		slog.Warn("emission: montoTotal auto-corregido",
+			"invoice_id", inv.ID, "monto_previo", inv.Total, "monto_corregido", montoCorregido)
 	}
 
 	// La dirección del XML debe coincidir con la registrada en padrón ante el
@@ -560,9 +661,31 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 	if sector <= 0 {
 		sector = 1
 	}
-	perfil, err := siat.PerfilSector(sector)
+	perfil, err := siat.PerfilSectorLayout(sector, inv.Layout)
 	if err != nil {
-		return nil, fmt.Errorf("factura %s: %w", inv.ID, err)
+		return nil, domain.NewBadRequestError(fmt.Sprintf("factura %s: %v", inv.ID, err))
+	}
+	var numeroFacturaOriginal int64
+	if perfil.EsAjuste() {
+		if strings.TrimSpace(valueOrEmpty(inv.AjustaFacturaId)) == "" {
+			return nil, domain.NewConflictError("el documento de ajuste no tiene factura original asociada")
+		}
+		original, originalErr := uc.invoiceRepo.GetByID(*inv.AjustaFacturaId)
+		if originalErr != nil {
+			return nil, fmt.Errorf("no se pudo cargar la factura original del ajuste: %w", originalErr)
+		}
+		slog.Info("siat ajuste: factura original cargada",
+			"invoice_id", inv.ID,
+			"original_id", original.ID,
+			"nota_invoice_number", inv.InvoiceNumber,
+			"original_invoice_number", original.InvoiceNumber,
+			"original_cuf", valueOrEmpty(original.Cuf),
+			"layout", inv.Layout,
+			"sector", sector)
+		if original.InvoiceNumber <= 0 {
+			return nil, domain.NewConflictError("la factura original del ajuste no tiene un número válido")
+		}
+		numeroFacturaOriginal = int64(original.InvoiceNumber)
 	}
 	tipoFactura := perfil.TipoDocumentoResuelto(inv.CodigoTipoFactura)
 
@@ -581,12 +704,20 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		usuario = company.UsuarioSiat
 	}
 
+	// El bloque de cliente del SIAT se construye SIEMPRE desde el Customer
+	// asociado (única fuente de verdad; el cliente es inmutable tras facturar).
+	cliente, err := clienteFromCustomer(inv.Customer)
+	if err != nil {
+		return nil, err
+	}
+
 	return &siat.SolicitudFactura{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
 		Modalidad:             modalidad,
 		NumeroFactura:         int64(inv.InvoiceNumber),
+		NumeroFacturaOriginal: numeroFacturaOriginal,
 		CodigoSucursal:        pos.CodigoSucursal,
 		CodigoPuntoVenta:      codigoPuntoVenta,
 		Cuis:                  *pos.Cuis,
@@ -602,21 +733,26 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(inv *domain.Invoice) (*siat.Soli
 		CodigoMetodoPago:      inv.CodigoMetodoPago,
 		CodigoMoneda:          inv.CodigoMoneda,
 		TipoCambio:            inv.TipoCambio,
-		MontoTotal:            inv.Total,
+		MontoTotal:            montoCorregido,
 		CodigoDocumentoSector: sector,
+		Layout:                inv.Layout,
 		CodigoTipoFactura:     tipoFactura,
 		NombreEstudiante:      nombreEstudiante,
 		PeriodoFacturado:      periodoFacturado,
 		DatosSector:           inv.SectorData,
-		Cliente: siat.ClienteFactura{
-			NombreRazonSocial:            inv.Customer.Name,
-			CodigoTipoDocumentoIdentidad: codigoDoc,
-			NumeroDocumento:              inv.Customer.DocumentNumber,
-			Complemento:                  inv.Customer.Complement,
-			CodigoCliente:                inv.Customer.ID,
-		},
-		Items: items,
+		Archivo:               inv.Archivo,
+		HashArchivo:           inv.HashArchivo,
+		Cuf:                   valueOrEmpty(inv.Cuf),
+		Cliente:               cliente,
+		Items:                 items,
 	}, nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // codigoTipoDocumentoIdentidad mapea el tipo de documento del cliente al código
@@ -634,21 +770,21 @@ func codigoTipoDocumentoIdentidad(documentType string) (int, error) {
 	case "OD":
 		return 5, nil
 	default:
-		return 0, fmt.Errorf("tipo de documento de identidad no soportado: %q", documentType)
+		return 0, domain.NewBadRequestError(fmt.Sprintf("tipo de documento de identidad no soportado: %q", documentType))
 	}
 }
 
-// resolveLeyenda busca en el catálogo sincronizado leyendasFactura la leyenda
-// oficial del SIAT para la actividad económica de la empresa. Si el catálogo no
-// está sincronizado o no contiene la actividad, usa la leyenda genérica de la
-// Ley 453.
+// resolveLeyenda busca en el catálogo sincronizado leyendasFactura (tabla
+// siat_leyendas_factura) la leyenda oficial del SIAT para la actividad
+// económica de la empresa. Si el catálogo no está sincronizado o no contiene
+// la actividad, usa la leyenda genérica de la Ley 453.
 func (uc *InvoiceUsecase) resolveLeyenda(companyID, actividad string) (string, error) {
-	if uc.catalogRepo != nil {
-		if items, err := uc.catalogRepo.List(companyID, "leyendasFactura"); err == nil {
-			prefix := actividad + ":"
+	if uc.leyendaRepo != nil && strings.TrimSpace(actividad) != "" {
+		if items, err := uc.leyendaRepo.ListByActividad(companyID, strings.TrimSpace(actividad)); err == nil {
 			for _, item := range items {
-				if strings.HasPrefix(item.Descripcion, prefix) {
-					return strings.TrimSpace(strings.TrimPrefix(item.Descripcion, prefix)), nil
+				leyenda := strings.TrimSpace(item.DescripcionLeyenda)
+				if leyenda != "" {
+					return leyenda, nil
 				}
 			}
 		}

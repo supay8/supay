@@ -67,7 +67,7 @@ func TestEnviarMasivaFacturasPayload(t *testing.T) {
 					NombreRazonSocial:            "CLIENTE TEST",
 					CodigoTipoDocumentoIdentidad: 1,
 					NumeroDocumento:              "1234567",
-					CodigoCliente:                "C-001",
+					CodigoCliente:                ptrStr("C-001"),
 				},
 				Items: []ItemFactura{
 					{
@@ -98,7 +98,7 @@ func TestEnviarMasivaFacturasPayload(t *testing.T) {
 					NombreRazonSocial:            "CLIENTE TEST 2",
 					CodigoTipoDocumentoIdentidad: 1,
 					NumeroDocumento:              "7654321",
-					CodigoCliente:                "C-002",
+					CodigoCliente:                ptrStr("C-002"),
 				},
 				Items: []ItemFactura{
 					{

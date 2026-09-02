@@ -36,12 +36,15 @@ type SolicitudMasivaFactura struct {
 
 	// CodigoDocumentoSector es el diseño de factura del lote (1 = compraventa,
 	// 11 = sector educativo). Todas las facturas deben ser del mismo sector.
-	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
+	CodigoDocumentoSector int    `json:"codigoDocumentoSector"`
+	Layout                string `json:"layout,omitempty"`
 	// CodigoTipoFactura es el tipo de documento factura (1 = factura).
 	CodigoTipoFactura int `json:"codigoTipoFactura"`
 	// CodigoEmision es el tipo de emisión; para emisión masiva el SIAT exige 3
 	// (EmisionMasiva). 0 se interpreta como masiva.
-	CodigoEmision int `json:"codigoEmision"`
+	CodigoEmision int    `json:"codigoEmision"`
+	Archivo       string `json:"archivo,omitempty"`
+	HashArchivo   string `json:"hashArchivo,omitempty"`
 
 	// Facturas son las facturas del lote (máximo 1000). La identidad común
 	// (ambiente, sistema, NIT, modalidad, sucursal, punto de venta, CUIS/CUFD,
@@ -57,15 +60,17 @@ type SolicitudMasivaFactura struct {
 // (WithFacturas). El CodigoRecepcion devuelto se usa luego en
 // ValidarMasivaFacturas.
 func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaFactura) (*ResultadoPaquete, error) {
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
+	}
+	if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
+		return nil, err
+	}
 	req = req.normalized()
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
-	if s.sdk == nil {
-		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
-	}
-
-	perfil, err := PerfilSector(req.sector())
+	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat masiva: %w", err)
 	}
@@ -74,13 +79,18 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 
 	facturas := make([]any, 0, len(req.Facturas))
 	cufs := make([]string, 0, len(req.Facturas))
-	for i := range req.Facturas {
-		factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
-		if err != nil {
-			return nil, fmt.Errorf("siat masiva factura %d: %w", i+1, err)
+	if perfil.HasBuilder() {
+		for i := range req.Facturas {
+			if err := applyIdentityValues(s.sdk.Config(), &req.Facturas[i].CodigoAmbiente, &req.Facturas[i].CodigoSistema, &req.Facturas[i].Nit); err != nil {
+				return nil, fmt.Errorf("siat masiva factura %d: %w", i+1, err)
+			}
+			factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
+			if err != nil {
+				return nil, fmt.Errorf("siat masiva factura %d: %w", i+1, err)
+			}
+			facturas = append(facturas, factura)
+			cufs = append(cufs, cuf)
 		}
-		facturas = append(facturas, factura)
-		cufs = append(cufs, cuf)
 	}
 
 	lote := models.NewRecepcionMasivaFacturaBuilder().
@@ -97,8 +107,12 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 		// (no convierte), por lo que se envía la hora de pared de La Paz.
 		WithFechaEnvio(time.Now().In(LaPaz))
 
-	if err := lote.WithFacturas(facturas, s.sdk.Config()); err != nil {
-		return nil, fmt.Errorf("siat masiva: no se pudo empaquetar las facturas: %w", err)
+	if perfil.HasBuilder() {
+		if err := lote.WithFacturas(facturas, s.sdk.Config()); err != nil {
+			return nil, fmt.Errorf("siat masiva: no se pudo empaquetar las facturas: %w", err)
+		}
+	} else {
+		lote.WithArchivo(req.Archivo).WithHashArchivo(req.HashArchivo).WithCantidadFacturas(len(req.Facturas))
 	}
 
 	built := lote.Build()
@@ -134,16 +148,19 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 // (validacionRecepcionMasivaFactura) usando el CodigoRecepcion devuelto por
 // EnviarMasivaFacturas.
 func (s *Service) ValidarMasivaFacturas(ctx context.Context, req SolicitudMasivaFactura, codigoRecepcion string) (*ResultadoPaquete, error) {
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
+	}
+	if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
+		return nil, err
+	}
 	if err := req.validateBase(); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(codigoRecepcion) == "" {
 		return nil, fmt.Errorf("siat masiva: codigoRecepcion es obligatorio para validar el lote")
 	}
-	if s.sdk == nil {
-		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
-	}
-	perfil, err := PerfilSector(req.sector())
+	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat masiva: %w", err)
 	}
@@ -219,6 +236,9 @@ func (s SolicitudMasivaFactura) normalized() SolicitudMasivaFactura {
 		if f.CodigoDocumentoSector == 0 {
 			f.CodigoDocumentoSector = s.CodigoDocumentoSector
 		}
+		if strings.TrimSpace(f.Layout) == "" {
+			f.Layout = s.Layout
+		}
 		if f.CodigoTipoFactura == 0 {
 			f.CodigoTipoFactura = s.CodigoTipoFactura
 		}
@@ -276,14 +296,8 @@ func (s SolicitudMasivaFactura) codigoEmision() int {
 // validateBase valida la identidad común del contribuyente que exigen tanto
 // recepcionMasivaFactura como validacionRecepcionMasivaFactura.
 func (s SolicitudMasivaFactura) validateBase() error {
-	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+	if s.CodigoAmbiente != 0 && s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
 		return fmt.Errorf("siat masiva: codigoAmbiente inválido")
-	}
-	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat masiva: codigoSistema es obligatorio")
-	}
-	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat masiva: nit es obligatorio")
 	}
 	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
 		return fmt.Errorf("siat masiva: modalidad inválida (%d)", s.Modalidad)
@@ -306,6 +320,19 @@ func (s SolicitudMasivaFactura) validate() error {
 	}
 	if len(s.Facturas) > MaxFacturasMasiva {
 		return fmt.Errorf("siat masiva: el lote supera el límite de %d facturas del SIN", MaxFacturasMasiva)
+	}
+	perfil, err := PerfilSectorLayout(s.sector(), s.Layout)
+	if err != nil {
+		return err
+	}
+	if !perfil.HasBuilder() {
+		if strings.TrimSpace(s.Archivo) == "" || strings.TrimSpace(s.HashArchivo) == "" {
+			return fmt.Errorf("siat masiva sector %d: archivo y hashArchivo son obligatorios porque no existe builder", perfil.Codigo)
+		}
+		return nil
+	}
+	if strings.TrimSpace(s.Archivo) != "" || strings.TrimSpace(s.HashArchivo) != "" {
+		return fmt.Errorf("siat masiva sector %d: archivo/hashArchivo solo son válidos para perfiles sin builder", perfil.Codigo)
 	}
 	for i := range s.Facturas {
 		if err := s.Facturas[i].validate(); err != nil {

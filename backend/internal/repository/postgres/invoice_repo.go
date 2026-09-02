@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -49,6 +50,39 @@ func (r *PostgresInvoiceRepository) Create(inv *domain.Invoice) error {
 		}
 		return nil
 	})
+}
+
+// ListFiltered devuelve facturas paginadas según el filtro omitiendo los
+// campos pesados (xml, archivo) y pre-cargando ítems y cliente.
+func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
+	query := r.db.Model(&models.Invoice{}).Where("point_of_sale_id = ?", filter.PointOfSaleID)
+	if filter.Status != nil {
+		query = query.Where("status = ?", string(*filter.Status))
+	}
+	if filter.From != nil {
+		query = query.Where("issue_date >= ?", *filter.From)
+	}
+	if filter.To != nil {
+		query = query.Where("issue_date <= ?", *filter.To)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var ms []models.Invoice
+	if err := query.
+		Omit("xml", "archivo").
+		Preload("Items").Preload("Customer").
+		Order("invoice_number DESC").
+		Limit(filter.Limit).Offset(filter.Offset).
+		Find(&ms).Error; err != nil {
+		return nil, 0, err
+	}
+	res := make([]*domain.Invoice, 0, len(ms))
+	for i := range ms {
+		res = append(res, toDomainInvoice(&ms[i]))
+	}
+	return res, total, nil
 }
 
 func (r *PostgresInvoiceRepository) GetByID(id string) (*domain.Invoice, error) {
@@ -146,6 +180,18 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 	return res.RowsAffected, nil
 }
 
+func (r *PostgresInvoiceRepository) GetByIdempotencyKey(pointOfSaleID, key string) (*domain.Invoice, error) {
+	var m models.Invoice
+	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company").Preload("Customer").Preload("CufdRecord").
+		First(&m, "point_of_sale_id = ? AND idempotency_key = ?", pointOfSaleID, key).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return toDomainInvoice(&m), nil
+}
+
 func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*domain.Cufd, error) {
 	var cufd models.Cufd
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ?", pointOfSaleID, at, at).Order("valid_from desc").First(&cufd).Error; err != nil {
@@ -154,12 +200,29 @@ func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID s
 	return toDomainCufd(&cufd), nil
 }
 
+// get list of invoices by  IDS
+func (r *PostgresInvoiceRepository) GetByIDs(ids []string) ([]*domain.Invoice, error) {
+	var ms []models.Invoice
+	if err := r.db.Preload("Items").Preload("Customer").Preload("CufdRecord").
+		Where("id IN ?", ids).
+		Order("invoice_number ASC").Find(&ms).Error; err != nil {
+		return nil, err
+	}
+	res := make([]*domain.Invoice, 0, len(ms))
+	for i := range ms {
+		res = append(res, toDomainInvoice(&ms[i]))
+	}
+	return res, nil
+
+}
+
 func toModelInvoice(inv *domain.Invoice) models.Invoice {
 	m := models.Invoice{
 		ID:                    inv.ID,
 		CompanyId:             inv.CompanyId,
 		CustomerId:            inv.CustomerId,
 		PointOfSaleId:         inv.PointOfSaleId,
+		IdempotencyKey:        inv.IdempotencyKey,
 		CufdId:                inv.CufdId,
 		ContingencyEventId:    inv.ContingencyEventId,
 		InvoiceNumber:         inv.InvoiceNumber,
@@ -169,7 +232,11 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		CodigoMoneda:          inv.CodigoMoneda,
 		TipoCambio:            inv.TipoCambio,
 		CodigoDocumentoSector: inv.CodigoDocumentoSector,
+		Layout:                inv.Layout,
+		Modalidad:             inv.Modalidad,
 		CodigoTipoFactura:     inv.CodigoTipoFactura,
+		Archivo:               inv.Archivo,
+		HashArchivo:           inv.HashArchivo,
 		NombreEstudiante:      inv.NombreEstudiante,
 		PeriodoFacturado:      inv.PeriodoFacturado,
 		SectorData:            datatypes.JSON(inv.SectorData),
@@ -205,6 +272,7 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 			UnitPrice:         item.UnitPrice,
 			Discount:          item.Discount,
 			Subtotal:          item.Subtotal,
+			SectorData:        datatypes.JSON(item.SectorData),
 		}
 		if mi.ID == "" {
 			mi.ID = uuid.NewString()
@@ -220,6 +288,7 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		CompanyId:             m.CompanyId,
 		CustomerId:            m.CustomerId,
 		PointOfSaleId:         m.PointOfSaleId,
+		IdempotencyKey:        m.IdempotencyKey,
 		CufdId:                m.CufdId,
 		ContingencyEventId:    m.ContingencyEventId,
 		InvoiceNumber:         m.InvoiceNumber,
@@ -229,7 +298,11 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		CodigoMoneda:          m.CodigoMoneda,
 		TipoCambio:            m.TipoCambio,
 		CodigoDocumentoSector: m.CodigoDocumentoSector,
+		Layout:                m.Layout,
+		Modalidad:             m.Modalidad,
 		CodigoTipoFactura:     m.CodigoTipoFactura,
+		Archivo:               m.Archivo,
+		HashArchivo:           m.HashArchivo,
 		NombreEstudiante:      m.NombreEstudiante,
 		PeriodoFacturado:      m.PeriodoFacturado,
 		SectorData:            json.RawMessage(m.SectorData),
@@ -267,6 +340,7 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 			UnitPrice:         mi.UnitPrice,
 			Discount:          mi.Discount,
 			Subtotal:          mi.Subtotal,
+			SectorData:        json.RawMessage(mi.SectorData),
 		})
 	}
 	return inv

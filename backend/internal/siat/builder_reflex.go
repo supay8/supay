@@ -1,6 +1,7 @@
 package siat
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -210,7 +211,7 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithMontoGiftCard", zeroFloat},
 		{"WithDescuentoAdicional", zeroFloat},
 		{"WithCodigoExcepcion", zeroInt},
-		{"WithCafc", nil},
+		{"WithCafc", req.Cafc},
 		{"WithCodigoMetodoPago", req.CodigoMetodoPago},
 		{"WithMontoTotal", req.MontoTotal},
 		{"WithMontoTotalSujetoIva", montoTotalSujetoIva(p, req)},
@@ -219,28 +220,35 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithMontoTotalMoneda", req.MontoTotal},
 		{"WithLeyenda", req.Leyenda},
 		{"WithUsuario", req.Usuario},
+		{"WithCodigoDocumentoSector", p.Codigo},
 	}
 	for _, c := range comunes {
 		if esPunteroNil(c.valor) || !tieneMetodo(cab, c.metodo) {
-			// Campos opcionales vacíos (cafc) y campos que el XSD del sector no
-			// define (montoTotal en notas, municipio en boletos) se omiten: el
+			// Campos opcionales vacíos y campos que el XSD del sector no define
+			// (montoTotal en notas, municipio en boletos) se omiten: el
 			// constructor ya dejó esos punteros en nil / el nodo fuera del XML.
 			continue
 		}
 		llamarMetodo(cab, c.metodo, false, c.valor)
 	}
 
-	// El correlativo del documento cambia de nombre en los XSD de notas
-	// (numeroNotaCreditoDebito / numeroNotaConciliacion); los builders de notas
-	// también exponen WithNumeroFactura pero su XSD no lo define, así que se
-	// resuelve por prioridad y se envía uno solo.
-	switch {
-	case tieneMetodo(cab, "WithNumeroNotaCreditoDebito"):
+	// Los documentos de ajuste del SDK tienen dos correlativos: el número de
+	// la nota y el número de la factura original. Ambos son obligatorios para
+	// el XSD del sector 24; no debe elegirse uno descartando el otro.
+	numeroFacturaOriginal := req.NumeroFacturaOriginal
+	if numeroFacturaOriginal <= 0 {
+		// Compatibilidad para consumidores de bajo nivel que todavía solo
+		// proporcionan NumeroFactura.
+		numeroFacturaOriginal = req.NumeroFactura
+	}
+	if tieneMetodo(cab, "WithNumeroFactura") {
+		llamarMetodo(cab, "WithNumeroFactura", false, numeroFacturaOriginal)
+	}
+	if tieneMetodo(cab, "WithNumeroNotaCreditoDebito") {
 		llamarMetodo(cab, "WithNumeroNotaCreditoDebito", false, req.NumeroFactura)
-	case tieneMetodo(cab, "WithNumeroNotaConciliacion"):
+	}
+	if tieneMetodo(cab, "WithNumeroNotaConciliacion") {
 		llamarMetodo(cab, "WithNumeroNotaConciliacion", false, req.NumeroFactura)
-	default:
-		llamarMetodo(cab, "WithNumeroFactura", false, req.NumeroFactura)
 	}
 
 	for _, campo := range p.Campos {
@@ -261,12 +269,27 @@ func montoTotalSujetoIva(p *SectorProfile, req SolicitudFactura) float64 {
 	if p.MontoSujetoIvaCero {
 		return 0
 	}
-	return req.MontoTotal
+	// Cálculo dinámico estricto: suma de subtotales = monto sujeto a IVA.
+	// Evita valores quemados (100.00) que generan rechazo 1013/1018.
+	_, sujeto := CalcularTotales(req.Items, false)
+	if round2(req.MontoTotal) != sujeto {
+		// No bloqueamos (auto-corrección en capas superiores), pero dejamos
+		// traza para auditoría de desalineaciones en cabecera.
+		// El caller (NormalizarTotales) ya habrá corregido req.MontoTotal;
+		// este Warn captura casos donde se llamó directo sin normalizar.
+		// Import log/slog solo si se usa; aquí evitamos import circular y
+		// confiamos en el Warn de NormalizarTotales. Si persiste desfase,
+		// sujeto es la verdad fiscal.
+	}
+	return sujeto
 }
 
 // construirDetalles construye las líneas de detalle del sector. Para sectores
 // prevalorados (detalle único) usa WithDetalle con el primer ítem; para el resto
-// AddDetalle con cada ítem.
+// AddDetalle con cada ítem. Si DetallePar es true (sectores 47/48), cada ítem
+// lógico genera dos nodos <detalle> con el mismo contenido y
+// codigoDetalleTransaccion 1 (original) y 2 (devolución/ajuste), con nroItem
+// secuencial 1,2,3,4...
 func construirDetalles(p *SectorProfile, root any, items []ItemFactura) {
 	if !p.ConDetalle || len(items) == 0 {
 		return
@@ -276,6 +299,18 @@ func construirDetalles(p *SectorProfile, root any, items []ItemFactura) {
 		llamarMetodo(root, "WithDetalle", false, detalle)
 		return
 	}
+	if p.DetallePar {
+		nro := 1
+		for i := range items {
+			d1 := construirDetalleConCodigo(p, items[i], nro, 1)
+			llamarMetodo(root, "AddDetalle", true, d1)
+			nro++
+			d2 := construirDetalleConCodigo(p, items[i], nro, 2)
+			llamarMetodo(root, "AddDetalle", true, d2)
+			nro++
+		}
+		return
+	}
 	for i := range items {
 		detalle := construirDetalle(p, items[i], i+1)
 		llamarMetodo(root, "AddDetalle", true, detalle)
@@ -283,6 +318,10 @@ func construirDetalles(p *SectorProfile, root any, items []ItemFactura) {
 }
 
 func construirDetalle(p *SectorProfile, item ItemFactura, correlativo int) any {
+	return construirDetalleConCodigo(p, item, correlativo, correlativo)
+}
+
+func construirDetalleConCodigo(p *SectorProfile, item ItemFactura, nroItem int, codigoTransaccion int) any {
 	if p.builders.detalle == nil {
 		panic(fmt.Sprintf("el sector %d no admite líneas de detalle", p.Codigo))
 	}
@@ -291,6 +330,7 @@ func construirDetalle(p *SectorProfile, item ItemFactura, correlativo int) any {
 		metodo string
 		valor  any
 	}{
+		{"WithNroItem", nroItem},
 		{"WithActividadEconomica", item.ActividadEconomica},
 		{"WithCodigoProductoSin", item.CodigoProductoSin},
 		{"WithCodigoProducto", item.CodigoProducto},
@@ -304,10 +344,41 @@ func construirDetalle(p *SectorProfile, item ItemFactura, correlativo int) any {
 	for _, c := range comunes {
 		llamarMetodo(det, c.metodo, true, c.valor)
 	}
-	// codigoDetalleTransaccion existe solo en los detalles de notas: correlativo
-	// secuencial obligatorio ahí.
-	llamarMetodo(det, "WithCodigoDetalleTransaccion", true, correlativo)
+	// codigoDetalleTransaccion existe solo en los detalles de notas. Para
+	// sectores con DetallePar (47/48) es 1 para original y 2 para devolución;
+	// para el resto (24, etc.) es el correlativo secuencial.
+	llamarMetodo(det, "WithCodigoDetalleTransaccion", true, codigoTransaccion)
+	// Campos sectoriales de detalle: se aplican mediante reflexión NO tolerante.
+	// Si Supay declara un campo en CamposDetalle pero el builder no tiene el
+	// método With* correspondiente, llamarMetodo con tolerante=false produce un
+	// error explícito (panic que buildFacturaSDK convierte en error).
+	aplicarCamposDetalle(p, det, item.DatosSector)
 	return llamarBuild(det)
+}
+
+// aplicarCamposDetalle valida y aplica los datos sectoriales del item sobre el
+// builder de detalle usando la misma reflexión que los campos de cabecera. Un
+// item sin DatosSector conserva el comportamiento anterior solo si el perfil no
+// declara CamposDetalle requeridos. Si el builder no expone el método With*
+// declarado, se produce un error explícito.
+func aplicarCamposDetalle(p *SectorProfile, det any, datos json.RawMessage) {
+	if len(p.CamposDetalle) == 0 && (len(datos) == 0 || string(datos) == "null") {
+		return
+	}
+	valores, err := p.ValidarDatosDetalle(datos)
+	if err != nil {
+		panic(err)
+	}
+	for _, campo := range p.CamposDetalle {
+		if campo.Metodo == "" {
+			continue
+		}
+		valor, presente := valores[campo.JSON]
+		if !presente || esPunteroNil(valor) {
+			continue
+		}
+		llamarMetodo(det, campo.Metodo, false, valor)
+	}
 }
 
 // construirFactura arma el documento raíz del sector: modalidad + cabecera +

@@ -23,7 +23,7 @@ func envioPorModalidad(s *Service, modalidad int) (electronico, computarizado bo
 
 // recepcionFacturaParaPerfil envía recepcionFactura por la fachada del perfil.
 func (s *Service) recepcionFacturaParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.RecepcionFactura) (any, error) {
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().RecepcionFactura(ctx, req)
 	case FachadaTelecomunicaciones:
@@ -44,7 +44,7 @@ func (s *Service) recepcionFacturaParaPerfil(ctx context.Context, p *SectorProfi
 }
 
 func (s *Service) verificacionEstadoParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.VerificacionEstadoFactura) (any, error) {
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().VerificacionEstadoFactura(ctx, req)
 	case FachadaTelecomunicaciones:
@@ -65,7 +65,7 @@ func (s *Service) verificacionEstadoParaPerfil(ctx context.Context, p *SectorPro
 }
 
 func (s *Service) anulacionParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.AnulacionFactura) (any, error) {
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().AnulacionFactura(ctx, req)
 	case FachadaTelecomunicaciones:
@@ -86,7 +86,7 @@ func (s *Service) anulacionParaPerfil(ctx context.Context, p *SectorProfile, mod
 }
 
 func (s *Service) reversionParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.ReversionAnulacionFactura) (any, error) {
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().ReversionAnulacionFactura(ctx, req)
 	case FachadaTelecomunicaciones:
@@ -107,10 +107,10 @@ func (s *Service) reversionParaPerfil(ctx context.Context, p *SectorProfile, mod
 }
 
 func (s *Service) paqueteParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.RecepcionPaqueteFactura) (any, error) {
-	if p.Fachada == FachadaBoletoAereo {
+	if p.Facade.Fixed() == FachadaBoletoAereo {
 		return nil, fmt.Errorf("siat sectores %d (%s): el boleto aéreo no admite paquete de facturas; use la emisión masiva", p.Codigo, p.Nombre)
 	}
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().RecepcionPaqueteFactura(ctx, req)
 	case FachadaTelecomunicaciones:
@@ -129,10 +129,10 @@ func (s *Service) paqueteParaPerfil(ctx context.Context, p *SectorProfile, modal
 }
 
 func (s *Service) validacionPaqueteParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.ValidacionRecepcionPaqueteFactura) (any, error) {
-	if p.Fachada == FachadaBoletoAereo {
+	if p.Facade.Fixed() == FachadaBoletoAereo {
 		return nil, fmt.Errorf("siat sectores %d (%s): el boleto aéreo no admite paquete de facturas", p.Codigo, p.Nombre)
 	}
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().ValidacionRecepcionPaqueteFactura(ctx, req)
 	case FachadaTelecomunicaciones:
@@ -151,7 +151,7 @@ func (s *Service) validacionPaqueteParaPerfil(ctx context.Context, p *SectorProf
 }
 
 func (s *Service) masivaParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.RecepcionMasivaFactura) (any, error) {
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().RecepcionMasivaFactura(ctx, req)
 	case FachadaTelecomunicaciones:
@@ -172,7 +172,7 @@ func (s *Service) masivaParaPerfil(ctx context.Context, p *SectorProfile, modali
 }
 
 func (s *Service) validacionMasivaParaPerfil(ctx context.Context, p *SectorProfile, modalidad int, req models.ValidacionRecepcionMasivaFactura) (any, error) {
-	switch p.Fachada {
+	switch p.Facade.Fixed() {
 	case FachadaCompraVenta:
 		return s.sdk.CompraVenta().ValidacionRecepcionMasivaFactura(ctx, req)
 	case FachadaTelecomunicaciones:

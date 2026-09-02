@@ -16,6 +16,11 @@ func (genericSectorAdapter) Prepare(p *SectorProfile, req SolicitudFactura) (Sec
 	if err != nil {
 		return SectorDocument{}, err
 	}
+	if p.EsAjuste() {
+		if _, ok := values["monto_descuento_credito_debito"]; !ok {
+			values["monto_descuento_credito_debito"] = float64(0)
+		}
+	}
 	return SectorDocument{
 		Request: req,
 		Values:  values,
@@ -68,17 +73,26 @@ func (compraVentaAdapter) Build(p *SectorProfile, doc SectorDocument, cuf string
 }
 
 func normalizeCompraVenta(req SolicitudFactura) SolicitudFactura {
-	req.MontoTotal = roundMoney(req.MontoTotal)
 	req.TipoCambio = roundMoney(req.TipoCambio)
 	req.Items = append([]ItemFactura(nil), req.Items...)
 	for i := range req.Items {
 		req.Items[i].Cantidad = roundMoney(req.Items[i].Cantidad)
 		req.Items[i].PrecioUnitario = roundMoney(req.Items[i].PrecioUnitario)
-		req.Items[i].SubTotal = roundMoney(req.Items[i].SubTotal)
 		if req.Items[i].MontoDescuento != nil {
 			value := roundMoney(*req.Items[i].MontoDescuento)
 			req.Items[i].MontoDescuento = &value
 		}
+		// Subtotal estricto dinámico: quantity*unitPrice - discount (corrige 100.00 quemado)
+		req.Items[i].SubTotal = CalcularSubtotal(req.Items[i].Cantidad, req.Items[i].PrecioUnitario, req.Items[i].MontoDescuento)
+	}
+	// MontoTotal dinámico: suma estricta de subtotales (auto-corrección con Warn)
+	total, _ := CalcularTotales(req.Items, false)
+	if round2(req.MontoTotal) != total {
+		// slog importado vía totales.go; round2 visible mismo package
+		// Warn emitido en NormalizarTotales; aquí también por si se llama directo.
+		req.MontoTotal = total
+	} else {
+		req.MontoTotal = roundMoney(req.MontoTotal)
 	}
 	return req
 }

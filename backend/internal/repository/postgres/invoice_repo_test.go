@@ -30,14 +30,16 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		&models.Company{}, &models.Branch{}, &models.TipoPuntoVenta{},
 		&models.PointOfSale{}, &models.Cufd{}, &models.Cuis{},
-		&models.Catalog{}, &models.ContingencyEvent{}, &models.Customer{},
+		&models.Catalog{}, &models.SinProduct{}, &models.SiatActividad{},
+		&models.SiatLeyendaFactura{}, &models.SiatActividadDocSector{},
+		&models.CatalogSyncState{}, &models.ContingencyEvent{}, &models.Customer{},
 		&models.Invoice{}, &models.InvoiceItem{}, &models.InvoiceEvent{},
 		&models.SentPackage{},
 	); err != nil {
 		t.Fatalf("migraciones: %v", err)
 	}
 
-	tablas := []string{"invoice_items", "invoice_events", "invoices", "contingency_events", "sent_packages", "cufds", "cuis", "catalogs", "tipo_punto_venta", "point_of_sales", "branches", "customers", "companies"}
+	tablas := []string{"invoice_items", "invoice_events", "invoices", "contingency_events", "sent_packages", "cufds", "cuis", "catalogs", "catalog_sync_states", "sin_products", "siat_leyendas_factura", "siat_actividades_doc_sector", "siat_actividades", "tipo_punto_venta", "point_of_sales", "branches", "customers", "companies"}
 	for _, tb := range tablas {
 		if err := db.Exec("DELETE FROM " + tb).Error; err != nil {
 			t.Fatalf("limpieza de %s: %v", tb, err)
@@ -111,7 +113,7 @@ func seedFixture(t *testing.T, db *gorm.DB) repoFixture {
 func nuevaFacturaPendiente(f repoFixture) *domain.Invoice {
 	return &domain.Invoice{
 		CompanyId:     f.companyID,
-		CustomerId:    f.customer.ID,
+		CustomerId:    &f.customer.ID,
 		PointOfSaleId: f.posID,
 		CufdId:        f.cufd.ID,
 		EmissionType:  "EN_LINEA",

@@ -21,22 +21,34 @@ type RegisterCompanyRequest struct {
 	CodigoSistema string                 `json:"codigo_sistema"`
 	Ambiente      domain.SiatEnvironment `json:"ambiente"`
 	UsuarioSiat   string                 `json:"usuario_siat,omitempty"`
+	// Datos del emisor que viajan en la cabecera de la factura. Municipio y
+	// dirección deben coincidir con el padrón del SIAT.
+	Municipio       string  `json:"municipio,omitempty"`
+	Direccion       string  `json:"direccion,omitempty"`
+	Telefono        string  `json:"telefono,omitempty"`
+	CodigoActividad *string `json:"codigo_actividad,omitempty"`
+	PiePagina       string  `json:"pie_pagina,omitempty"`
 }
 
 type UpdateCompanyRequest struct {
-	Nit           *string                 `json:"nit,omitempty"`
-	BusinessName  *string                 `json:"business_name,omitempty"`
-	CodigoSistema *string                 `json:"codigo_sistema,omitempty"`
-	Ambiente      *domain.SiatEnvironment `json:"ambiente,omitempty"`
-	UsuarioSiat   *string                 `json:"usuario_siat,omitempty"`
+	Nit             *string                 `json:"nit,omitempty"`
+	BusinessName    *string                 `json:"business_name,omitempty"`
+	CodigoSistema   *string                 `json:"codigo_sistema,omitempty"`
+	Ambiente        *domain.SiatEnvironment `json:"ambiente,omitempty"`
+	UsuarioSiat     *string                 `json:"usuario_siat,omitempty"`
+	Municipio       *string                 `json:"municipio,omitempty"`
+	Direccion       *string                 `json:"direccion,omitempty"`
+	Telefono        *string                 `json:"telefono,omitempty"`
+	CodigoActividad *string                 `json:"codigo_actividad,omitempty"`
+	PiePagina       *string                 `json:"pie_pagina,omitempty"`
 }
 
 func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company, error) {
 	if req.Nit == "" {
-		return nil, errors.New("el NIT es obligatorio")
+		return nil, domain.NewBadRequestError("el nit es obligatorio")
 	}
 	if req.BusinessName == "" {
-		return nil, errors.New("el nombre de la empresa es obligatorio")
+		return nil, domain.NewBadRequestError("el nombre de la empresa es obligatorio")
 	}
 
 	// Regla de negocio: Verificar si ya existe una empresa con el mismo NIT
@@ -46,15 +58,20 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 			return nil, err
 		}
 	} else if existing != nil {
-		return nil, errors.New("ya existe una empresa registrada con este NIT")
+		return nil, domain.NewConflictError("ya existe una empresa registrada con este nit")
 	}
 
 	company := &domain.Company{
-		Nit:           req.Nit,
-		BusinessName:  req.BusinessName,
-		CodigoSistema: req.CodigoSistema,
-		Ambiente:      req.Ambiente,
-		UsuarioSiat:   req.UsuarioSiat,
+		Nit:             req.Nit,
+		BusinessName:    req.BusinessName,
+		CodigoSistema:   req.CodigoSistema,
+		Ambiente:        req.Ambiente,
+		UsuarioSiat:     req.UsuarioSiat,
+		Municipio:       req.Municipio,
+		Direccion:       req.Direccion,
+		Telefono:        req.Telefono,
+		CodigoActividad: req.CodigoActividad,
+		PiePagina:       req.PiePagina,
 	}
 
 	if company.Ambiente == "" {
@@ -65,7 +82,7 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 	}
 
 	if !validEnvironment(company.Ambiente) {
-		return nil, errors.New("el ambiente debe ser PILOTO o PRODUCCION")
+		return nil, domain.NewBadRequestError("el ambiente debe ser PILOTO o PRODUCCION")
 	}
 
 	if err := uc.repo.Create(company); err != nil {
@@ -80,25 +97,32 @@ func validEnvironment(a domain.SiatEnvironment) bool {
 }
 
 func (uc *CompanyUsecase) GetByNit(nit string) (*domain.Company, error) {
-	return uc.repo.GetByNit(nit)
+	company, err := uc.repo.GetByNit(nit)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.NewNotFoundError("empresa no encontrada")
+		}
+		return nil, err
+	}
+	return company, nil
 }
 
 func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.Company, error) {
 	if id == "" {
-		return nil, errors.New("el ID es obligatorio")
+		return nil, domain.NewBadRequestError("el id es obligatorio")
 	}
 
 	// Verificar si la empresa existe
 	existing, err := uc.repo.GetByID(id)
 	if err != nil {
-		return nil, errors.New("empresa no encontrada")
+		return nil, domain.NewNotFoundError("empresa no encontrada")
 	}
 
 	if req.Nit != nil {
 		if *req.Nit != existing.Nit {
 			companyWithSameNit, err := uc.repo.GetByNit(*req.Nit)
 			if err == nil && companyWithSameNit != nil && companyWithSameNit.ID != id {
-				return nil, errors.New("el NIT ya está registrado por otra empresa")
+				return nil, domain.NewConflictError("el nit ya está registrado por otra empresa")
 			}
 		}
 		existing.Nit = *req.Nit
@@ -114,13 +138,28 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 			existing.Ambiente = domain.EnvironmentPiloto
 		} else {
 			if !validEnvironment(*req.Ambiente) {
-				return nil, errors.New("el ambiente debe ser PILOTO o PRODUCCION")
+				return nil, domain.NewBadRequestError("el ambiente debe ser PILOTO o PRODUCCION")
 			}
 			existing.Ambiente = *req.Ambiente
 		}
 	}
 	if req.UsuarioSiat != nil {
 		existing.UsuarioSiat = *req.UsuarioSiat
+	}
+	if req.Municipio != nil {
+		existing.Municipio = *req.Municipio
+	}
+	if req.Direccion != nil {
+		existing.Direccion = *req.Direccion
+	}
+	if req.Telefono != nil {
+		existing.Telefono = *req.Telefono
+	}
+	if req.CodigoActividad != nil {
+		existing.CodigoActividad = req.CodigoActividad
+	}
+	if req.PiePagina != nil {
+		existing.PiePagina = *req.PiePagina
 	}
 
 	if err := uc.repo.Update(existing); err != nil {
@@ -134,7 +173,7 @@ func (uc *CompanyUsecase) Delete(id string) error {
 	// Verificar si la empresa existe
 	_, err := uc.repo.GetByID(id)
 	if err != nil {
-		return errors.New("empresa no encontrada")
+		return domain.NewNotFoundError("empresa no encontrada")
 	}
 
 	// Eliminar la empresa de la base de datos

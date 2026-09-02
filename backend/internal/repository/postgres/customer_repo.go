@@ -1,6 +1,9 @@
 package postgres
 
 import (
+	"log"
+	"strings"
+
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/google/uuid"
@@ -15,16 +18,31 @@ func NewPostgresCustomerRepository(db *gorm.DB) domain.CustomerRepository {
 	return &PostgresCustomerRepository{db: db}
 }
 
+// Create inserta el cliente. El repositorio es append-only (sin Update/Delete):
+// la inmutabilidad tras facturación se refuerza con el trigger
+// trg_customers_immutability en la base de datos.
 func (r *PostgresCustomerRepository) Create(c *domain.Customer) error {
+	log.Println("Creating customer", c.Name)
+	log.Println("customer email", *c.Email)
+	log.Println("customer name", c.Name)
+	log.Println("customer document type", c.DocumentType)
+	log.Println("customer document number", c.DocumentNumber)
 	dbModel := models.Customer{
 		ID:             uuid.NewString(),
 		CompanyId:      c.CompanyId,
 		DocumentType:   models.DocumentType(c.DocumentType),
 		DocumentNumber: c.DocumentNumber,
 		Complement:     c.Complement,
+		Email:          c.Email,
 		Name:           c.Name,
+		CodigoCliente:  c.CodigoCliente,
 	}
 	if err := r.db.Create(&dbModel).Error; err != nil {
+		// 23505 (idx_company_doc): carrera entre dos creates del mismo
+		// documento; el usecase lo resuelve re-asociando el existente.
+		if err != nil && strings.Contains(err.Error(), "23505") {
+			return domain.ErrCustomerDocumentConflict
+		}
 		return err
 	}
 	c.ID = dbModel.ID
@@ -44,6 +62,17 @@ func (r *PostgresCustomerRepository) GetByCompanyAndDocument(companyID, document
 	var m models.Customer
 	if err := r.db.Where("company_id = ? AND document_type = ? AND document_number = ?",
 		companyID, models.DocumentType(documentType), documentNumber).First(&m).Error; err != nil {
+		return nil, err
+	}
+	return toDomainCustomer(&m), nil
+}
+
+func (r *PostgresCustomerRepository) GetByCompanyAndFiscalIdentity(companyID string, documentType, documentNumber string, complement *string, name string, email string) (*domain.Customer, error) {
+
+	var m models.Customer
+
+	if err := r.db.Where("company_id = ? AND document_type = ? AND document_number = ? AND email = ? AND name = ?",
+		companyID, models.DocumentType(documentType), documentNumber, email, name).First(&m).Error; err != nil {
 		return nil, err
 	}
 	return toDomainCustomer(&m), nil
@@ -73,6 +102,7 @@ func toDomainCustomer(m *models.Customer) *domain.Customer {
 		DocumentNumber: m.DocumentNumber,
 		Complement:     m.Complement,
 		Name:           m.Name,
+		CodigoCliente:  m.CodigoCliente,
 		CreatedAt:      m.CreatedAt,
 	}
 }

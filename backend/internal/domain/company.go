@@ -34,6 +34,7 @@ type Company struct {
 	BusinessName    string          `json:"business_name"`
 	CodigoSistema   string          `json:"codigo_sistema"`
 	Ambiente        SiatEnvironment `json:"ambiente"`
+	Modalidad       int             `json:"modalidad"` // 1 electrónica, 2 computarizada (default 1)
 	Municipio       string          `json:"municipio,omitempty"`
 	Direccion       string          `json:"direccion,omitempty"`
 	Telefono        string          `json:"telefono,omitempty"`

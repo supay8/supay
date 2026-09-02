@@ -35,7 +35,8 @@ type SolicitudPaqueteFactura struct {
 
 	// CodigoDocumentoSector es el diseño de factura del paquete (1 = compraventa,
 	// 11 = sector educativo). Todas las facturas deben ser del mismo sector.
-	CodigoDocumentoSector int `json:"codigoDocumentoSector"`
+	CodigoDocumentoSector int    `json:"codigoDocumentoSector"`
+	Layout                string `json:"layout,omitempty"`
 	// CodigoTipoFactura es el tipo de documento factura (1 = factura).
 	CodigoTipoFactura int `json:"codigoTipoFactura"`
 	// CodigoEmision es el tipo de emisión (1 = en línea, 2 = fuera de línea /
@@ -43,7 +44,9 @@ type SolicitudPaqueteFactura struct {
 	CodigoEmision int `json:"codigoEmision"`
 	// CodigoEvento es el código de recepción del evento significativo registrado
 	// (respuesta de registroEventoSignificativo) que motiva el envío del paquete.
-	CodigoEvento int64 `json:"codigoEvento"`
+	CodigoEvento int64  `json:"codigoEvento"`
+	Archivo      string `json:"archivo,omitempty"`
+	HashArchivo  string `json:"hashArchivo,omitempty"`
 	// Descripcion describe la contingencia que originó el paquete (p.ej. "CORTE
 	// DEL SERVICIO DE INTERNET"). Es solo para trazabilidad: el SIAT no recibe
 	// este campo en recepcionPaqueteFactura, la descripción ya quedó registrada
@@ -61,17 +64,17 @@ type SolicitudPaqueteFactura struct {
 // validacionRecepcionPaqueteFactura.
 type ResultadoPaquete struct {
 	Transaccion     bool      `json:"transaccion"`
-	CodigoEstado    int       `json:"codigoEstado"`
-	CodigoRecepcion string    `json:"codigoRecepcion,omitempty"`
+	CodigoEstado    int       `json:"codigo_estado"`
+	CodigoRecepcion string    `json:"codigo_recepcion,omitempty"`
 	Mensajes        []Mensaje `json:"mensajes,omitempty"`
 
 	// Archivo es la cadena Base64 del TAR.GZ del paquete tal como se envió
 	// (auditoría).
 	Archivo string `json:"archivo,omitempty"`
 	// HashArchivo es el hash SHA-256 del archivo comprimido del paquete.
-	HashArchivo string `json:"hashArchivo,omitempty"`
+	HashArchivo string `json:"hash_archivo,omitempty"`
 	// CantidadFacturas es el número de facturas empaquetadas y enviadas.
-	CantidadFacturas int `json:"cantidadFacturas"`
+	CantidadFacturas int `json:"cantidad_facturas"`
 	// Cufs contiene el CUF de cada factura del paquete, para poder consultar o
 	// anular individualmente cada documento después del envío.
 	Cufs []string `json:"cufs,omitempty"`
@@ -84,16 +87,18 @@ type ResultadoPaquete struct {
 // SHA-256 automáticamente (WithFacturas). El CodigoRecepcion devuelto se usa
 // luego en ValidarPaqueteFactura.
 func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaqueteFactura) (*ResultadoPaquete, error) {
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
+	}
+	if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
+		return nil, err
+	}
 	req = req.normalized()
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
 
-	if s.sdk == nil {
-		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
-	}
-
-	perfil, err := PerfilSector(req.sector())
+	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat paquete: %w", err)
 	}
@@ -105,13 +110,18 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 
 	facturas := make([]any, 0, len(req.Facturas))
 	cufs := make([]string, 0, len(req.Facturas))
-	for i := range req.Facturas {
-		factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
-		if err != nil {
-			return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
+	if perfil.HasBuilder() {
+		for i := range req.Facturas {
+			if err := applyIdentityValues(s.sdk.Config(), &req.Facturas[i].CodigoAmbiente, &req.Facturas[i].CodigoSistema, &req.Facturas[i].Nit); err != nil {
+				return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
+			}
+			factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
+			if err != nil {
+				return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
+			}
+			facturas = append(facturas, factura)
+			cufs = append(cufs, cuf)
 		}
-		facturas = append(facturas, factura)
-		cufs = append(cufs, cuf)
 	}
 
 	paquete := models.NewRecepcionPaqueteFacturaBuilder().
@@ -136,8 +146,12 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 		// envía vacío para evitar el xsi:nil.
 		WithCafc(&emptyStr)
 
-	if err := paquete.WithFacturas(facturas, s.sdk.Config()); err != nil {
-		return nil, fmt.Errorf("siat paquete: no se pudo empaquetar las facturas: %w", err)
+	if perfil.HasBuilder() {
+		if err := paquete.WithFacturas(facturas, s.sdk.Config()); err != nil {
+			return nil, fmt.Errorf("siat paquete: no se pudo empaquetar las facturas: %w", err)
+		}
+	} else {
+		paquete.WithArchivo(req.Archivo).WithHashArchivo(req.HashArchivo).WithCantidadFacturas(len(req.Facturas))
 	}
 
 	built := paquete.Build()
@@ -173,17 +187,19 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 // (validacionRecepcionPaqueteFactura) usando el CodigoRecepcion devuelto por
 // EnviarPaqueteFactura.
 func (s *Service) ValidarPaqueteFactura(ctx context.Context, req SolicitudPaqueteFactura, codigoRecepcion string) (*ResultadoPaquete, error) {
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
+	}
+	if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
+		return nil, err
+	}
 	if err := req.validateBase(); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(codigoRecepcion) == "" {
 		return nil, fmt.Errorf("siat paquete: codigoRecepcion es obligatorio para validar el paquete")
 	}
-	if s.sdk == nil {
-		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
-	}
-
-	perfil, err := PerfilSector(req.sector())
+	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat paquete: %w", err)
 	}
@@ -259,6 +275,9 @@ func (s SolicitudPaqueteFactura) normalized() SolicitudPaqueteFactura {
 		if f.CodigoDocumentoSector == 0 {
 			f.CodigoDocumentoSector = s.CodigoDocumentoSector
 		}
+		if strings.TrimSpace(f.Layout) == "" {
+			f.Layout = s.Layout
+		}
 		if f.CodigoTipoFactura == 0 {
 			f.CodigoTipoFactura = s.CodigoTipoFactura
 		}
@@ -316,14 +335,8 @@ func (s SolicitudPaqueteFactura) codigoEmision() int {
 // validateBase valida la identidad común del contribuyente que exigen tanto
 // recepcionPaqueteFactura como validacionRecepcionPaqueteFactura.
 func (s SolicitudPaqueteFactura) validateBase() error {
-	if s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
+	if s.CodigoAmbiente != 0 && s.CodigoAmbiente != AmbienteProduccion && s.CodigoAmbiente != AmbientePruebas {
 		return fmt.Errorf("siat paquete: codigoAmbiente inválido")
-	}
-	if strings.TrimSpace(s.CodigoSistema) == "" {
-		return fmt.Errorf("siat paquete: codigoSistema es obligatorio")
-	}
-	if strings.TrimSpace(s.Nit) == "" {
-		return fmt.Errorf("siat paquete: nit es obligatorio")
 	}
 	if s.Modalidad != ModalidadElectronica && s.Modalidad != ModalidadComputarizada {
 		return fmt.Errorf("siat paquete: modalidad inválida (%d)", s.Modalidad)
@@ -349,6 +362,19 @@ func (s SolicitudPaqueteFactura) validate() error {
 	}
 	if len(s.Facturas) > MaxFacturasPorPaquete {
 		return fmt.Errorf("siat paquete: el paquete supera el límite de %d facturas del SIN", MaxFacturasPorPaquete)
+	}
+	perfil, err := PerfilSectorLayout(s.sector(), s.Layout)
+	if err != nil {
+		return err
+	}
+	if !perfil.HasBuilder() {
+		if strings.TrimSpace(s.Archivo) == "" || strings.TrimSpace(s.HashArchivo) == "" {
+			return fmt.Errorf("siat paquete sector %d: archivo y hashArchivo son obligatorios porque no existe builder", perfil.Codigo)
+		}
+		return nil
+	}
+	if strings.TrimSpace(s.Archivo) != "" || strings.TrimSpace(s.HashArchivo) != "" {
+		return fmt.Errorf("siat paquete sector %d: archivo/hashArchivo solo son válidos para perfiles sin builder", perfil.Codigo)
 	}
 	for i := range s.Facturas {
 		if err := s.Facturas[i].validate(); err != nil {

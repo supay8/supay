@@ -20,3 +20,6 @@ dist
 
 # OS
 .DS_Store
+
+# demo aislado (fuera de git, flujo API_SPEC)
+/demo/

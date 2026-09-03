@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -228,7 +227,6 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 // CONFIRMADA) se persiste el estado, el motivo y la fecha de anulación.
 func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
-	log.Println("Funcion emission.go ejecutandose")
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")
@@ -242,19 +240,14 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
 		return nil, domain.NewConflictError("la factura no tiene cuf asignado")
 	}
-	log.Println("[DEBUG] bloque Anuul 1 ")
 	if err := uc.validateMotivoAnulacion(inv.CompanyId, codigoMotivo); err != nil {
 		return nil, err
 	}
-	log.Println("[DEBUG] bloque Anuul 2 ")
-
-	log.Println("[DEBUG] bloque Anuul 3")
 
 	req, err := uc.buildSolicitudDocumento(inv)
 	if err != nil {
 		return nil, err
 	}
-	log.Println("[DEBUG] bloque Anuul 4 ")
 
 	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
 	if err != nil {
@@ -264,7 +257,6 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	if err != nil {
 		return nil, fmt.Errorf("error de anulación: %w", err)
 	}
-	log.Println("[DEBUG] bloque Anuul 5 ", result)
 
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
@@ -273,7 +265,6 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 			Mensajes:        result.Mensajes,
 		}
 	}
-	log.Println("[DEBUG] bloque Anuul 6 ")
 
 	now := time.Now()
 	fields := map[string]any{

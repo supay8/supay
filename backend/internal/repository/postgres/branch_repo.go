@@ -52,12 +52,11 @@ func (r *PostgresBranchRepository) GetByCompanyAndSucursal(companyID string, cod
 }
 
 func (r *PostgresBranchRepository) List(companyID string) ([]*domain.Branch, error) {
-	var modelsList []models.Branch
-	query := r.db.Order("created_at ASC")
-	if companyID != "" {
-		query = query.Where("company_id = ?", companyID)
+	if companyID == "" {
+		return nil, domain.ErrMissingCompanyID
 	}
-	if err := query.Find(&modelsList).Error; err != nil {
+	var modelsList []models.Branch
+	if err := r.db.Where("company_id = ?", companyID).Order("created_at ASC").Find(&modelsList).Error; err != nil {
 		return nil, err
 	}
 	res := make([]*domain.Branch, 0, len(modelsList))

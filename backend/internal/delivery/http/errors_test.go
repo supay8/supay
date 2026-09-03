@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/siat"
 	"github.com/brandsrx/supay/internal/usecase"
 	"gorm.io/gorm"
@@ -28,46 +29,46 @@ func TestClassifyError(t *testing.T) {
 			name:        "bad request tipado",
 			err:         domain.NewBadRequestError("el nit es obligatorio"),
 			wantStatus:  http.StatusBadRequest,
-			wantCode:    codeValidation,
+			wantCode:    CodeValidation,
 			wantMessage: "el nit es obligatorio",
 		},
 		{
 			name:        "not found tipado",
 			err:         domain.NewNotFoundError("empresa no encontrada"),
 			wantStatus:  http.StatusNotFound,
-			wantCode:    codeNotFound,
+			wantCode:    CodeNotFound,
 			wantMessage: "empresa no encontrada",
 		},
 		{
 			name:        "conflict tipado",
 			err:         domain.NewConflictError("no hay un cufd vigente"),
 			wantStatus:  http.StatusConflict,
-			wantCode:    codeConflict,
+			wantCode:    CodeConflict,
 			wantMessage: "no hay un cufd vigente",
 		},
 		{
 			name:       "conflicto centinela de dominio (documento de cliente)",
 			err:        domain.ErrCustomerDocumentConflict,
 			wantStatus: http.StatusConflict,
-			wantCode:   codeConflict,
+			wantCode:   CodeConflict,
 		},
 		{
 			name:       "conflicto centinela de dominio (dependencias de POS)",
 			err:        domain.ErrPointOfSaleHasDependencies,
 			wantStatus: http.StatusConflict,
-			wantCode:   codeConflict,
+			wantCode:   CodeConflict,
 		},
 		{
 			name:       "gorm not found",
 			err:        gorm.ErrRecordNotFound,
 			wantStatus: http.StatusNotFound,
-			wantCode:   codeNotFound,
+			wantCode:   CodeNotFound,
 		},
 		{
 			name:       "siat no disponible",
 			err:        usecase.ErrSiatNoDisponible,
 			wantStatus: http.StatusServiceUnavailable,
-			wantCode:   codeSiatUnavailable,
+			wantCode:   CodeSiatUnavailable,
 		},
 		{
 			name: "rechazo del siat con detalles",
@@ -79,21 +80,21 @@ func TestClassifyError(t *testing.T) {
 				},
 			},
 			wantStatus:  http.StatusUnprocessableEntity,
-			wantCode:    codeSiatRejected,
+			wantCode:    CodeSiatRejected,
 			wantDetails: 2,
 		},
 		{
 			name:        "error no tipado es interno y no filtra detalle",
 			err:         errors.New("sql: connection refused"),
 			wantStatus:  http.StatusInternalServerError,
-			wantCode:    codeInternal,
+			wantCode:    CodeInternal,
 			wantMessage: "error interno del servidor",
 		},
 		{
 			name:        "error tipado envuelto se desenreda",
 			err:         fmt.Errorf("emisión: %w", domain.NewBadRequestError("dato inválido")),
 			wantStatus:  http.StatusBadRequest,
-			wantCode:    codeValidation,
+			wantCode:    CodeValidation,
 			wantMessage: "emisión: dato inválido",
 		},
 	}
@@ -118,7 +119,7 @@ func TestClassifyError(t *testing.T) {
 
 func TestRespondErrorEnvelope(t *testing.T) {
 	rec := httptest.NewRecorder()
-	respondError(rec, domain.NewBadRequestError("el sku es obligatorio"))
+	RespondError(rec, domain.NewBadRequestError("el sku es obligatorio"))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d", rec.Code)
@@ -131,7 +132,7 @@ func TestRespondErrorEnvelope(t *testing.T) {
 
 func TestRespondErrorSiatRejectedConDetails(t *testing.T) {
 	rec := httptest.NewRecorder()
-	respondError(rec, &usecase.EmissionRejectedError{
+	RespondError(rec, &usecase.EmissionRejectedError{
 		Mensajes: []siat.Mensaje{{Codigo: 926, Descripcion: "CUF duplicado"}},
 	})
 
@@ -150,7 +151,7 @@ func TestRespondErrorSiatRejectedConDetails(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("json inválido: %v", err)
 	}
-	if env.Error.Code != codeSiatRejected || len(env.Error.Details) != 1 {
+	if env.Error.Code != CodeSiatRejected || len(env.Error.Details) != 1 {
 		t.Fatalf("envelope inesperado: %+v", env)
 	}
 	if env.Error.Details[0].Code != 926 || env.Error.Details[0].Message != "CUF duplicado" {
@@ -160,7 +161,7 @@ func TestRespondErrorSiatRejectedConDetails(t *testing.T) {
 
 func TestRespondErrorInternoNoFiltroDetalle(t *testing.T) {
 	rec := httptest.NewRecorder()
-	respondError(rec, errors.New("panic en repositorio: SELECT * FROM..."))
+	RespondError(rec, errors.New("panic en repositorio: SELECT * FROM..."))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d", rec.Code)
@@ -174,7 +175,7 @@ func TestRespondList(t *testing.T) {
 	t.Run("slice nil se serializa como lista vacía", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		var items []*domain.Customer // nil
-		respondList(rec, items, 0, 0, 0)
+		RespondList(rec, items, 0, 0, 0)
 		want := `{"items":[],"total":0}`
 		if got := strings.TrimSpace(rec.Body.String()); got != want {
 			t.Fatalf("body=%s, se esperaba %s", got, want)
@@ -183,7 +184,7 @@ func TestRespondList(t *testing.T) {
 
 	t.Run("listado paginado incluye limit y offset", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		respondList(rec, []int{1, 2}, 10, 2, 4)
+		RespondList(rec, []int{1, 2}, 10, 2, 4)
 		var body struct {
 			Items  []int `json:"items"`
 			Total  int   `json:"total"`
@@ -199,8 +200,21 @@ func TestRespondList(t *testing.T) {
 	})
 }
 
-func TestRequireAPIKeyEnvelope(t *testing.T) {
-	handler := RequireAPIKey("secreto")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestTenantMiddlewareEnvelope(t *testing.T) {
+	oldVerify := verifyAPIKey
+	verifyAPIKey = func(plain, hash string) bool { return plain == "sup_live_abc_xxxxxxxx" }
+	defer func() { verifyAPIKey = oldVerify }()
+
+	lookup := &fakeApiKeyLookup{
+		key: &models.ApiKey{
+			ID:        "key-1",
+			CompanyId: "comp-1",
+			KeyPrefix: "sup_live_abc",
+			KeyHash:   "hash",
+			IsActive:  true,
+		},
+	}
+	handler := TenantMiddleware(lookup)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -210,7 +224,7 @@ func TestRequireAPIKeyEnvelope(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status=%d", rec.Code)
 		}
-		want := `{"error":{"code":"UNAUTHORIZED","message":"no autorizado: falta o es inválido el header X-API-Key"}}`
+		want := `{"error":{"code":"UNAUTHORIZED","message":"no autorizado: falta el header X-API-Key"}}`
 		if got := strings.TrimSpace(rec.Body.String()); got != want {
 			t.Fatalf("body=%s", got)
 		}
@@ -219,7 +233,7 @@ func TestRequireAPIKeyEnvelope(t *testing.T) {
 	t.Run("key válida pasa", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("X-API-Key", "secreto")
+		req.Header.Set("X-API-Key", "sup_live_abc_xxxxxxxx")
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d", rec.Code)

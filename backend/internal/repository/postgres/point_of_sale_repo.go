@@ -81,13 +81,11 @@ func (r *PostgresPointOfSaleRepository) GetByID(id string) (*domain.PointOfSale,
 }
 
 func (r *PostgresPointOfSaleRepository) List(companyID string) ([]*domain.PointOfSale, error) {
-	var dbModels []models.PointOfSale
-	query := r.db.Order("created_at ASC")
-	if companyID != "" {
-		query = query.Where("company_id = ?", companyID)
+	if companyID == "" {
+		return nil, domain.ErrMissingCompanyID
 	}
-
-	if err := query.Find(&dbModels).Error; err != nil {
+	var dbModels []models.PointOfSale
+	if err := r.db.Where("company_id = ?", companyID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
 		return nil, err
 	}
 

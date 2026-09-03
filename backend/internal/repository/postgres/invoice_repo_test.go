@@ -29,7 +29,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	}
 	if err := db.AutoMigrate(
 		&models.Company{}, &models.Branch{}, &models.TipoPuntoVenta{},
-		&models.PointOfSale{}, &models.Cufd{}, &models.Cuis{},
+		&models.PointOfSale{}, &models.Cufd{},
 		&models.Catalog{}, &models.SinProduct{}, &models.SiatActividad{},
 		&models.SiatLeyendaFactura{}, &models.SiatActividadDocSector{},
 		&models.CatalogSyncState{}, &models.ContingencyEvent{}, &models.Customer{},
@@ -113,7 +113,7 @@ func seedFixture(t *testing.T, db *gorm.DB) repoFixture {
 func nuevaFacturaPendiente(f repoFixture) *domain.Invoice {
 	return &domain.Invoice{
 		CompanyId:     f.companyID,
-		CustomerId:    &f.customer.ID,
+		CustomerId:    f.customer.ID,
 		PointOfSaleId: f.posID,
 		CufdId:        f.cufd.ID,
 		EmissionType:  "EN_LINEA",

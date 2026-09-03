@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -541,8 +540,6 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 		FechaHoraInicioEvento: inicio,
 		FechaHoraFinEvento:    fin,
 	}
-	log.Println("req....")
-	log.Println(req)
 	svc, err := uc.resolveService(ctx, company.ID)
 	if err != nil {
 		return nil, err
@@ -785,7 +782,7 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		}
 		invoices, err := uc.LoadInvoicesIDs(body.FacturaIDs)
 		if err != nil {
-			log.Println("No sepudo traer las facturas")
+			slog.Error("no se pudieron cargar facturas por IDs", "error", err)
 		}
 		if len(invoices) != len(body.FacturaIDs) {
 			return nil, nil, nil, domain.NewBadRequestError("no se encontraron todas las facturas por IDs proporcionadas")

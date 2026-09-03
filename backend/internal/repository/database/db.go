@@ -23,7 +23,11 @@ type dataMigration struct {
 	RunAt time.Time `gorm:"not null"`
 }
 
-func ConnectDB() {
+// ConnectDB abre la conexión a PostgreSQL, configura el pool y devuelve la
+// instancia de *gorm.DB. También mantiene la variable global DB para
+// compatibilidad con código existente; el objetivo es que el contenedor de
+// dependencias sea la única fuente de verdad en el futuro.
+func ConnectDB() *gorm.DB {
 	// Cargar variables del archivo .env si existe
 	_ = godotenv.Load()
 
@@ -70,6 +74,7 @@ func ConnectDB() {
 
 	fmt.Println("Connection stablished with PostgreSQL database successfully!")
 
+	return DB
 }
 func Migrate() error {
 	log.Println("🔄 Ejecutando migraciones de base de datos...")
@@ -98,6 +103,7 @@ func Migrate() error {
 
 	err := DB.AutoMigrate(
 		&models.Company{},
+		&models.ApiKey{},
 		&models.Branch{},
 		&models.TipoPuntoVenta{},
 		&models.PointOfSale{},

@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"log"
 	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -22,11 +21,6 @@ func NewPostgresCustomerRepository(db *gorm.DB) domain.CustomerRepository {
 // la inmutabilidad tras facturación se refuerza con el trigger
 // trg_customers_immutability en la base de datos.
 func (r *PostgresCustomerRepository) Create(c *domain.Customer) error {
-	log.Println("Creating customer", c.Name)
-	log.Println("customer email", *c.Email)
-	log.Println("customer name", c.Name)
-	log.Println("customer document type", c.DocumentType)
-	log.Println("customer document number", c.DocumentNumber)
 	dbModel := models.Customer{
 		ID:             uuid.NewString(),
 		CompanyId:      c.CompanyId,
@@ -79,12 +73,11 @@ func (r *PostgresCustomerRepository) GetByCompanyAndFiscalIdentity(companyID str
 }
 
 func (r *PostgresCustomerRepository) List(companyID string) ([]*domain.Customer, error) {
-	var modelsList []models.Customer
-	query := r.db.Order("created_at ASC")
-	if companyID != "" {
-		query = query.Where("company_id = ?", companyID)
+	if companyID == "" {
+		return nil, domain.ErrMissingCompanyID
 	}
-	if err := query.Find(&modelsList).Error; err != nil {
+	var modelsList []models.Customer
+	if err := r.db.Where("company_id = ?", companyID).Order("created_at ASC").Find(&modelsList).Error; err != nil {
 		return nil, err
 	}
 	res := make([]*domain.Customer, 0, len(modelsList))

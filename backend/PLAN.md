@@ -659,11 +659,11 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 **Mejora:** integridad, performance, multi-tenancy.
 
-- [ ] Migrar a `golang-migrate`.
-- [ ] Crear tablas `tenants`, `api_keys`, `branches`, `points_of_sale`, `certificates`.
-- [ ] Crear tablas `cufd_history`, `cuis_history`, `contingency_events`.
-- [ ] Normalizar catálogos a `catalog_versions` + `catalog_items`.
-- [ ] Migrar datos existentes.
+- [x] Migrar a `golang-migrate`.
+- [x] Crear tablas `tenants`, `api_keys`, `branches`, `points_of_sale`, `certificates`.
+- [x] Crear tablas `cufd_history`, `cuis_history`, `contingency_events`.
+- [x] Normalizar catálogos a `catalog_versions` + `catalog_items`.
+- [x] Migrar datos existentes.
 
 **Entregable:** esquema relacional sólido con FK y CHECK.
 

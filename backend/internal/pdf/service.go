@@ -55,7 +55,7 @@ func (s *Service) GenerateInvoicePDFWithContext(ctx context.Context, invoiceID s
 
 	var inv models.Invoice
 	if err := s.db.Preload("Items").Preload("PointOfSale").
-		Preload("Company").Preload("Customer").Preload("CufdRecord").
+		Preload("Company.Config").Preload("Customer").Preload("CufdRecord").
 		First(&inv, "id = ?", invoiceID).Error; err != nil {
 		return nil, fmt.Errorf("pdf: factura no encontrada: %w", err)
 	}

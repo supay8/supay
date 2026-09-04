@@ -5,16 +5,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/ports"
 )
-
-// SiatCredentialClient es el contrato del adaptador SIAT para solicitar
-// credenciales (CUIS/CUFD). El siat.Service real lo satisface.
-type SiatCredentialClient interface {
-	SolicitarCUIS(ctx context.Context, req siat.SolicitudCuis) (*siat.RespuestaCuis, error)
-	SolicitarCUFD(ctx context.Context, req siat.SolicitudCufd) (*siat.RespuestaCufd, error)
-}
 
 // CredentialPosStore y CredentialCufdStore son los contratos mínimos de
 // persistencia que necesita el servicio de credenciales. Los repositorios
@@ -42,12 +36,12 @@ type CredentialProvider interface {
 type CredentialService struct {
 	posRepo     CredentialPosStore
 	cufdRepo    CredentialCufdStore
-	siatService SiatCredentialClient
+	siatService ports.FiscalService
 	modalidad   int
 	provider    siat.SiatClientProvider
 }
 
-func NewCredentialService(posRepo CredentialPosStore, cufdRepo CredentialCufdStore, siatService SiatCredentialClient, modalidad int) *CredentialService {
+func NewCredentialService(posRepo CredentialPosStore, cufdRepo CredentialCufdStore, siatService ports.FiscalService, modalidad int) *CredentialService {
 	return &CredentialService{posRepo: posRepo, cufdRepo: cufdRepo, siatService: siatService, modalidad: modalidad}
 }
 
@@ -73,10 +67,10 @@ func (s *CredentialService) effectiveModalidadForCompany(company *domain.Company
 	return s.effectiveModalidad()
 }
 
-func (s *CredentialService) resolveClient(ctx context.Context, company *domain.Company) (SiatCredentialClient, error) {
+func (s *CredentialService) resolveClient(ctx context.Context, company *domain.Company) (ports.FiscalService, error) {
 	if s.provider != nil && company != nil && company.ID != "" {
 		if svc, err := s.provider.GetForCompany(ctx, company.ID); err == nil && svc != nil {
-			return svc, nil
+			return siat.NewFiscalAdapter(svc), nil
 		} else if s.siatService == nil {
 			if err != nil {
 				return nil, err
@@ -127,7 +121,7 @@ func (s *CredentialService) EnsureCufd(ctx context.Context, company *domain.Comp
 		ControlCode:   resp.CodigoControl,
 		Direccion:     resp.Direccion,
 		ValidFrom:     now,
-		ValidTo:       resp.FechaVigencia.Time,
+		ValidTo:       resp.FechaVigencia,
 		Active:        true,
 	}
 	if err := s.cufdRepo.Create(cufd); err != nil {
@@ -139,7 +133,7 @@ func (s *CredentialService) EnsureCufd(ctx context.Context, company *domain.Comp
 
 // RefreshCuis solicita un CUIS nuevo aunque el punto de venta ya tenga uno
 // (endpoint explícito POST /point-of-sales/{id}/cuis).
-func (s *CredentialService) RefreshCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*siat.RespuestaCuis, error) {
+func (s *CredentialService) RefreshCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*ports.CuisResult, error) {
 	resp, err := s.requestCuis(ctx, company, pos)
 	if err != nil {
 		return nil, err
@@ -156,7 +150,7 @@ func (s *CredentialService) RefreshCuis(ctx context.Context, company *domain.Com
 
 // RefreshCufd solicita un CUFD nuevo aunque exista uno vigente (endpoint
 // explícito POST /point-of-sales/{id}/cufd).
-func (s *CredentialService) RefreshCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*siat.RespuestaCufd, *domain.Cufd, error) {
+func (s *CredentialService) RefreshCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*ports.CufdResult, *domain.Cufd, error) {
 	if err := s.EnsureCuis(ctx, company, pos); err != nil {
 		return nil, nil, err
 	}
@@ -171,7 +165,7 @@ func (s *CredentialService) RefreshCufd(ctx context.Context, company *domain.Com
 		ControlCode:   resp.CodigoControl,
 		Direccion:     resp.Direccion,
 		ValidFrom:     now,
-		ValidTo:       resp.FechaVigencia.Time,
+		ValidTo:       resp.FechaVigencia,
 		Active:        true,
 	}
 	if err := s.cufdRepo.Create(cufd); err != nil {
@@ -181,12 +175,12 @@ func (s *CredentialService) RefreshCufd(ctx context.Context, company *domain.Com
 	return resp, cufd, nil
 }
 
-func (s *CredentialService) requestCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*siat.RespuestaCuis, error) {
+func (s *CredentialService) requestCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*ports.CuisResult, error) {
 	client, err := s.resolveClient(ctx, company)
 	if err != nil {
 		return nil, err
 	}
-	req := siat.SolicitudCuis{
+	req := ports.CredentialRequest{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:    company.CodigoSistema,
 		Nit:              company.Nit,
@@ -195,19 +189,19 @@ func (s *CredentialService) requestCuis(ctx context.Context, company *domain.Com
 		CodigoPuntoVenta: resolveCodigoPuntoVenta(pos),
 	}
 	if pos.Cuis != nil && *pos.Cuis != "" {
-		req.Cuis = pos.Cuis
+		req.Cuis = *pos.Cuis
 	}
-	resp, err := client.SolicitarCUIS(ctx, req)
+	resp, err := client.RequestCUIS(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil || !resp.Transaccion || resp.Codigo == "" {
+	if resp.Codigo == "" {
 		return nil, domain.NewConflictError("el siat no entregó un cuis válido para el punto de venta")
 	}
-	return resp, nil
+	return &resp, nil
 }
 
-func (s *CredentialService) requestCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*siat.RespuestaCufd, error) {
+func (s *CredentialService) requestCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*ports.CufdResult, error) {
 	client, err := s.resolveClient(ctx, company)
 	if err != nil {
 		return nil, err
@@ -215,21 +209,21 @@ func (s *CredentialService) requestCufd(ctx context.Context, company *domain.Com
 	if err := s.EnsureCuis(ctx, company, pos); err != nil {
 		return nil, err
 	}
-	req := siat.SolicitudCufd{
+	req := ports.CredentialRequest{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:    company.CodigoSistema,
 		Nit:              company.Nit,
 		CodigoSucursal:   pos.CodigoSucursal,
-		Cuis:             *pos.Cuis,
 		CodigoModalidad:  s.effectiveModalidadForCompany(company),
 		CodigoPuntoVenta: resolveCodigoPuntoVenta(pos),
+		Cuis:             *pos.Cuis,
 	}
-	resp, err := client.SolicitarCUFD(ctx, req)
+	resp, err := client.RequestCUFD(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil || !resp.Transaccion || resp.Codigo == "" {
+	if resp.Codigo == "" {
 		return nil, domain.NewConflictError("el siat no entregó un cufd válido para el punto de venta")
 	}
-	return resp, nil
+	return &resp, nil
 }

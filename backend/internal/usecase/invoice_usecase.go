@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -27,7 +28,7 @@ type InvoiceUsecase struct {
 	cufdRepo             domain.CufdRepository
 	leyendaRepo          domain.SiatLeyendaRepository
 	docSectorRepo        domain.SiatActividadDocSectorRepository
-	siatService          SiatEmissionService
+	siatService          ports.FiscalService
 	siatProvider         siat.SiatClientProvider
 	credentials          CredentialProvider
 	modalidad            int
@@ -35,13 +36,10 @@ type InvoiceUsecase struct {
 	allowCustomIssueDate bool
 }
 
-// SetSiatProvider inyecta el provider multi-tenant.
-func (uc *InvoiceUsecase) SetSiatProvider(p siat.SiatClientProvider) { uc.siatProvider = p }
-
-func (uc *InvoiceUsecase) resolveEmissionService(ctx context.Context, companyID string) (SiatEmissionService, error) {
+func (uc *InvoiceUsecase) resolveEmissionService(ctx context.Context, companyID string) (ports.FiscalService, error) {
 	if uc.siatProvider != nil && companyID != "" {
 		if svc, err := uc.siatProvider.GetForCompany(ctx, companyID); err == nil {
-			return svc, nil
+			return siat.NewFiscalAdapter(svc), nil
 		} else if uc.siatService == nil {
 			return nil, err
 		}
@@ -67,43 +65,42 @@ type PdfGenerator interface {
 	GenerateAndPersist(ctx context.Context, invoiceID string)
 }
 
-func NewInvoiceUsecase(invoiceRepo domain.InvoiceRepository, customerRepo domain.CustomerRepository, companyRepo domain.CompanyRepository, posRepo domain.PointOfSaleRepository, catalogRepo domain.CatalogRepository, cufdRepo domain.CufdRepository, siatService SiatEmissionService, modalidad int, extras ...any) *InvoiceUsecase {
-	uc := &InvoiceUsecase{
-		invoiceRepo:  invoiceRepo,
-		customerRepo: customerRepo,
-		companyRepo:  companyRepo,
-		posRepo:      posRepo,
-		catalogRepo:  catalogRepo,
-		cufdRepo:     cufdRepo,
-		siatService:  siatService,
-		modalidad:    modalidad,
+func NewInvoiceUsecase(
+	invoiceRepo domain.InvoiceRepository,
+	customerRepo domain.CustomerRepository,
+	companyRepo domain.CompanyRepository,
+	posRepo domain.PointOfSaleRepository,
+	catalogRepo domain.CatalogRepository,
+	cufdRepo domain.CufdRepository,
+	siatService ports.FiscalService,
+	modalidad int,
+	productRepo domain.ProductRepository,
+	syncStateRepo domain.CatalogSyncStateRepository,
+	leyendaRepo domain.SiatLeyendaRepository,
+	docSectorRepo domain.SiatActividadDocSectorRepository,
+	credentials CredentialProvider,
+	pdfService PdfGenerator,
+	allowCustomIssueDate bool,
+	siatProvider siat.SiatClientProvider,
+) *InvoiceUsecase {
+	return &InvoiceUsecase{
+		invoiceRepo:          invoiceRepo,
+		customerRepo:         customerRepo,
+		companyRepo:          companyRepo,
+		posRepo:              posRepo,
+		catalogRepo:          catalogRepo,
+		cufdRepo:             cufdRepo,
+		siatService:          siatService,
+		modalidad:            modalidad,
+		productRepo:          productRepo,
+		syncStateRepo:        syncStateRepo,
+		leyendaRepo:          leyendaRepo,
+		docSectorRepo:        docSectorRepo,
+		credentials:          credentials,
+		pdfService:           pdfService,
+		allowCustomIssueDate: allowCustomIssueDate,
+		siatProvider:         siatProvider,
 	}
-	for _, extra := range extras {
-		switch typed := extra.(type) {
-		case domain.ProductRepository:
-			uc.productRepo = typed
-		case domain.CatalogSyncStateRepository:
-			uc.syncStateRepo = typed
-		case domain.SiatLeyendaRepository:
-			uc.leyendaRepo = typed
-		case domain.SiatActividadDocSectorRepository:
-			uc.docSectorRepo = typed
-		case CredentialProvider:
-			uc.credentials = typed
-		case PdfGenerator:
-			uc.pdfService = typed
-		case bool:
-			uc.allowCustomIssueDate = typed
-		case siat.SiatClientProvider:
-			uc.siatProvider = typed
-		}
-	}
-	return uc
-}
-
-// SetAllowCustomIssueDate habilita (solo dev/PILOTO) el uso de issue_date custom en POST /invoices.
-func (uc *InvoiceUsecase) SetAllowCustomIssueDate(allow bool) {
-	uc.allowCustomIssueDate = allow
 }
 
 type CreateInvoiceItemRequest struct {

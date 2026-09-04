@@ -11,27 +11,18 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
-// SiatEmissionService es el contrato de operaciones de facturación sobre el SDK
-// go-siat: emisión de facturas, verificación de estado, anulación y reversión de
-// anulación de documentos ya emitidos.
-type SiatEmissionService interface {
-	EmitirFactura(ctx context.Context, req siat.SolicitudFactura) (*siat.ResultadoEmision, error)
-	VerificarEstado(ctx context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error)
-	AnularFactura(ctx context.Context, req siat.SolicitudDocumento, codigoMotivo int) (*siat.ResultadoDocumento, error)
-	RevertirAnulacion(ctx context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error)
-	VerificarNit(ctx context.Context, nit string, cuis string, codigoAmbiente, codigoSucursal, codigoModalidad int) (bool, error)
-}
 
 // EmissionRejectedError indica que el SIAT respondió y rechazó la factura
 // (Transaccion=false). La factura queda persistida como REJECTED.
 type EmissionRejectedError struct {
 	CodigoEstado    int
 	CodigoRecepcion string
-	Mensajes        []siat.Mensaje
+	Mensajes        []ports.FiscalMessage
 }
 
 func (e *EmissionRejectedError) Error() string {
@@ -94,7 +85,7 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		rollback()
 		return nil, err
 	}
-	result, err := svc.EmitirFactura(ctx, *req)
+	result, err := svc.Emit(ctx, *req)
 	if err != nil {
 		rollback()
 		return nil, fmt.Errorf("error de emisión: %w", err)
@@ -161,7 +152,7 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 // por API. Si aun así falla, se loguea a nivel crítico con los datos para
 // conciliar manualmente (el reaper devolverá la factura a PENDING y el reenvío
 // con el mismo numeroFactura/CUF es idempotente ante el SIAT).
-func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, result *siat.ResultadoEmision) error {
+func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, result ports.FiscalResult) error {
 	const maxIntentos = 3
 	var err error
 	for intento := 1; intento <= maxIntentos; intento++ {
@@ -207,7 +198,7 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.VerificarEstado(ctx, *req)
+	result, err := svc.VerifyStatus(ctx, *req)
 	if err != nil {
 		return nil, fmt.Errorf("error de verificación: %w", err)
 	}
@@ -253,7 +244,7 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.AnularFactura(ctx, *req, codigoMotivo)
+	result, err := svc.Annul(ctx, *req, codigoMotivo)
 	if err != nil {
 		return nil, fmt.Errorf("error de anulación: %w", err)
 	}
@@ -322,7 +313,7 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.RevertirAnulacion(ctx, *req)
+	result, err := svc.RevertAnnul(ctx, *req)
 	if err != nil {
 		return nil, fmt.Errorf("error de reversión de anulación: %w", err)
 	}
@@ -367,7 +358,7 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 // que se envía es el VIGENTE del punto de venta (GetActiveByPos), porque el SIAT
 // rechaza operaciones firmadas con un CUFD vencido (vigencia ~24h); si no hay
 // CUFD vigente registrado se cae al CUFD con el que se emitió la factura.
-func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.SolicitudDocumento, error) {
+func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*ports.FiscalDocumentQuery, error) {
 	pos := inv.PointOfSale
 	if pos.Cuis == nil || strings.TrimSpace(*pos.Cuis) == "" {
 		return nil, domain.NewConflictError("el punto de venta no tiene cuis activo")
@@ -410,7 +401,7 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*siat.So
 		modalidad = siat.ModalidadElectronica
 	}
 
-	return &siat.SolicitudDocumento{
+	return &ports.FiscalDocumentQuery{
 		CodigoAmbiente:        inv.Company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         inv.Company.CodigoSistema,
 		Nit:                   inv.Company.Nit,
@@ -467,13 +458,13 @@ func siatEstadoToDomain(codigoEstado int) (domain.InvoiceStatus, bool) {
 // Customer de la factura. El Customer es la única fuente de verdad de los
 // datos fiscales del receptor (inmutable tras facturar): no existe snapshot
 // alternativo. Usado por emisión normal, paquetes y contingencia.
-func clienteFromCustomer(c domain.Customer) (siat.ClienteFactura, error) {
+func clienteFromCustomer(c domain.Customer) (ports.FiscalCustomer, error) {
 	if strings.TrimSpace(c.DocumentNumber) == "" || strings.TrimSpace(c.Name) == "" {
-		return siat.ClienteFactura{}, domain.NewConflictError("factura sin cliente asociado; toda factura debe referenciar un cliente")
+		return ports.FiscalCustomer{}, domain.NewConflictError("factura sin cliente asociado; toda factura debe referenciar un cliente")
 	}
 	codigoDoc, err := codigoTipoDocumentoIdentidad(c.DocumentType)
 	if err != nil {
-		return siat.ClienteFactura{}, err
+		return ports.FiscalCustomer{}, err
 	}
 	complemento := c.Complement
 	var codigoCliente *string
@@ -489,7 +480,7 @@ func clienteFromCustomer(c domain.Customer) (siat.ClienteFactura, error) {
 			complemento = &empty
 		}
 	}
-	return siat.ClienteFactura{
+	return ports.FiscalCustomer{
 		NombreRazonSocial:            c.Name,
 		CodigoTipoDocumentoIdentidad: codigoDoc,
 		NumeroDocumento:              c.DocumentNumber,
@@ -500,7 +491,7 @@ func clienteFromCustomer(c domain.Customer) (siat.ClienteFactura, error) {
 
 // buildSolicitudFactura reúne los prerrequisitos de la factura y los mapea a
 // los códigos de catálogo SIN esperados por el SDK.
-func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain.Invoice) (*siat.SolicitudFactura, error) {
+func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain.Invoice) (*ports.FiscalDocument, error) {
 	company := inv.Company
 	pos := inv.PointOfSale
 
@@ -574,7 +565,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 	}
 
 	habilitadas := uc.actividadesHabilitadas(&company)
-	items := make([]siat.ItemFactura, 0, len(inv.Items))
+	items := make([]ports.FiscalItem, 0, len(inv.Items))
 	for i, it := range inv.Items {
 		itemActividad := actividad
 		if it.CodigoActividad != nil && strings.TrimSpace(*it.CodigoActividad) != "" {
@@ -617,7 +608,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 				"invoice_id", inv.ID, "item", i+1, "descripcion", it.Description,
 				"subtotal_previo", it.Subtotal, "subtotal_corregido", subtotalCalc)
 		}
-		items = append(items, siat.ItemFactura{
+		items = append(items, ports.FiscalItem{
 			ActividadEconomica: itemActividad,
 			CodigoProductoSin:  codigoProductoSin,
 			CodigoProducto:     it.Code,
@@ -702,7 +693,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		return nil, err
 	}
 
-	return &siat.SolicitudFactura{
+	return &ports.FiscalDocument{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
@@ -785,7 +776,7 @@ func (uc *InvoiceUsecase) resolveLeyenda(companyID, actividad string) (string, e
 
 // marshalMensajes serializa los mensajes de la respuesta SIAT a JSON para
 // persistirlos en la factura (siat_mensajes) y poder diagnosticar observaciones.
-func marshalMensajes(msgs []siat.Mensaje) (string, error) {
+func marshalMensajes(msgs []ports.FiscalMessage) (string, error) {
 	if len(msgs) == 0 {
 		return "[]", nil
 	}

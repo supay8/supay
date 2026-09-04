@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -48,14 +49,72 @@ type fakeCredClient struct {
 	cufdErr   error
 }
 
-func (f *fakeCredClient) SolicitarCUIS(context.Context, siat.SolicitudCuis) (*siat.RespuestaCuis, error) {
+func (f *fakeCredClient) RequestCUIS(context.Context, ports.CredentialRequest) (ports.CuisResult, error) {
 	f.cuisCalls++
-	return f.cuis, f.cuisErr
+	if f.cuisErr != nil {
+		return ports.CuisResult{}, f.cuisErr
+	}
+	return ports.CuisResult{
+		Codigo:        f.cuis.Codigo,
+		FechaVigencia: f.cuis.FechaVigencia.Time,
+		Transaccion:   f.cuis.Transaccion,
+		Mensajes:      convertMensajes(f.cuis.Mensajes),
+	}, nil
 }
 
-func (f *fakeCredClient) SolicitarCUFD(context.Context, siat.SolicitudCufd) (*siat.RespuestaCufd, error) {
+func (f *fakeCredClient) RequestCUFD(context.Context, ports.CredentialRequest) (ports.CufdResult, error) {
 	f.cufdCalls++
-	return f.cufd, f.cufdErr
+	if f.cufdErr != nil {
+		return ports.CufdResult{}, f.cufdErr
+	}
+	return ports.CufdResult{
+		Codigo:        f.cufd.Codigo,
+		CodigoControl: f.cufd.CodigoControl,
+		Direccion:     f.cufd.Direccion,
+		FechaVigencia: f.cufd.FechaVigencia.Time,
+		Transaccion:   f.cufd.Transaccion,
+		Mensajes:      convertMensajes(f.cufd.Mensajes),
+	}, nil
+}
+
+func (f *fakeCredClient) Emit(context.Context, ports.FiscalDocument) (ports.FiscalResult, error) {
+	return ports.FiscalResult{}, nil
+}
+func (f *fakeCredClient) VerifyStatus(context.Context, ports.FiscalDocumentQuery) (ports.FiscalDocumentResult, error) {
+	return ports.FiscalDocumentResult{}, nil
+}
+func (f *fakeCredClient) Annul(context.Context, ports.FiscalDocumentQuery, int) (ports.FiscalDocumentResult, error) {
+	return ports.FiscalDocumentResult{}, nil
+}
+func (f *fakeCredClient) RevertAnnul(context.Context, ports.FiscalDocumentQuery) (ports.FiscalDocumentResult, error) {
+	return ports.FiscalDocumentResult{}, nil
+}
+func (f *fakeCredClient) RegisterSignificantEvent(context.Context, ports.FiscalEvent) (ports.FiscalEventResult, error) {
+	return ports.FiscalEventResult{}, nil
+}
+func (f *fakeCredClient) SendPackage(context.Context, ports.FiscalPackage) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+func (f *fakeCredClient) ValidatePackage(context.Context, ports.FiscalPackage, string) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+func (f *fakeCredClient) SendBulk(context.Context, ports.FiscalBulk) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+func (f *fakeCredClient) ValidateBulk(context.Context, ports.FiscalBulk, string) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+func (f *fakeCredClient) SendPurchases(context.Context, ports.FiscalPurchase) (ports.FiscalPurchaseResult, error) {
+	return ports.FiscalPurchaseResult{}, nil
+}
+func (f *fakeCredClient) SignXML(context.Context, ports.FiscalSignRequest) (ports.FiscalSignResult, error) {
+	return ports.FiscalSignResult{}, nil
+}
+func (f *fakeCredClient) EmitAdjustment(context.Context, ports.FiscalAdjustment) (ports.FiscalAdjustmentResult, error) {
+	return ports.FiscalAdjustmentResult{}, nil
+}
+func (f *fakeCredClient) Synchronize(context.Context, ports.FiscalSyncRequest, ports.FiscalSyncOperation) (ports.FiscalSyncResult, error) {
+	return ports.FiscalSyncResult{}, nil
 }
 
 func credFixtures() (*domain.Company, *domain.PointOfSale) {
@@ -199,4 +258,13 @@ func TestEnsureCufdRechazoSiatEsConflicto(t *testing.T) {
 	if !errors.As(err, &conflict) {
 		t.Fatalf("err=%v, se esperaba ConflictError", err)
 	}
+}
+
+
+func convertMensajes(in []siat.Mensaje) []ports.FiscalMessage {
+	out := make([]ports.FiscalMessage, len(in))
+	for i, m := range in {
+		out[i] = ports.FiscalMessage{Codigo: m.Codigo, Descripcion: m.Descripcion}
+	}
+	return out
 }

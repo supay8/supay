@@ -18,17 +18,20 @@ type ProductUsecase struct {
 	docSectorRepo  domain.SiatActividadDocSectorRepository
 }
 
-func NewProductUsecase(productRepo domain.ProductRepository, companyRepo domain.CompanyRepository, catalogRepo domain.CatalogRepository, extras ...any) *ProductUsecase {
-	uc := &ProductUsecase{productRepo: productRepo, companyRepo: companyRepo, catalogRepo: catalogRepo}
-	for _, extra := range extras {
-		switch typed := extra.(type) {
-		case domain.SinProductRepository:
-			uc.sinProductRepo = typed
-		case domain.SiatActividadDocSectorRepository:
-			uc.docSectorRepo = typed
-		}
+func NewProductUsecase(
+	productRepo domain.ProductRepository,
+	companyRepo domain.CompanyRepository,
+	catalogRepo domain.CatalogRepository,
+	sinProductRepo domain.SinProductRepository,
+	docSectorRepo domain.SiatActividadDocSectorRepository,
+) *ProductUsecase {
+	return &ProductUsecase{
+		productRepo:    productRepo,
+		companyRepo:    companyRepo,
+		catalogRepo:    catalogRepo,
+		sinProductRepo: sinProductRepo,
+		docSectorRepo:  docSectorRepo,
 	}
-	return uc
 }
 
 type ProductMappingRequest struct {

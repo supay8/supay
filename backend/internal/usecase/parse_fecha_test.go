@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
 )
 
 func TestParseFechaSiatLaPaz(t *testing.T) {

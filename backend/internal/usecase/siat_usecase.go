@@ -12,7 +12,8 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 // ErrSiatNoDisponible indica que el adaptador SIAT no pudo inicializarse
@@ -38,18 +39,10 @@ type SiatUsecase struct {
 	docSectorRepo   domain.SiatActividadDocSectorRepository
 	invoiceRepo     domain.InvoiceRepository
 
-	siatService  *siat.Service
+	siatService  ports.FiscalService
 	siatProvider siat.SiatClientProvider
 	credentials  *CredentialService
 	modalidad    int
-}
-
-// SetSiatProvider inyecta el provider multi-tenant (resolución por CompanyId).
-func (uc *SiatUsecase) SetSiatProvider(p siat.SiatClientProvider) {
-	uc.siatProvider = p
-	if uc.credentials != nil {
-		uc.credentials.SetProvider(p)
-	}
 }
 
 func NewSiatUsecase(
@@ -60,9 +53,15 @@ func NewSiatUsecase(
 	catalogRepo domain.CatalogRepository,
 	contingencyRepo domain.ContingencyEventRepository,
 	sentPackageRepo domain.SentPackageRepository,
-	siatService *siat.Service,
+	siatService ports.FiscalService,
 	modalidad int,
-	extraRepos ...any,
+	sinProductRepo domain.SinProductRepository,
+	syncStateRepo domain.CatalogSyncStateRepository,
+	actividadRepo domain.SiatActividadRepository,
+	leyendaRepo domain.SiatLeyendaRepository,
+	docSectorRepo domain.SiatActividadDocSectorRepository,
+	invoiceRepo domain.InvoiceRepository,
+	siatProvider siat.SiatClientProvider,
 ) *SiatUsecase {
 	uc := &SiatUsecase{
 		companyRepo:     companyRepo,
@@ -74,35 +73,24 @@ func NewSiatUsecase(
 		sentPackageRepo: sentPackageRepo,
 		siatService:     siatService,
 		modalidad:       modalidad,
+		sinProductRepo:  sinProductRepo,
+		syncStateRepo:   syncStateRepo,
+		actividadRepo:   actividadRepo,
+		leyendaRepo:     leyendaRepo,
+		docSectorRepo:   docSectorRepo,
+		invoiceRepo:     invoiceRepo,
+		siatProvider:    siatProvider,
 	}
 	// El servicio de credenciales comparte repos y SDK con el usecase; el
 	// cliente se inyecta solo si el SDK está inicializado para que un nil
 	// tipado no evada el guard interno.
-	var credClient SiatCredentialClient
+	var credClient ports.FiscalService
 	if siatService != nil {
 		credClient = siatService
 	}
 	uc.credentials = NewCredentialService(pointOfSaleRepo, cufdRepo, credClient, modalidad)
-	for _, repo := range extraRepos {
-		switch typed := repo.(type) {
-		case domain.SinProductRepository:
-			uc.sinProductRepo = typed
-		case domain.CatalogSyncStateRepository:
-			uc.syncStateRepo = typed
-		case domain.SiatActividadRepository:
-			uc.actividadRepo = typed
-		case domain.SiatLeyendaRepository:
-			uc.leyendaRepo = typed
-		case domain.SiatActividadDocSectorRepository:
-			uc.docSectorRepo = typed
-		case domain.InvoiceRepository:
-			uc.invoiceRepo = typed
-		case siat.SiatClientProvider:
-			uc.siatProvider = typed
-			if uc.credentials != nil {
-				uc.credentials.SetProvider(typed)
-			}
-		}
+	if siatProvider != nil && uc.credentials != nil {
+		uc.credentials.SetProvider(siatProvider)
 	}
 	return uc
 }
@@ -117,10 +105,10 @@ func (uc *SiatUsecase) requireService() error {
 	return nil
 }
 
-func (uc *SiatUsecase) resolveService(ctx context.Context, companyID string) (*siat.Service, error) {
+func (uc *SiatUsecase) resolveService(ctx context.Context, companyID string) (ports.FiscalService, error) {
 	if uc.siatProvider != nil && companyID != "" {
 		if svc, err := uc.siatProvider.GetForCompany(ctx, companyID); err == nil {
-			return svc, nil
+			return siat.NewFiscalAdapter(svc), nil
 		} else if uc.siatService == nil {
 			return nil, err
 		}
@@ -159,7 +147,7 @@ func (uc *SiatUsecase) actividadesHabilitadas(company *domain.Company) map[strin
 	return habilitadas
 }
 
-func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domain.Company, pos *domain.PointOfSale, cufd *domain.Cufd) (siat.SolicitudFactura, error) {
+func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domain.Company, pos *domain.PointOfSale, cufd *domain.Cufd) (ports.FiscalDocument, error) {
 	// Resuelve leyenda como en InvoiceUsecase.resolveLeyenda
 	actividad := ""
 	if company.CodigoActividad != nil {
@@ -180,7 +168,7 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 	// asociado (única fuente de verdad; mismo helper que la emisión normal).
 	cliente, err := clienteFromCustomer(inv.Customer)
 	if err != nil {
-		return siat.SolicitudFactura{}, err
+		return ports.FiscalDocument{}, err
 	}
 	// Dirección padrón
 	direccion := strings.TrimSpace(cufd.Direccion)
@@ -197,7 +185,7 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 		usuario = company.UsuarioSiat
 	}
 	// Items mapeados desde InvoiceItem ya persistidos
-	solItems := make([]siat.ItemFactura, 0, len(inv.Items))
+	solItems := make([]ports.FiscalItem, 0, len(inv.Items))
 	for _, it := range inv.Items {
 		var codigoSin int64
 		if it.CodigoProductoSin != nil {
@@ -206,7 +194,7 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 			}
 		}
 		if codigoSin <= 0 {
-			return siat.SolicitudFactura{}, domain.NewBadRequestError("el ítem " + it.Description + " no tiene codigo_producto_sin válido")
+			return ports.FiscalDocument{}, domain.NewBadRequestError("el ítem " + it.Description + " no tiene codigo_producto_sin válido")
 		}
 		act := actividad
 		if it.CodigoActividad != nil && strings.TrimSpace(*it.CodigoActividad) != "" {
@@ -221,7 +209,7 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 			d := it.Discount
 			discPtr = &d
 		}
-		solItems = append(solItems, siat.ItemFactura{
+		solItems = append(solItems, ports.FiscalItem{
 			ActividadEconomica: act,
 			CodigoProductoSin:  codigoSin,
 			CodigoProducto:     it.Code,
@@ -242,7 +230,7 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 			tipoFactura = 1
 		}
 	}
-	return siat.SolicitudFactura{
+	return ports.FiscalDocument{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
@@ -329,7 +317,7 @@ func (uc *SiatUsecase) effectiveModalidad() int {
 
 type CuisResultado struct {
 	Success bool `json:"success"`
-	Data    *siat.RespuestaCuis
+	Data    *ports.CuisResult
 }
 
 // SolicitarCUIS fuerza la obtención de un CUIS nuevo (endpoint explícito).
@@ -351,7 +339,7 @@ func (uc *SiatUsecase) SolicitarCUIS(ctx context.Context, companyID, posID strin
 type CufdResultado struct {
 	Company     *domain.Company
 	PointOfSale *domain.PointOfSale
-	Response    *siat.RespuestaCufd
+	Response    *ports.CufdResult
 }
 
 func (uc *SiatUsecase) SolicitarCUFD(ctx context.Context, companyID, posID string) (*CufdResultado, error) {
@@ -374,7 +362,7 @@ func (uc *SiatUsecase) SolicitarCUFD(ctx context.Context, companyID, posID strin
 type SetupResultado struct {
 	// Cuis es la respuesta del SIAT solo cuando se solicitó uno nuevo;
 	// nil cuando el punto de venta ya tenía CUIS.
-	Cuis       *siat.RespuestaCuis      `json:"cuis,omitempty"`
+	Cuis       *ports.CuisResult      `json:"cuis,omitempty"`
 	Cufd       *domain.Cufd             `json:"cufd"`
 	Operations []SincronizacionOpResult `json:"operations"`
 	Errors     []SincronizacionOpError  `json:"errors,omitempty"`
@@ -436,7 +424,7 @@ type EventoSignificativoInput struct {
 type EventoSignificativoResultado struct {
 	Company     *domain.Company
 	PointOfSale *domain.PointOfSale
-	Response    *siat.ResultadoEventoSignificativo
+	Response    *ports.FiscalEventResult
 }
 
 // RegistrarEventoSignificativo registra una contingencia ante el SIAT
@@ -526,7 +514,7 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 		)
 	}
 
-	req := siat.SolicitudEventoSignificativo{
+	req := ports.FiscalEvent{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
@@ -544,14 +532,14 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.RegistrarEventoSignificativo(ctx, req)
+	result, err := svc.RegisterSignificantEvent(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
 	// Se persiste el evento registrado (con su codigoRecepcion del SIAT) para
 	// que el envío de paquetes pueda resolver automáticamente el codigoEvento.
-	if uc.contingencyRepo != nil && result != nil && result.Transaccion && result.CodigoRecepcion != "" {
+	if uc.contingencyRepo != nil && result.Transaccion && result.CodigoRecepcion != "" {
 		ev := &domain.ContingencyEvent{
 			PointOfSaleID: pointOfSale.ID,
 			Reason:        motivoEventoAReason(codigoMotivo),
@@ -570,7 +558,7 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 		}
 	}
 
-	return &EventoSignificativoResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &EventoSignificativoResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // motivoEventoAReason traduce el codigoMotivoEvento del catálogo del SIAT a la
@@ -590,7 +578,7 @@ type PaqueteInput struct {
 	CodigoEmision int                     `json:"codigoEmision"`
 	Archivo       string                  `json:"archivo,omitempty"`
 	HashArchivo   string                  `json:"hashArchivo,omitempty"`
-	Facturas      []siat.SolicitudFactura `json:"-"`
+	Facturas      []ports.FiscalDocument `json:"-"`
 	FacturaIDs    []string                `json:"-"`
 }
 
@@ -644,7 +632,7 @@ func (p *PaqueteInput) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	// Intenta []SolicitudFactura (objetos)
-	var facs []siat.SolicitudFactura
+	var facs []ports.FiscalDocument
 	if err := json.Unmarshal(factRaw, &facs); err == nil {
 		p.Facturas = facs
 		return nil
@@ -662,7 +650,7 @@ type MasivaInput struct {
 	CodigoEmision int                     `json:"codigoEmision"`
 	Archivo       string                  `json:"archivo,omitempty"`
 	HashArchivo   string                  `json:"hashArchivo,omitempty"`
-	Facturas      []siat.SolicitudFactura `json:"-"`
+	Facturas      []ports.FiscalDocument `json:"-"`
 	FacturaIDs    []string                `json:"-"`
 }
 
@@ -697,7 +685,7 @@ func (m *MasivaInput) UnmarshalJSON(data []byte) error {
 	}
 
 	// Intenta []SolicitudFactura (objetos)
-	var facs []siat.SolicitudFactura
+	var facs []ports.FiscalDocument
 	if err := json.Unmarshal(factRaw, &facs); err == nil {
 		m.Facturas = facs
 		return nil
@@ -738,19 +726,19 @@ type FirmaInput struct {
 type PaqueteResultado struct {
 	Company     *domain.Company
 	PointOfSale *domain.PointOfSale
-	Response    *siat.ResultadoPaquete
+	Response    *ports.FiscalPackageResult
 }
 
 type ComprasResultado struct {
 	Company     *domain.Company
 	PointOfSale *domain.PointOfSale
-	Response    *siat.ResultadoCompras
+	Response    *ports.FiscalPurchaseResult
 }
 
 type FirmaResultado struct {
 	Company     *domain.Company
 	PointOfSale *domain.PointOfSale
-	Response    *siat.ResultadoFirma
+	Response    *ports.FiscalSignResult
 }
 
 // buildSolicitudPaquete reúne la identidad del contribuyente (empresa + punto
@@ -758,7 +746,7 @@ type FirmaResultado struct {
 // paquete enviados en el body (codigoEvento, descripcion, codigoEmision y
 // facturas).
 
-func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body PaqueteInput) (*siat.SolicitudPaqueteFactura, *domain.Company, *domain.PointOfSale, error) {
+func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body PaqueteInput) (*ports.FiscalPackage, *domain.Company, *domain.PointOfSale, error) {
 	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
 	if err != nil {
 		return nil, nil, nil, err
@@ -796,7 +784,7 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		}
 	}
 
-	var facturasProcesadas []siat.SolicitudFactura
+	var facturasProcesadas []ports.FiscalDocument
 	// Habilitadas para multiactividad controlada (8549910 principal, 8550100 secundaria, etc.)
 	habilitadasPaq := uc.actividadesHabilitadas(company)
 	for _, f := range body.Facturas {
@@ -851,7 +839,7 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 					slog.Warn("paquete: actividad item no habilitada, se permite con advertencia", "actividad", act, "habilitadas", habilitadasPaq)
 				}
 			}
-			total, _ := siat.CalcularTotales(f.Items, false)
+			total, _ := siat.CalcularTotales(toSiatItems(f.Items), false)
 			if siat.Round2ForCompare(f.MontoTotal) != total {
 				slog.Warn("paquete: montoTotal auto-corregido", "previo", f.MontoTotal, "corregido", total)
 				f.MontoTotal = total
@@ -921,7 +909,7 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 		codigoTipoFact = 1
 	}
 
-	req := &siat.SolicitudPaqueteFactura{
+	req := &ports.FiscalPackage{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
@@ -976,7 +964,7 @@ func (uc *SiatUsecase) EnviarPaquete(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.EnviarPaqueteFactura(ctx, *req)
+	result, err := svc.SendPackage(ctx, *req)
 	if err != nil {
 		return nil, err
 	}
@@ -987,7 +975,7 @@ func (uc *SiatUsecase) EnviarPaquete(ctx context.Context, companyID, posID strin
 		}
 	}
 	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypePaquete, req.CodigoDocumentoSector, int(req.CodigoEmision), len(req.Facturas), contingencyEventId)
-	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // ValidarPaquete consulta al SIAT la validación de un paquete ya enviado
@@ -1017,15 +1005,15 @@ func (uc *SiatUsecase) ValidarPaquete(ctx context.Context, companyID, posID stri
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.ValidarPaqueteFactura(ctx, *req, body.CodigoRecepcion)
+	result, err := svc.ValidatePackage(ctx, *req, body.CodigoRecepcion)
 	if err != nil {
 		return nil, err
 	}
-	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // buildSolicitudMasiva reúne la identidad del contribuyente y los datos del lote.
-func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body MasivaInput) (*siat.SolicitudMasivaFactura, *domain.Company, *domain.PointOfSale, error) {
+func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body MasivaInput) (*ports.FiscalBulk, *domain.Company, *domain.PointOfSale, error) {
 	company, pointOfSale, err := uc.LoadCompanyAndPointOfSale(companyID, posID)
 
 	if err != nil {
@@ -1073,7 +1061,7 @@ func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body Masiva
 		codigoTipoFact = 1
 	}
 
-	req := &siat.SolicitudMasivaFactura{
+	req := &ports.FiscalBulk{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
@@ -1110,12 +1098,12 @@ func (uc *SiatUsecase) EnviarMasiva(ctx context.Context, companyID, posID string
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.EnviarMasivaFacturas(ctx, *req)
+	result, err := svc.SendBulk(ctx, *req)
 	if err != nil {
 		return nil, err
 	}
 	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypeMasiva, req.CodigoDocumentoSector, req.CodigoEmision, len(req.Facturas))
-	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // ValidarMasiva consulta al SIAT la validación de un lote ya enviado
@@ -1145,11 +1133,11 @@ func (uc *SiatUsecase) ValidarMasiva(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.ValidarMasivaFacturas(ctx, *req, body.CodigoRecepcion)
+	result, err := svc.ValidateBulk(ctx, *req, body.CodigoRecepcion)
 	if err != nil {
 		return nil, err
 	}
-	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &PaqueteResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // EnviarCompras registra en el SIAT un paquete de facturas de compras
@@ -1175,7 +1163,7 @@ func (uc *SiatUsecase) EnviarCompras(ctx context.Context, companyID, posID strin
 		return nil, domain.NewConflictError("El punto de venta no tiene CUFD vigente")
 	}
 
-	req := siat.SolicitudCompras{
+	req := ports.FiscalPurchase{
 		Descripcion:      body.Descripcion,
 		TipoCompra:       body.TipoCompra,
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
@@ -1197,12 +1185,12 @@ func (uc *SiatUsecase) EnviarCompras(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.EnviarCompras(ctx, req)
+	result, err := svc.SendPurchases(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	uc.persistSentPackage(company, pointOfSale, result.CodigoRecepcion, domain.PackageTypeCompras, 19, 0, body.CantidadFacturas)
-	return &ComprasResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &ComprasResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // FirmarFactura firma digitalmente el XML de una factura con el certificado de
@@ -1222,11 +1210,11 @@ func (uc *SiatUsecase) FirmarFactura(ctx context.Context, companyID, posID strin
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.FirmarFacturaXML(ctx, body.Xml)
+	result, err := svc.SignXML(ctx, ports.FiscalSignRequest{Xml: body.Xml})
 	if err != nil {
 		return nil, err
 	}
-	return &FirmaResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &FirmaResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // persistSentPackage guarda el registro de auditoría del envío al SIAT. Un
@@ -1296,7 +1284,7 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 
 	// El código de punto de venta que usa el CUIS debe ser el mismo en todas
 	// las operaciones (preferir el código registrado ante SIAT).
-	req := siat.SolicitudSincronizacion{
+	req := ports.FiscalSyncRequest{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:    company.CodigoSistema,
 		Nit:              company.Nit,
@@ -1312,38 +1300,38 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 	out := &SincronizacionResultado{Company: company, PointOfSale: pointOfSale}
 
 	if opRaw != "" {
-		op, ok := siat.ParseSincronizacionOp(opRaw)
+		op, ok := ports.ParseFiscalSyncOperation(opRaw)
 		if !ok {
 			return nil, domain.NewBadRequestError("Operación de sincronización desconocida: " + opRaw)
 		}
-		result, err := svc.Sincronizar(ctx, req, op)
+		result, err := svc.Synchronize(ctx, req, op)
 		if err != nil {
 			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: company.ID, PointOfSaleID: pointOfSale.ID, Operation: string(op), Status: "FAILED", Error: err.Error()})
 			return nil, err
 		}
-		if perr := uc.PersistSincronizacionAt(company.ID, pointOfSale.ID, op, result); perr != nil {
+		if perr := uc.PersistSincronizacionAt(company.ID, pointOfSale.ID, op, &result); perr != nil {
 			return nil, perr
 		}
-		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
+		out.Operations = append(out.Operations, toSincronizacionOpResult(op, &result))
 		return out, nil
 	}
-	for _, op := range siat.SincronizacionOperations {
-		result, err := svc.Sincronizar(ctx, req, op)
+	for _, op := range ports.FiscalSyncOperations {
+		result, err := svc.Synchronize(ctx, req, op)
 		if err != nil {
 			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: company.ID, PointOfSaleID: pointOfSale.ID, Operation: string(op), Status: "FAILED", Error: err.Error()})
 			out.Errors = append(out.Errors, SincronizacionOpError{Operation: string(op), Error: err.Error()})
 			continue
 		}
-		if perr := uc.PersistSincronizacionAt(company.ID, pointOfSale.ID, op, result); perr != nil {
+		if perr := uc.PersistSincronizacionAt(company.ID, pointOfSale.ID, op, &result); perr != nil {
 			out.Errors = append(out.Errors, SincronizacionOpError{Operation: string(op), Error: "persistencia: " + perr.Error()})
 		}
-		out.Operations = append(out.Operations, toSincronizacionOpResult(op, result))
+		out.Operations = append(out.Operations, toSincronizacionOpResult(op, &result))
 	}
 
 	return out, nil
 }
 
-func toSincronizacionOpResult(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) SincronizacionOpResult {
+func toSincronizacionOpResult(op ports.FiscalSyncOperation, res *ports.FiscalSyncResult) SincronizacionOpResult {
 	out := SincronizacionOpResult{
 		Operation:   string(op),
 		Transaccion: res.Transaccion,
@@ -1357,21 +1345,21 @@ func toSincronizacionOpResult(op siat.SincronizacionOp, res *siat.RespuestaSincr
 	return out
 }
 
-func syncRows(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) int {
+func syncRows(op ports.FiscalSyncOperation, res *ports.FiscalSyncResult) int {
 	switch op {
-	case siat.OpActividades:
+	case ports.OpActividades:
 		if len(res.Actividades) > 0 {
 			return len(res.Actividades)
 		}
-	case siat.OpLeyendasFactura:
+	case ports.OpLeyendasFactura:
 		if len(res.Leyendas) > 0 {
 			return len(res.Leyendas)
 		}
-	case siat.OpActividadesDocumentoSector:
+	case ports.OpActividadesDocumentoSector:
 		if len(res.ActividadesDocSector) > 0 {
 			return len(res.ActividadesDocSector)
 		}
-	case siat.OpProductosServicios:
+	case ports.OpProductosServicios:
 		if len(res.Productos) > 0 {
 			return len(res.Productos)
 		}
@@ -1380,7 +1368,7 @@ func syncRows(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) int {
 	return len(res.Codigos)
 }
 
-func syncStatus(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) string {
+func syncStatus(op ports.FiscalSyncOperation, res *ports.FiscalSyncResult) string {
 	if !res.Transaccion {
 		return "FAILED"
 	}
@@ -1390,9 +1378,9 @@ func syncStatus(op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) str
 	return "SUCCESS"
 }
 
-func isCriticalSyncOperation(op siat.SincronizacionOp) bool {
+func isCriticalSyncOperation(op ports.FiscalSyncOperation) bool {
 	switch op {
-	case siat.OpActividades, siat.OpProductosServicios, siat.OpActividadesDocumentoSector, siat.OpUnidadMedida, siat.OpTipoMoneda, siat.OpTipoMetodoPago, siat.OpLeyendasFactura:
+	case ports.OpActividades, ports.OpProductosServicios, ports.OpActividadesDocumentoSector, ports.OpUnidadMedida, ports.OpTipoMoneda, ports.OpTipoMetodoPago, ports.OpLeyendasFactura:
 		return true
 	default:
 		return false
@@ -1402,11 +1390,11 @@ func isCriticalSyncOperation(op siat.SincronizacionOp) bool {
 // PersistSincronizacion guarda el resultado de una operación. Los productos
 // SIN se guardan en sin_products; los catálogos paramétricos siguen en
 // catalogs y los tipos de punto de venta tienen su repositorio dedicado.
-func (uc *SiatUsecase) PersistSincronizacion(companyID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) error {
+func (uc *SiatUsecase) PersistSincronizacion(companyID string, op ports.FiscalSyncOperation, res *ports.FiscalSyncResult) error {
 	return uc.PersistSincronizacionAt(companyID, "", op, res)
 }
 
-func (uc *SiatUsecase) PersistSincronizacionAt(companyID, pointOfSaleID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion) error {
+func (uc *SiatUsecase) PersistSincronizacionAt(companyID, pointOfSaleID string, op ports.FiscalSyncOperation, res *ports.FiscalSyncResult) error {
 	if res == nil || !res.Transaccion {
 		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: "FAILED", Error: "SIAT no confirmó la sincronización"})
 		return nil
@@ -1414,7 +1402,7 @@ func (uc *SiatUsecase) PersistSincronizacionAt(companyID, pointOfSaleID string, 
 	now := time.Now().In(siat.LaPaz)
 	status := syncStatus(op, res)
 	rowsSaved := syncRows(op, res)
-	if op == siat.OpProductosServicios {
+	if op == ports.OpProductosServicios {
 		if uc.sinProductRepo == nil {
 			err := errors.New("repositorio de productos SIN no configurado")
 			_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: "FAILED", Error: err.Error()})
@@ -1439,7 +1427,7 @@ func (uc *SiatUsecase) PersistSincronizacionAt(companyID, pointOfSaleID string, 
 		return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
 	}
 
-	if op == siat.OpTipoPuntoVenta {
+	if op == ports.OpTipoPuntoVenta {
 		tipos := make([]domain.TipoPuntoVenta, 0, len(res.Codigos))
 		for _, c := range res.Codigos {
 			tipos = append(tipos, domain.TipoPuntoVenta{
@@ -1455,13 +1443,13 @@ func (uc *SiatUsecase) PersistSincronizacionAt(companyID, pointOfSaleID string, 
 	}
 
 	switch op {
-	case siat.OpFechaHora, siat.OpVerificarComunicacion:
+	case ports.OpFechaHora, ports.OpVerificarComunicacion:
 		return uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: pointOfSaleID, Operation: string(op), Status: status, RowsSaved: rowsSaved, SyncedAt: &now})
-	case siat.OpActividades:
+	case ports.OpActividades:
 		return uc.persistActividades(companyID, pointOfSaleID, op, res, status, rowsSaved, now)
-	case siat.OpLeyendasFactura:
+	case ports.OpLeyendasFactura:
 		return uc.persistLeyendas(companyID, pointOfSaleID, op, res, status, rowsSaved, now)
-	case siat.OpActividadesDocumentoSector:
+	case ports.OpActividadesDocumentoSector:
 		return uc.persistActividadesDocSector(companyID, pointOfSaleID, op, res, status, rowsSaved, now)
 	}
 
@@ -1482,7 +1470,7 @@ func (uc *SiatUsecase) PersistSincronizacionAt(companyID, pointOfSaleID string, 
 
 // persistActividades guarda el catálogo CAEB completo (código + descripción +
 // tipo de actividad) en su tabla dedicada.
-func (uc *SiatUsecase) persistActividades(companyID, posID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion, status string, rowsSaved int, now time.Time) error {
+func (uc *SiatUsecase) persistActividades(companyID, posID string, op ports.FiscalSyncOperation, res *ports.FiscalSyncResult, status string, rowsSaved int, now time.Time) error {
 	if uc.actividadRepo == nil {
 		err := errors.New("repositorio de actividades no configurado")
 		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
@@ -1505,7 +1493,7 @@ func (uc *SiatUsecase) persistActividades(companyID, posID string, op siat.Sincr
 
 // persistLeyendas guarda las leyendas de factura asociadas por actividad en su
 // tabla dedicada.
-func (uc *SiatUsecase) persistLeyendas(companyID, posID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion, status string, rowsSaved int, now time.Time) error {
+func (uc *SiatUsecase) persistLeyendas(companyID, posID string, op ports.FiscalSyncOperation, res *ports.FiscalSyncResult, status string, rowsSaved int, now time.Time) error {
 	if uc.leyendaRepo == nil {
 		err := errors.New("repositorio de leyendas no configurado")
 		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
@@ -1527,7 +1515,7 @@ func (uc *SiatUsecase) persistLeyendas(companyID, posID string, op siat.Sincroni
 
 // persistActividadesDocSector guarda la relación actividad ↔ documento-sector
 // con sus columnas reales; es la fuente para resolver el sector de emisión.
-func (uc *SiatUsecase) persistActividadesDocSector(companyID, posID string, op siat.SincronizacionOp, res *siat.RespuestaSincronizacion, status string, rowsSaved int, now time.Time) error {
+func (uc *SiatUsecase) persistActividadesDocSector(companyID, posID string, op ports.FiscalSyncOperation, res *ports.FiscalSyncResult, status string, rowsSaved int, now time.Time) error {
 	if uc.docSectorRepo == nil {
 		err := errors.New("repositorio actividadesDocumentoSector no configurado")
 		_ = uc.saveSyncState(domain.CatalogSyncState{CompanyID: companyID, PointOfSaleID: posID, Operation: string(op), Status: "FAILED", Error: err.Error()})
@@ -1563,7 +1551,7 @@ func (uc *SiatUsecase) CatalogReadiness(companyID, pointOfSaleID string) (*domai
 	if err != nil {
 		return nil, err
 	}
-	required := []siat.SincronizacionOp{siat.OpActividades, siat.OpProductosServicios, siat.OpActividadesDocumentoSector, siat.OpUnidadMedida, siat.OpTipoMoneda, siat.OpTipoMetodoPago, siat.OpLeyendasFactura}
+	required := []ports.FiscalSyncOperation{ports.OpActividades, ports.OpProductosServicios, ports.OpActividadesDocumentoSector, ports.OpUnidadMedida, ports.OpTipoMoneda, ports.OpTipoMetodoPago, ports.OpLeyendasFactura}
 	byOperation := make(map[string]domain.CatalogSyncState, len(states))
 	outStates := make([]domain.CatalogSyncState, 0, len(states))
 	for _, state := range states {
@@ -1666,9 +1654,9 @@ func (uc *SiatUsecase) ListCatalog(companyID, tipo string) (any, error) {
 // configurado o con error se omite (la respuesta incluye lo disponible).
 func (uc *SiatUsecase) ListAllCatalogs(companyID string) (any, error) {
 	out := make(map[string]*CatalogoResultado)
-	for _, op := range siat.SincronizacionOperations {
+	for _, op := range ports.FiscalSyncOperations {
 		switch op {
-		case siat.OpFechaHora, siat.OpVerificarComunicacion:
+		case ports.OpFechaHora, ports.OpVerificarComunicacion:
 			continue // operativos, no almacenan catálogo
 		}
 		items, err := uc.listCatalogByTipo(companyID, string(op))
@@ -1681,9 +1669,9 @@ func (uc *SiatUsecase) ListAllCatalogs(companyID string) (any, error) {
 }
 
 func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) {
-	op := siat.SincronizacionOp(tipo)
+	op := ports.FiscalSyncOperation(tipo)
 	switch op {
-	case siat.OpActividades:
+	case ports.OpActividades:
 		if uc.actividadRepo == nil {
 			return nil, errors.New("catálogo de actividades no disponible")
 		}
@@ -1697,7 +1685,7 @@ func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) 
 		}
 		return out, nil
 
-	case siat.OpLeyendasFactura:
+	case ports.OpLeyendasFactura:
 		if uc.leyendaRepo == nil {
 			return nil, errors.New("catálogo de leyendas no disponible")
 		}
@@ -1711,7 +1699,7 @@ func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) 
 		}
 		return out, nil
 
-	case siat.OpActividadesDocumentoSector:
+	case ports.OpActividadesDocumentoSector:
 		if uc.docSectorRepo == nil {
 			return nil, errors.New("catálogo actividadesDocumentoSector no disponible")
 		}
@@ -1725,7 +1713,7 @@ func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) 
 		}
 		return out, nil
 
-	case siat.OpProductosServicios:
+	case ports.OpProductosServicios:
 		if uc.sinProductRepo == nil {
 			return nil, errors.New("catálogo de productos SIN no disponible")
 		}
@@ -1739,7 +1727,7 @@ func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) 
 		}
 		return out, nil
 
-	case siat.OpTipoPuntoVenta:
+	case ports.OpTipoPuntoVenta:
 		if uc.tipoPVRepo == nil {
 			return nil, errors.New("catálogo de tipos de punto de venta no disponible")
 		}
@@ -1754,10 +1742,10 @@ func (uc *SiatUsecase) listCatalogByTipo(companyID, tipo string) ([]any, error) 
 		return out, nil
 	}
 
-	if _, ok := siat.ParseSincronizacionOp(tipo); !ok {
+	if _, ok := ports.ParseFiscalSyncOperation(tipo); !ok {
 		return nil, domain.NewBadRequestError("Catálogo desconocido: " + tipo)
 	}
-	if op == siat.OpFechaHora || op == siat.OpVerificarComunicacion {
+	if op == ports.OpFechaHora || op == ports.OpVerificarComunicacion {
 		return nil, domain.NewBadRequestError("La operación " + tipo + " no almacena catálogo")
 	}
 	parametricas, err := uc.catalogRepo.List(companyID, tipo)
@@ -1829,14 +1817,14 @@ type DocumentoAjusteInput struct {
 	TipoCambio            float64             `json:"tipoCambio"`
 	MontoTotal            float64             `json:"montoTotal"`
 	Leyenda               string              `json:"leyenda"`
-	Cliente               siat.ClienteFactura `json:"cliente"`
-	Items                 []siat.ItemFactura  `json:"items"`
+	Cliente               ports.FiscalCustomer `json:"cliente"`
+	Items                 []ports.FiscalItem  `json:"items"`
 }
 
 type DocumentoAjusteResultado struct {
 	Company     *domain.Company
 	PointOfSale *domain.PointOfSale
-	Response    *siat.ResultadoDocumentoAjuste
+	Response    *ports.FiscalAdjustmentResult
 }
 
 // EmitirDocumentoAjuste emite un documento de ajuste (nota de crédito o
@@ -1871,7 +1859,7 @@ func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, pos
 		usuario = company.UsuarioSiat
 	}
 
-	req := siat.SolicitudDocumentoAjuste{
+	req := ports.FiscalAdjustment{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
 		CodigoSistema:         company.CodigoSistema,
 		Nit:                   company.Nit,
@@ -1884,7 +1872,7 @@ func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, pos
 		CodigoControl:         cufd.ControlCode,
 		FechaEmision:          time.Now().In(siat.LaPaz),
 		Usuario:               usuario,
-		TipoNota:              siat.TipoNota(body.TipoNota),
+		TipoNota:              body.TipoNota,
 		CufFacturaOriginal:    body.CufFacturaOriginal,
 		CodigoDocumentoSector: body.CodigoDocumentoSector,
 		Layout:                body.Layout,
@@ -1907,11 +1895,11 @@ func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, pos
 	if err != nil {
 		return nil, err
 	}
-	result, err := svc.EmitirDocumentoAjuste(ctx, req)
+	result, err := svc.EmitAdjustment(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return &DocumentoAjusteResultado{Company: company, PointOfSale: pointOfSale, Response: result}, nil
+	return &DocumentoAjusteResultado{Company: company, PointOfSale: pointOfSale, Response: &result}, nil
 }
 
 // ParseFechaSiat parsea una fecha/hora del SIAT en formato UTC extendido sin
@@ -1927,4 +1915,25 @@ func ParseFechaSiat(value string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return parsed, nil
+}
+
+// toSiatItems convierte ítems del puerto al tipo interno del adaptador SIAT
+// para reutilizar funciones de cálculo del paquete siat.
+func toSiatItems(items []ports.FiscalItem) []siat.ItemFactura {
+	out := make([]siat.ItemFactura, len(items))
+	for i, it := range items {
+		out[i] = siat.ItemFactura{
+			ActividadEconomica: it.ActividadEconomica,
+			CodigoProductoSin:  it.CodigoProductoSin,
+			CodigoProducto:     it.CodigoProducto,
+			Descripcion:        it.Descripcion,
+			Cantidad:           it.Cantidad,
+			UnidadMedida:       it.UnidadMedida,
+			PrecioUnitario:     it.PrecioUnitario,
+			MontoDescuento:     it.MontoDescuento,
+			SubTotal:           it.SubTotal,
+			DatosSector:        it.DatosSector,
+		}
+	}
+	return out
 }

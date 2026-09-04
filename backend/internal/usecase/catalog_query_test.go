@@ -38,7 +38,7 @@ func TestListParametricCatalog(t *testing.T) {
 			{Codigo: 2, Descripcion: "Tarjeta", Tipo: "tipoMetodoPago"},
 		},
 	}}
-	uc := NewSiatUsecase(nil, nil, nil, nil, parametricas, nil, nil, nil, 0)
+	uc := NewSiatUsecase(nil, nil, nil, nil, parametricas, nil, nil, nil, 0, nil, nil, nil, nil, nil, nil, nil)
 
 	res, err := uc.ListParametricCatalog("comp-1", "metodos-pago")
 	if err != nil {
@@ -67,7 +67,7 @@ func TestListActividadesYDocumentosSector(t *testing.T) {
 	}}
 	principal := "620100"
 	company := &stubCompanyRepo{company: &domain.Company{ID: "comp-1", CodigoActividad: &principal}}
-	uc := NewSiatUsecase(company, nil, nil, nil, nil, nil, nil, nil, 0, actividades, sectores, leyendas)
+	uc := NewSiatUsecase(company, nil, nil, nil, nil, nil, nil, nil, 0, nil, nil, actividades, leyendas, sectores, nil, nil)
 
 	acts, err := uc.ListActividadesEconomicas("comp-1", "P")
 	if err != nil || acts.Total != 1 || acts.Items[0].CodigoCaeb != "620100" {
@@ -106,7 +106,7 @@ func TestListProductosSinQuery(t *testing.T) {
 		{CodigoProductoSin: 1, CodigoActividad: 620100, Descripcion: "Servicio A"},
 		{CodigoProductoSin: 2, CodigoActividad: 474100, Descripcion: "Producto B"},
 	}}
-	uc := NewSiatUsecase(nil, nil, nil, nil, nil, nil, nil, nil, 0, productos)
+	uc := NewSiatUsecase(nil, nil, nil, nil, nil, nil, nil, nil, 0, productos, nil, nil, nil, nil, nil, nil)
 
 	res, err := uc.ListProductosSinQuery("comp-1", "", 620100, 50, 0)
 	if err != nil || res.Total != 1 || res.Items[0].CodigoProductoSin != 1 {
@@ -115,7 +115,7 @@ func TestListProductosSinQuery(t *testing.T) {
 }
 
 func TestBuildSincronizacionResumen(t *testing.T) {
-	uc := NewSiatUsecase(nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	uc := NewSiatUsecase(nil, nil, nil, nil, nil, nil, nil, nil, 0, nil, nil, nil, nil, nil, nil, nil)
 	res := &SincronizacionResultado{
 		Company:     &domain.Company{ID: "c1"},
 		PointOfSale: &domain.PointOfSale{ID: "p1"},

@@ -5,7 +5,8 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 type recordingActividadRepo struct {
@@ -118,7 +119,7 @@ func (r *recordingSinProductRepo) GetByCode(string, int64) (*domain.SinProduct, 
 
 func newPersistTestUsecase(actividades *recordingActividadRepo, leyendas *recordingLeyendaRepo, sectores *recordingDocSectorRepo, productos *recordingSinProductRepo) *SiatUsecase {
 	return NewSiatUsecase(nil, nil, nil, nil, nil, nil, nil, nil, 0,
-		productos, actividades, leyendas, sectores)
+		productos, nil, actividades, leyendas, sectores, nil, nil)
 }
 
 func TestPersistSincronizacionRutasDedicadas(t *testing.T) {
@@ -131,7 +132,7 @@ func TestPersistSincronizacionRutasDedicadas(t *testing.T) {
 	resAct := &siat.RespuestaSincronizacion{Transaccion: true, Actividades: []siat.ActividadDto{
 		{CodigoCaeb: "8550100", Descripcion: "Consultoría en educación", TipoActividad: "P"},
 	}}
-	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", siat.OpActividades, resAct); err != nil {
+	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", ports.OpActividades, toFiscalSyncResult(resAct)); err != nil {
 		t.Fatalf("persist actividades: %v", err)
 	}
 	if len(actividades.items) != 1 || actividades.items[0].TipoActividad != "P" || actividades.items[0].CodigoCaeb != "8550100" {
@@ -141,7 +142,7 @@ func TestPersistSincronizacionRutasDedicadas(t *testing.T) {
 	resLey := &siat.RespuestaSincronizacion{Transaccion: true, Leyendas: []siat.LeyendaDto{
 		{CodigoActividad: "8549910", DescripcionLeyenda: "Ley N° 453: Puedes acceder a la reclamación."},
 	}}
-	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", siat.OpLeyendasFactura, resLey); err != nil {
+	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", ports.OpLeyendasFactura, toFiscalSyncResult(resLey)); err != nil {
 		t.Fatalf("persist leyendas: %v", err)
 	}
 	if len(leyendas.items) != 1 || leyendas.items[0].CodigoActividad != "8549910" {
@@ -151,7 +152,7 @@ func TestPersistSincronizacionRutasDedicadas(t *testing.T) {
 	resSec := &siat.RespuestaSincronizacion{Transaccion: true, ActividadesDocSector: []siat.ActividadDocSectorDto{
 		{CodigoActividad: "8549100", CodigoDocumentoSector: 11, TipoDocumentoSector: "FSEDU"},
 	}}
-	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", siat.OpActividadesDocumentoSector, resSec); err != nil {
+	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", ports.OpActividadesDocumentoSector, toFiscalSyncResult(resSec)); err != nil {
 		t.Fatalf("persist docSector: %v", err)
 	}
 	if len(sectores.items) != 1 || sectores.items[0].CodigoDocumentoSector != 11 || sectores.items[0].TipoDocumentoSector != "FSEDU" {
@@ -161,7 +162,7 @@ func TestPersistSincronizacionRutasDedicadas(t *testing.T) {
 	resProd := &siat.RespuestaSincronizacion{Transaccion: true, Productos: []siat.SinProductDto{
 		{CodigoProductoSin: 1004385, CodigoActividad: 8549100, Descripcion: "Capacitación"},
 	}}
-	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", siat.OpProductosServicios, resProd); err != nil {
+	if err := uc.PersistSincronizacionAt("comp-1", "pos-1", ports.OpProductosServicios, toFiscalSyncResult(resProd)); err != nil {
 		t.Fatalf("persist productos: %v", err)
 	}
 	if len(productos.items) != 1 || productos.items[0].CodigoActividad != 8549100 {
@@ -197,7 +198,7 @@ func TestListCatalogTipos(t *testing.T) {
 	parametricas := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
 		"tipoMoneda": {{Codigo: 1, Descripcion: "BOLIVIANO", Tipo: "tipoMoneda"}},
 	}}
-	uc := NewSiatUsecase(nil, nil, nil, nil, parametricas, nil, nil, nil, 0, actividades)
+	uc := NewSiatUsecase(nil, nil, nil, nil, parametricas, nil, nil, nil, 0, nil, nil, actividades, nil, nil, nil, nil)
 
 	res, err := uc.ListCatalog("comp-1", "actividades")
 	if err != nil {
@@ -226,4 +227,40 @@ func TestListCatalogTipos(t *testing.T) {
 	if _, err = uc.ListCatalog("comp-1", "inexistente"); err == nil {
 		t.Error("catálogo desconocido; se esperaba error")
 	}
+}
+
+
+func toFiscalSyncResult(r *siat.RespuestaSincronizacion) *ports.FiscalSyncResult {
+	if r == nil {
+		return nil
+	}
+	out := &ports.FiscalSyncResult{
+		Transaccion: r.Transaccion,
+		FechaHora:   r.FechaHora,
+	}
+	out.Codigos = make([]ports.FiscalParametricItem, len(r.Codigos))
+	for i, c := range r.Codigos {
+		out.Codigos[i] = ports.FiscalParametricItem{CodigoClasificador: c.CodigoClasificador, Descripcion: c.Descripcion}
+	}
+	out.Productos = make([]ports.FiscalSinProduct, len(r.Productos))
+	for i, p := range r.Productos {
+		out.Productos[i] = ports.FiscalSinProduct{CodigoProductoSin: p.CodigoProductoSin, CodigoActividad: p.CodigoActividad, Descripcion: p.Descripcion}
+	}
+	out.Actividades = make([]ports.FiscalActivity, len(r.Actividades))
+	for i, a := range r.Actividades {
+		out.Actividades[i] = ports.FiscalActivity{CodigoCaeb: a.CodigoCaeb, Descripcion: a.Descripcion, TipoActividad: a.TipoActividad}
+	}
+	out.Leyendas = make([]ports.FiscalLegend, len(r.Leyendas))
+	for i, l := range r.Leyendas {
+		out.Leyendas[i] = ports.FiscalLegend{CodigoActividad: l.CodigoActividad, DescripcionLeyenda: l.DescripcionLeyenda}
+	}
+	out.ActividadesDocSector = make([]ports.FiscalActivityDocSector, len(r.ActividadesDocSector))
+	for i, s := range r.ActividadesDocSector {
+		out.ActividadesDocSector[i] = ports.FiscalActivityDocSector{
+			CodigoActividad:       s.CodigoActividad,
+			CodigoDocumentoSector: s.CodigoDocumentoSector,
+			TipoDocumentoSector:   s.TipoDocumentoSector,
+		}
+	}
+	return out
 }

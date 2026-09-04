@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -251,32 +252,84 @@ func (f *fakePointOfSaleRepo) Update(*domain.PointOfSale) error { return nil }
 func (f *fakePointOfSaleRepo) Delete(string) error              { return nil }
 
 type fakeEmissionService struct {
-	result    *siat.ResultadoEmision
-	docResult *siat.ResultadoDocumento
+	result    *ports.FiscalResult
+	docResult *ports.FiscalDocumentResult
 	err       error
-	captured  *siat.SolicitudDocumento
+	captured  *ports.FiscalDocumentQuery
 }
 
-func (f *fakeEmissionService) EmitirFactura(context.Context, siat.SolicitudFactura) (*siat.ResultadoEmision, error) {
-	return f.result, f.err
+func (f *fakeEmissionService) Emit(context.Context, ports.FiscalDocument) (ports.FiscalResult, error) {
+	if f.result == nil {
+		return ports.FiscalResult{}, f.err
+	}
+	return *f.result, f.err
 }
 
-func (f *fakeEmissionService) VerificarEstado(context.Context, siat.SolicitudDocumento) (*siat.ResultadoDocumento, error) {
-	return f.docResult, f.err
+func (f *fakeEmissionService) VerifyStatus(context.Context, ports.FiscalDocumentQuery) (ports.FiscalDocumentResult, error) {
+	if f.docResult == nil {
+		return ports.FiscalDocumentResult{}, f.err
+	}
+	return *f.docResult, f.err
 }
 
-func (f *fakeEmissionService) AnularFactura(_ context.Context, req siat.SolicitudDocumento, _ int) (*siat.ResultadoDocumento, error) {
+func (f *fakeEmissionService) Annul(_ context.Context, req ports.FiscalDocumentQuery, _ int) (ports.FiscalDocumentResult, error) {
 	f.captured = &req
-	return f.docResult, f.err
+	if f.docResult == nil {
+		return ports.FiscalDocumentResult{}, f.err
+	}
+	return *f.docResult, f.err
 }
 
-func (f *fakeEmissionService) RevertirAnulacion(_ context.Context, req siat.SolicitudDocumento) (*siat.ResultadoDocumento, error) {
+func (f *fakeEmissionService) RevertAnnul(_ context.Context, req ports.FiscalDocumentQuery) (ports.FiscalDocumentResult, error) {
 	f.captured = &req
-	return f.docResult, f.err
+	if f.docResult == nil {
+		return ports.FiscalDocumentResult{}, f.err
+	}
+	return *f.docResult, f.err
 }
 
-func (f *fakeEmissionService) VerificarNit(_ context.Context, _ string, _ string, _, _, _ int) (bool, error) {
-	return true, f.err
+func (f *fakeEmissionService) RequestCUIS(context.Context, ports.CredentialRequest) (ports.CuisResult, error) {
+	return ports.CuisResult{}, nil
+}
+
+func (f *fakeEmissionService) RequestCUFD(context.Context, ports.CredentialRequest) (ports.CufdResult, error) {
+	return ports.CufdResult{}, nil
+}
+
+func (f *fakeEmissionService) RegisterSignificantEvent(context.Context, ports.FiscalEvent) (ports.FiscalEventResult, error) {
+	return ports.FiscalEventResult{}, nil
+}
+
+func (f *fakeEmissionService) SendPackage(context.Context, ports.FiscalPackage) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+
+func (f *fakeEmissionService) ValidatePackage(context.Context, ports.FiscalPackage, string) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+
+func (f *fakeEmissionService) SendBulk(context.Context, ports.FiscalBulk) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+
+func (f *fakeEmissionService) ValidateBulk(context.Context, ports.FiscalBulk, string) (ports.FiscalPackageResult, error) {
+	return ports.FiscalPackageResult{}, nil
+}
+
+func (f *fakeEmissionService) SendPurchases(context.Context, ports.FiscalPurchase) (ports.FiscalPurchaseResult, error) {
+	return ports.FiscalPurchaseResult{}, nil
+}
+
+func (f *fakeEmissionService) SignXML(context.Context, ports.FiscalSignRequest) (ports.FiscalSignResult, error) {
+	return ports.FiscalSignResult{}, nil
+}
+
+func (f *fakeEmissionService) EmitAdjustment(context.Context, ports.FiscalAdjustment) (ports.FiscalAdjustmentResult, error) {
+	return ports.FiscalAdjustmentResult{}, nil
+}
+
+func (f *fakeEmissionService) Synchronize(context.Context, ports.FiscalSyncRequest, ports.FiscalSyncOperation) (ports.FiscalSyncResult, error) {
+	return ports.FiscalSyncResult{}, nil
 }
 
 type fakeCufdRepo struct {
@@ -373,8 +426,9 @@ func testInvoice() *domain.Invoice {
 	}
 }
 
-func newTestUsecase(repo *fakeInvoiceRepo, catalog *fakeCatalogRepo, svc SiatEmissionService) *InvoiceUsecase {
-	return NewInvoiceUsecase(repo, nil, nil, nil, catalog, nil, svc, siat.ModalidadElectronica)
+func newTestUsecase(repo *fakeInvoiceRepo, catalog *fakeCatalogRepo, svc ports.FiscalService) *InvoiceUsecase {
+	return NewInvoiceUsecase(repo, nil, nil, nil, catalog, nil, svc, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 }
 
 type fakeDocSectorRepo struct {
@@ -594,7 +648,7 @@ func TestEmitAccepted(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	inv := testInvoice()
 	_ = repo.Create(inv)
-	svc := &fakeEmissionService{result: &siat.ResultadoEmision{
+	svc := &fakeEmissionService{result: &ports.FiscalResult{
 		Cuf:             "CUF-1",
 		Transaccion:     true,
 		CodigoEstado:    908,
@@ -625,11 +679,11 @@ func TestEmitAccepted(t *testing.T) {
 func TestEmitObserved(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	_ = repo.Create(testInvoice())
-	svc := &fakeEmissionService{result: &siat.ResultadoEmision{
+	svc := &fakeEmissionService{result: &ports.FiscalResult{
 		Cuf:          "CUF-1",
 		Transaccion:  true,
 		CodigoEstado: 904,
-		Mensajes:     []siat.Mensaje{{Codigo: 1007, Descripcion: "DIRECCION NO CORRESPONDE A PADRON"}},
+		Mensajes:     []ports.FiscalMessage{{Codigo: 1007, Descripcion: "DIRECCION NO CORRESPONDE A PADRON"}},
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
@@ -650,10 +704,10 @@ func TestEmitObserved(t *testing.T) {
 func TestEmitRejected(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	_ = repo.Create(testInvoice())
-	svc := &fakeEmissionService{result: &siat.ResultadoEmision{
+	svc := &fakeEmissionService{result: &ports.FiscalResult{
 		Transaccion:  false,
 		CodigoEstado: 902,
-		Mensajes:     []siat.Mensaje{{Codigo: 123, Descripcion: "descripcion rechazo"}},
+		Mensajes:     []ports.FiscalMessage{{Codigo: 123, Descripcion: "descripcion rechazo"}},
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
@@ -704,7 +758,7 @@ func TestEmitNoPending(t *testing.T) {
 	inv := testInvoice()
 	inv.Status = domain.InvoiceAccepted
 	_ = repo.Create(inv)
-	svc := &fakeEmissionService{result: &siat.ResultadoEmision{Transaccion: true}}
+	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
 	if _, err := uc.Emit(context.Background(), "inv-1"); err == nil {
@@ -720,7 +774,7 @@ func TestEmitClaimPerdido(t *testing.T) {
 	inv := testInvoice()
 	inv.Status = domain.InvoiceSending
 	_ = repo.Create(inv)
-	svc := &fakeEmissionService{result: &siat.ResultadoEmision{Transaccion: true}}
+	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
 	if _, err := uc.Emit(context.Background(), "inv-1"); err == nil {
@@ -762,7 +816,7 @@ func TestBuildSolicitudDocumento(t *testing.T) {
 func TestVerifyStatusReconciliaEstado(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	_ = repo.Create(emittedInvoice())
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{
 		Transaccion:  true,
 		CodigoEstado: 905,
 	}}
@@ -783,7 +837,7 @@ func TestVerifyStatusReconciliaEstado(t *testing.T) {
 func TestVerifyStatusSinCambioNoActualiza(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	_ = repo.Create(emittedInvoice())
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{
 		Transaccion:  true,
 		CodigoEstado: 908,
 	}}
@@ -819,7 +873,7 @@ func TestAnnulAccepted(t *testing.T) {
 			{Codigo: 1, Descripcion: "Venta con derecho a crédito fiscal", Tipo: "motivoAnulacion"},
 		},
 	}}
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{
 		Transaccion:     true,
 		CodigoEstado:    905,
 		CodigoRecepcion: "RCP-ANNUL",
@@ -850,10 +904,10 @@ func TestAnnulRechazado(t *testing.T) {
 	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
 		"motivoAnulacion": {{Codigo: 1, Descripcion: "Motivo válido", Tipo: "motivoAnulacion"}},
 	}}
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{
 		Transaccion:  false,
 		CodigoEstado: 906,
-		Mensajes:     []siat.Mensaje{{Codigo: 900, Descripcion: "motivo inválido"}},
+		Mensajes:     []ports.FiscalMessage{{Codigo: 900, Descripcion: "motivo inválido"}},
 	}}
 	uc := newTestUsecase(repo, catalog, svc)
 
@@ -901,7 +955,7 @@ func TestRevertAnnul(t *testing.T) {
 	inv.MotivoAnulacion = &motivo
 	inv.FechaAnulacion = &fecha
 	_ = repo.Create(inv)
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{
 		Transaccion:     true,
 		CodigoEstado:    907,
 		CodigoRecepcion: "RCP-REVERT",
@@ -939,8 +993,9 @@ func TestAnnulUsaCufdVigente(t *testing.T) {
 	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
 		"motivoAnulacion": {{Codigo: 1, Descripcion: "Motivo válido", Tipo: "motivoAnulacion"}},
 	}}
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 905}}
-	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica)
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{Transaccion: true, CodigoEstado: 905}}
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 
 	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
 		t.Fatalf("Annul: %v", err)
@@ -956,8 +1011,9 @@ func TestAnnulCaeAlCufdDeEmisionSinVigente(t *testing.T) {
 	catalog := &fakeCatalogRepo{items: map[string][]*domain.CatalogItem{
 		"motivoAnulacion": {{Codigo: 1, Descripcion: "Motivo válido", Tipo: "motivoAnulacion"}},
 	}}
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 905}}
-	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{}, svc, siat.ModalidadElectronica)
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{Transaccion: true, CodigoEstado: 905}}
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{}, svc, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 
 	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
 		t.Fatalf("Annul: %v", err)
@@ -974,8 +1030,9 @@ func TestRevertAnnulUsaCufdVigente(t *testing.T) {
 	inv.Status = domain.InvoiceCancelled
 	inv.MotivoAnulacion = &motivo
 	_ = repo.Create(inv)
-	svc := &fakeEmissionService{docResult: &siat.ResultadoDocumento{Transaccion: true, CodigoEstado: 907}}
-	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica)
+	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{Transaccion: true, CodigoEstado: 907}}
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 
 	if _, err := uc.RevertAnnul(context.Background(), "inv-1"); err != nil {
 		t.Fatalf("RevertAnnul: %v", err)
@@ -1077,7 +1134,7 @@ func TestBuildSolicitudFacturaNoArrastraCamposEducativosFueraDeSector11(t *testi
 	if err != nil {
 		t.Fatalf("PerfilSector(1): %v", err)
 	}
-	valores, err := perfil.PrepararDatosSector(*req)
+	valores, err := perfil.PrepararDatosSector(toSiatSolicitudFactura(*req))
 	if err != nil {
 		t.Fatalf("PrepararDatosSector: %v", err)
 	}
@@ -1120,7 +1177,8 @@ func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
 		Municipio:     "LA PAZ",
 		Direccion:     "AV. CAMACHO 123",
 	}}
-	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica)
+	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 	nombre := "MARIA TEST"
 	periodo := "2026-1"
 	req := CreateInvoiceRequest{
@@ -1182,7 +1240,8 @@ func TestBuildSolicitudFacturaUsaCufdMasReciente(t *testing.T) {
 		ValidTo:     time.Now().Add(time.Hour),
 		Active:      true,
 	}}
-	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica)
+	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 
 	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
@@ -1205,7 +1264,8 @@ func TestBuildSolicitudFacturaCufdVencidoConVigente(t *testing.T) {
 		ValidTo:     time.Now().Add(time.Hour),
 		Active:      true,
 	}}
-	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica)
+	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 
 	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
@@ -1277,7 +1337,8 @@ func TestBuildSolicitudFacturaSinProviderMantieneError(t *testing.T) {
 
 func TestListInvoices(t *testing.T) {
 	repo := newFakeInvoiceRepo()
-	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica)
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,
+		nil, nil, nil, nil, nil, nil, false, nil)
 
 	aceptada := testInvoice()
 	aceptada.ID = "inv-ok"
@@ -1370,8 +1431,8 @@ func createTestUsecaseBuilder() (*InvoiceUsecase, *fakeInvoiceRepo, *fakeCustome
 	docSectorRepo := &fakeDocSectorRepo{items: []*domain.SiatActividadDocSector{
 		{CodigoActividad: "101010", CodigoDocumentoSector: siat.SectorCompraVenta, TipoDocumentoSector: "FCV"},
 	}}
-	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica, docSectorRepo)
-	uc.productRepo = productRepo
+	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,
+		productRepo, nil, nil, docSectorRepo, nil, nil, false, nil)
 	return uc, repo, customerRepo, productRepo
 }
 
@@ -1705,5 +1766,45 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 				t.Errorf("error=%v, wantErr=%v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+
+// toSiatSolicitudFactura convierte un FiscalDocument a SolicitudFactura para
+// poder reutilizar helpers de perfil en tests de buildSolicitudFactura.
+func toSiatSolicitudFactura(f ports.FiscalDocument) siat.SolicitudFactura {
+	return siat.SolicitudFactura{
+		CodigoAmbiente:        f.CodigoAmbiente,
+		CodigoSistema:         f.CodigoSistema,
+		Nit:                   f.Nit,
+		Modalidad:             f.Modalidad,
+		NumeroFactura:         f.NumeroFactura,
+		NumeroFacturaOriginal: f.NumeroFacturaOriginal,
+		CodigoSucursal:        f.CodigoSucursal,
+		CodigoPuntoVenta:      f.CodigoPuntoVenta,
+		Cuis:                  f.Cuis,
+		Cufd:                  f.Cufd,
+		CodigoControl:         f.CodigoControl,
+		FechaEmision:          f.FechaEmision,
+		Usuario:               f.Usuario,
+		Leyenda:               f.Leyenda,
+		RazonSocialEmisor:     f.RazonSocialEmisor,
+		Municipio:             f.Municipio,
+		Direccion:             f.Direccion,
+		Telefono:              f.Telefono,
+		CodigoMetodoPago:      f.CodigoMetodoPago,
+		CodigoMoneda:          f.CodigoMoneda,
+		TipoCambio:            f.TipoCambio,
+		MontoTotal:            f.MontoTotal,
+		CodigoDocumentoSector: f.CodigoDocumentoSector,
+		Layout:                f.Layout,
+		CodigoTipoFactura:     f.CodigoTipoFactura,
+		Cafc:                  f.Cafc,
+		DatosSector:           f.DatosSector,
+		NombreEstudiante:      f.NombreEstudiante,
+		PeriodoFacturado:      f.PeriodoFacturado,
+		Archivo:               f.Archivo,
+		HashArchivo:           f.HashArchivo,
+		Cuf:                   f.Cuf,
 	}
 }

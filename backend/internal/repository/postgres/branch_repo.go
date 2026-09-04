@@ -45,7 +45,7 @@ func (r *PostgresBranchRepository) GetByID(id string) (*domain.Branch, error) {
 
 func (r *PostgresBranchRepository) GetByCompanyAndSucursal(companyID string, codigoSucursal int) (*domain.Branch, error) {
 	var m models.Branch
-	if err := r.db.Where("company_id = ? AND codigo_sucursal = ?", companyID, codigoSucursal).First(&m).Error; err != nil {
+	if err := r.db.Where("tenant_id = ? AND codigo_sucursal = ?", companyID, codigoSucursal).First(&m).Error; err != nil {
 		return nil, err
 	}
 	return toDomainBranch(&m), nil
@@ -56,7 +56,7 @@ func (r *PostgresBranchRepository) List(companyID string) ([]*domain.Branch, err
 		return nil, domain.ErrMissingCompanyID
 	}
 	var modelsList []models.Branch
-	if err := r.db.Where("company_id = ?", companyID).Order("created_at ASC").Find(&modelsList).Error; err != nil {
+	if err := r.db.Where("tenant_id = ?", companyID).Order("created_at ASC").Find(&modelsList).Error; err != nil {
 		return nil, err
 	}
 	res := make([]*domain.Branch, 0, len(modelsList))

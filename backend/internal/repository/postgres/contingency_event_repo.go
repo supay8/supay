@@ -15,7 +15,16 @@ func NewPostgresContingencyEventRepository(db *gorm.DB) domain.ContingencyEventR
 }
 
 func (r *PostgresContingencyEventRepository) Create(e *domain.ContingencyEvent) error {
+	var tenantID string
+	if err := r.db.Model(&models.PointOfSale{}).
+		Select("tenant_id").Where("id = ?", e.PointOfSaleID).Scan(&tenantID).Error; err != nil {
+		return err
+	}
+	if tenantID == "" {
+		return gorm.ErrRecordNotFound
+	}
 	m := models.ContingencyEvent{
+		TenantId:      tenantID,
 		PointOfSaleId: e.PointOfSaleID,
 		Reason:        models.ContingencyReason(e.Reason),
 		Description:   e.Description,

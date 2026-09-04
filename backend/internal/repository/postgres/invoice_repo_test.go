@@ -9,6 +9,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/repository/database"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -27,23 +28,17 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("conexión a BD de pruebas: %v", err)
 	}
-	if err := db.AutoMigrate(
-		&models.Company{}, &models.Branch{}, &models.TipoPuntoVenta{},
-		&models.PointOfSale{}, &models.Cufd{},
-		&models.Catalog{}, &models.SinProduct{}, &models.SiatActividad{},
-		&models.SiatLeyendaFactura{}, &models.SiatActividadDocSector{},
-		&models.CatalogSyncState{}, &models.ContingencyEvent{}, &models.Customer{},
-		&models.Invoice{}, &models.InvoiceItem{}, &models.InvoiceEvent{},
-		&models.SentPackage{},
-	); err != nil {
+	if err := database.MigrateDB(db); err != nil {
 		t.Fatalf("migraciones: %v", err)
 	}
 
-	tablas := []string{"invoice_items", "invoice_events", "invoices", "contingency_events", "sent_packages", "cufds", "cuis", "catalogs", "catalog_sync_states", "sin_products", "siat_leyendas_factura", "siat_actividades_doc_sector", "siat_actividades", "tipo_punto_venta", "point_of_sales", "branches", "customers", "companies"}
-	for _, tb := range tablas {
-		if err := db.Exec("DELETE FROM " + tb).Error; err != nil {
-			t.Fatalf("limpieza de %s: %v", tb, err)
-		}
+	if err := db.Exec(`TRUNCATE TABLE
+		invoice_items, invoice_events, invoices, sent_packages, contingency_events,
+		cufd_history, cuis_history, catalog_items, catalog_versions,
+		catalog_sync_states, product_mappings, products, sin_products,
+		certificates, api_keys, points_of_sale, branches, customers,
+		tenant_configs, tenants CASCADE`).Error; err != nil {
+		t.Fatalf("limpieza de base de pruebas: %v", err)
 	}
 	return db
 }
@@ -95,6 +90,7 @@ func seedFixture(t *testing.T, db *gorm.DB) repoFixture {
 	}
 
 	cufdModel := &models.Cufd{
+		TenantId:      company.ID,
 		PointOfSaleId: pos.ID,
 		Cufd:          "CUFD-TEST",
 		Direccion:     "Calle 1",

@@ -31,7 +31,7 @@ func (r *PostgresPointOfSaleRepository) Create(pos *domain.PointOfSale) error {
 		if pos.CodigoPuntoVenta <= 0 {
 			var next int
 			if err := tx.Model(&models.PointOfSale{}).
-				Where("company_id = ? AND codigo_sucursal = ?", pos.CompanyId, pos.CodigoSucursal).
+				Where("tenant_id = ? AND codigo_sucursal = ?", pos.CompanyId, pos.CodigoSucursal).
 				Select("COALESCE(MAX(codigo_punto_venta), 0) + 1").
 				Scan(&next).Error; err != nil {
 				return err
@@ -85,7 +85,7 @@ func (r *PostgresPointOfSaleRepository) List(companyID string) ([]*domain.PointO
 		return nil, domain.ErrMissingCompanyID
 	}
 	var dbModels []models.PointOfSale
-	if err := r.db.Where("company_id = ?", companyID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
+	if err := r.db.Where("tenant_id = ?", companyID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
 		return nil, err
 	}
 

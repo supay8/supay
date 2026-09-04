@@ -36,9 +36,19 @@ func (r *PostgresCertificateRepository) Create(c *domain.Certificate) error {
 		Modalidad:            c.Modalidad,
 		Ambiente:             c.Ambiente,
 		Nit:                  c.Nit,
+		IsActive:             c.Status == domain.CertificateActive,
 	}
 
-	if err := r.db.Create(&dbModel).Error; err != nil {
+	if err := r.db.Transaction(func(tx *gorm.DB) error {
+		if c.Status == domain.CertificateActive {
+			if err := tx.Model(&models.Certificate{}).
+				Where("tenant_id = ? AND status = ?", c.CompanyId, domain.CertificateActive).
+				Updates(map[string]any{"status": domain.CertificateExpired, "is_active": false}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&dbModel).Error
+	}); err != nil {
 		return err
 	}
 
@@ -58,7 +68,7 @@ func (r *PostgresCertificateRepository) GetByID(id string) (*domain.Certificate,
 
 func (r *PostgresCertificateRepository) GetActiveByCompany(companyID string) (*domain.Certificate, error) {
 	var dbModel models.Certificate
-	if err := r.db.Where("company_id = ? AND status = ?", companyID, domain.CertificateActive).
+	if err := r.db.Where("tenant_id = ? AND status = ?", companyID, domain.CertificateActive).
 		Order("not_after DESC").
 		First(&dbModel).Error; err != nil {
 		return nil, err
@@ -68,7 +78,7 @@ func (r *PostgresCertificateRepository) GetActiveByCompany(companyID string) (*d
 
 func (r *PostgresCertificateRepository) ListByCompany(companyID string) ([]*domain.Certificate, error) {
 	var dbModels []models.Certificate
-	if err := r.db.Where("company_id = ?", companyID).Order("created_at DESC").Find(&dbModels).Error; err != nil {
+	if err := r.db.Where("tenant_id = ?", companyID).Order("created_at DESC").Find(&dbModels).Error; err != nil {
 		return nil, err
 	}
 	result := make([]*domain.Certificate, len(dbModels))
@@ -99,8 +109,18 @@ func (r *PostgresCertificateRepository) Update(c *domain.Certificate) error {
 		Modalidad:            c.Modalidad,
 		Ambiente:             c.Ambiente,
 		Nit:                  c.Nit,
+		IsActive:             c.Status == domain.CertificateActive,
 	}
-	return r.db.Save(&dbModel).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if c.Status == domain.CertificateActive {
+			if err := tx.Model(&models.Certificate{}).
+				Where("tenant_id = ? AND id <> ? AND status = ?", c.CompanyId, c.ID, domain.CertificateActive).
+				Updates(map[string]any{"status": domain.CertificateExpired, "is_active": false}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Save(&dbModel).Error
+	})
 }
 
 func (r *PostgresCertificateRepository) Delete(id string) error {

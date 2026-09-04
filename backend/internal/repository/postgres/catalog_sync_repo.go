@@ -20,7 +20,7 @@ func (r *PostgresCatalogSyncStateRepository) Upsert(state domain.CatalogSyncStat
 	row := models.CatalogSyncState{ID: uuid.NewString(), CompanyId: state.CompanyID, PointOfSaleId: state.PointOfSaleID, Operation: state.Operation, Status: state.Status, RowsSaved: state.RowsSaved, SyncedAt: state.SyncedAt, Error: state.Error}
 	return r.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{
-			{Name: "company_id"},
+			{Name: "tenant_id"},
 			{Name: "point_of_sale_id"},
 			{Name: "operation"},
 		},
@@ -30,7 +30,7 @@ func (r *PostgresCatalogSyncStateRepository) Upsert(state domain.CatalogSyncStat
 
 func (r *PostgresCatalogSyncStateRepository) List(companyID, pointOfSaleID string) ([]*domain.CatalogSyncState, error) {
 	var rows []models.CatalogSyncState
-	if err := r.db.Where("company_id = ? AND point_of_sale_id = ?", companyID, pointOfSaleID).Order("operation ASC").Find(&rows).Error; err != nil {
+	if err := r.db.Where("tenant_id = ? AND point_of_sale_id = ?", companyID, pointOfSaleID).Order("operation ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]*domain.CatalogSyncState, 0, len(rows))

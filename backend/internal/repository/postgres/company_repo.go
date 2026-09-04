@@ -20,13 +20,10 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 	if modalidad == 0 {
 		modalidad = 1
 	}
-	dbModel := models.Company{
+	tenant := models.Company{
 		ID:              uuid.NewString(),
 		Nit:             c.Nit,
 		BusinessName:    c.BusinessName,
-		CodigoSistema:   c.CodigoSistema,
-		Ambiente:        models.SiatEnvironment(c.Ambiente),
-		Modalidad:       modalidad,
 		Municipio:       c.Municipio,
 		Direccion:       c.Direccion,
 		Telefono:        c.Telefono,
@@ -34,44 +31,73 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 		PiePagina:       c.PiePagina,
 		UsuarioSiat:     c.UsuarioSiat,
 	}
+	config := models.TenantConfig{
+		TenantID: tenant.ID, CodigoSistema: c.CodigoSistema,
+		Ambiente: models.SiatEnvironment(c.Ambiente), CodigoModalidad: modalidad,
+	}
 
-	if err := r.db.Create(&dbModel).Error; err != nil {
+	if err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&tenant).Error; err != nil {
+			return err
+		}
+		return tx.Create(&config).Error
+	}); err != nil {
 		if isUniqueViolation(err) {
 			return domain.ErrCompanyNitConflict
 		}
 		return err
 	}
 
-	c.ID = dbModel.ID
-	c.CreatedAt = dbModel.CreatedAt
-	c.UpdatedAt = dbModel.UpdatedAt
+	c.ID = tenant.ID
+	c.CreatedAt = tenant.CreatedAt
+	c.UpdatedAt = tenant.UpdatedAt
 	return nil
 }
 
 func (r *PostgresCompanyRepository) GetByNit(nit string) (*domain.Company, error) {
-	var dbModel models.Company
-	if err := r.db.Where("nit = ?", nit).First(&dbModel).Error; err != nil {
+	var tenant models.Company
+	if err := r.db.Where("nit = ?", nit).First(&tenant).Error; err != nil {
 		return nil, err
 	}
-	return toDomainCompany(&dbModel), nil
+	return r.withTenantConfig(&tenant)
 }
 
 func (r *PostgresCompanyRepository) GetByID(id string) (*domain.Company, error) {
-	var dbModel models.Company
-	if err := r.db.Where("id = ?", id).First(&dbModel).Error; err != nil {
+	var tenant models.Company
+	if err := r.db.Where("id = ?", id).First(&tenant).Error; err != nil {
 		return nil, err
 	}
-	return toDomainCompany(&dbModel), nil
+	return r.withTenantConfig(&tenant)
+}
+
+func (r *PostgresCompanyRepository) withTenantConfig(tenant *models.Company) (*domain.Company, error) {
+	var config models.TenantConfig
+	if err := r.db.Where("tenant_id = ?", tenant.ID).First(&config).Error; err != nil {
+		return nil, err
+	}
+	tenant.CodigoSistema = config.CodigoSistema
+	tenant.Ambiente = config.Ambiente
+	tenant.Modalidad = config.CodigoModalidad
+	tenant.Config = config
+	return toDomainCompany(tenant), nil
 }
 
 func toDomainCompany(dbModel *models.Company) *domain.Company {
+	codigoSistema := dbModel.CodigoSistema
+	ambiente := dbModel.Ambiente
+	modalidad := dbModel.Modalidad
+	if dbModel.Config.TenantID != "" {
+		codigoSistema = dbModel.Config.CodigoSistema
+		ambiente = dbModel.Config.Ambiente
+		modalidad = dbModel.Config.CodigoModalidad
+	}
 	return &domain.Company{
 		ID:              dbModel.ID,
 		Nit:             dbModel.Nit,
 		BusinessName:    dbModel.BusinessName,
-		CodigoSistema:   dbModel.CodigoSistema,
-		Ambiente:        domain.SiatEnvironment(dbModel.Ambiente),
-		Modalidad:       dbModel.Modalidad,
+		CodigoSistema:   codigoSistema,
+		Ambiente:        domain.SiatEnvironment(ambiente),
+		Modalidad:       modalidad,
 		Municipio:       dbModel.Municipio,
 		Direccion:       dbModel.Direccion,
 		Telefono:        dbModel.Telefono,
@@ -84,34 +110,42 @@ func toDomainCompany(dbModel *models.Company) *domain.Company {
 }
 
 func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
-	var dbModel models.Company
-	if err := r.db.Where("id = ?", c.ID).First(&dbModel).Error; err != nil {
+	var tenant models.Company
+	if err := r.db.Where("id = ?", c.ID).First(&tenant).Error; err != nil {
 		return err
 	}
 
-	dbModel.Nit = c.Nit
-	dbModel.BusinessName = c.BusinessName
-	dbModel.CodigoSistema = c.CodigoSistema
-	dbModel.Ambiente = models.SiatEnvironment(c.Ambiente)
-	dbModel.Modalidad = c.Modalidad
-	if dbModel.Modalidad == 0 {
-		dbModel.Modalidad = 1
+	tenant.Nit = c.Nit
+	tenant.BusinessName = c.BusinessName
+	modalidad := c.Modalidad
+	if modalidad == 0 {
+		modalidad = 1
 	}
-	dbModel.Municipio = c.Municipio
-	dbModel.Direccion = c.Direccion
-	dbModel.Telefono = c.Telefono
-	dbModel.CodigoActividad = c.CodigoActividad
-	dbModel.PiePagina = c.PiePagina
-	dbModel.UsuarioSiat = c.UsuarioSiat
+	tenant.Municipio = c.Municipio
+	tenant.Direccion = c.Direccion
+	tenant.Telefono = c.Telefono
+	tenant.CodigoActividad = c.CodigoActividad
+	tenant.PiePagina = c.PiePagina
+	tenant.UsuarioSiat = c.UsuarioSiat
 
-	if err := r.db.Save(&dbModel).Error; err != nil {
+	if err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&tenant).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.TenantConfig{}).Where("tenant_id = ?", c.ID).Updates(map[string]any{
+			"codigo_sistema":   c.CodigoSistema,
+			"ambiente":         models.SiatEnvironment(c.Ambiente),
+			"codigo_modalidad": modalidad,
+			"updated_at":       gorm.Expr("now()"),
+		}).Error
+	}); err != nil {
 		if isUniqueViolation(err) {
 			return domain.ErrCompanyNitConflict
 		}
 		return err
 	}
 
-	c.UpdatedAt = dbModel.UpdatedAt
+	c.UpdatedAt = tenant.UpdatedAt
 	return nil
 }
 

@@ -1,16 +1,15 @@
 package postgres
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/models"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
-// PostgresSiatActividadRepository persiste el catálogo de actividades
-// económicas sincronizado del SIAT (tabla siat_actividades).
 type PostgresSiatActividadRepository struct{ db *gorm.DB }
 
 func NewPostgresSiatActividadRepository(db *gorm.DB) domain.SiatActividadRepository {
@@ -18,48 +17,35 @@ func NewPostgresSiatActividadRepository(db *gorm.DB) domain.SiatActividadReposit
 }
 
 func (r *PostgresSiatActividadRepository) Replace(companyID string, items []domain.SiatActividad, syncedAt time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("company_id = ?", companyID).Delete(&models.SiatActividad{}).Error; err != nil {
-			return err
-		}
-		if len(items) == 0 {
-			return nil
-		}
-		rows := make([]models.SiatActividad, 0, len(items))
-		for _, it := range items {
-			rows = append(rows, models.SiatActividad{
-				ID:            uuid.NewString(),
-				CompanyId:     companyID,
-				CodigoCaeb:    it.CodigoCaeb,
-				Descripcion:   it.Descripcion,
-				TipoActividad: it.TipoActividad,
-				SyncedAt:      syncedAt,
-			})
-		}
-		return tx.Create(&rows).Error
-	})
+	rows := make([]versionedCatalogItem, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, versionedCatalogItem{
+			Code: item.CodigoCaeb, Description: item.Descripcion,
+			Metadata: map[string]any{"tipo_actividad": item.TipoActividad},
+		})
+	}
+	return replaceVersionedCatalog(r.db, companyID, catalogActividades, syncedAt, rows)
 }
 
 func (r *PostgresSiatActividadRepository) List(companyID string) ([]*domain.SiatActividad, error) {
-	var rows []models.SiatActividad
-	if err := r.db.Where("company_id = ?", companyID).
-		Order("codigo_caeb ASC").
-		Find(&rows).Error; err != nil {
+	items, _, err := latestCatalogItems(r.db, companyID, catalogActividades)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]*domain.SiatActividad, 0, len(rows))
-	for i := range rows {
+	out := make([]*domain.SiatActividad, 0, len(items))
+	for _, item := range items {
+		metadata, err := catalogMetadata(item)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, &domain.SiatActividad{
-			CodigoCaeb:    rows[i].CodigoCaeb,
-			Descripcion:   rows[i].Descripcion,
-			TipoActividad: rows[i].TipoActividad,
+			CodigoCaeb: item.Codigo, Descripcion: item.Descripcion,
+			TipoActividad: metadataString(metadata, "tipo_actividad"),
 		})
 	}
 	return out, nil
 }
 
-// PostgresSiatLeyendaRepository persiste las leyendas de factura sincronizadas
-// del SIAT (tabla siat_leyendas_factura).
 type PostgresSiatLeyendaRepository struct{ db *gorm.DB }
 
 func NewPostgresSiatLeyendaRepository(db *gorm.DB) domain.SiatLeyendaRepository {
@@ -67,63 +53,46 @@ func NewPostgresSiatLeyendaRepository(db *gorm.DB) domain.SiatLeyendaRepository 
 }
 
 func (r *PostgresSiatLeyendaRepository) Replace(companyID string, leyendas []domain.SiatLeyenda, syncedAt time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("company_id = ?", companyID).Delete(&models.SiatLeyendaFactura{}).Error; err != nil {
-			return err
-		}
-		if len(leyendas) == 0 {
-			return nil
-		}
-		rows := make([]models.SiatLeyendaFactura, 0, len(leyendas))
-		for _, l := range leyendas {
-			rows = append(rows, models.SiatLeyendaFactura{
-				ID:                 uuid.NewString(),
-				CompanyId:          companyID,
-				CodigoActividad:    l.CodigoActividad,
-				DescripcionLeyenda: l.DescripcionLeyenda,
-				SyncedAt:           syncedAt,
-			})
-		}
-		return tx.Create(&rows).Error
-	})
+	items := make([]versionedCatalogItem, 0, len(leyendas))
+	for _, legend := range leyendas {
+		hash := sha256.Sum256([]byte(legend.DescripcionLeyenda))
+		items = append(items, versionedCatalogItem{
+			Code:        fmt.Sprintf("%s:%x", legend.CodigoActividad, hash),
+			Description: legend.DescripcionLeyenda,
+			Metadata:    map[string]any{"codigo_actividad": legend.CodigoActividad},
+		})
+	}
+	return replaceVersionedCatalog(r.db, companyID, catalogLeyendasFactura, syncedAt, items)
 }
 
 func (r *PostgresSiatLeyendaRepository) List(companyID string) ([]*domain.SiatLeyenda, error) {
-	var rows []models.SiatLeyendaFactura
-	if err := r.db.Where("company_id = ?", companyID).
-		Order("codigo_actividad ASC").
-		Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	out := make([]*domain.SiatLeyenda, 0, len(rows))
-	for i := range rows {
-		out = append(out, &domain.SiatLeyenda{
-			CodigoActividad:    rows[i].CodigoActividad,
-			DescripcionLeyenda: rows[i].DescripcionLeyenda,
-		})
-	}
-	return out, nil
+	return r.list(companyID, "")
 }
 
 func (r *PostgresSiatLeyendaRepository) ListByActividad(companyID, codigoActividad string) ([]*domain.SiatLeyenda, error) {
-	var rows []models.SiatLeyendaFactura
-	if err := r.db.Where("company_id = ? AND codigo_actividad = ?", companyID, codigoActividad).
-		Order("created_at ASC").
-		Find(&rows).Error; err != nil {
+	return r.list(companyID, codigoActividad)
+}
+
+func (r *PostgresSiatLeyendaRepository) list(companyID, activity string) ([]*domain.SiatLeyenda, error) {
+	items, _, err := latestCatalogItems(r.db, companyID, catalogLeyendasFactura)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]*domain.SiatLeyenda, 0, len(rows))
-	for i := range rows {
-		out = append(out, &domain.SiatLeyenda{
-			CodigoActividad:    rows[i].CodigoActividad,
-			DescripcionLeyenda: rows[i].DescripcionLeyenda,
-		})
+	out := make([]*domain.SiatLeyenda, 0, len(items))
+	for _, item := range items {
+		metadata, err := catalogMetadata(item)
+		if err != nil {
+			return nil, err
+		}
+		code := metadataString(metadata, "codigo_actividad")
+		if activity != "" && activity != code {
+			continue
+		}
+		out = append(out, &domain.SiatLeyenda{CodigoActividad: code, DescripcionLeyenda: item.Descripcion})
 	}
 	return out, nil
 }
 
-// PostgresSiatActividadDocSectorRepository persiste la relación actividad ↔
-// documento-sector sincronizada del SIAT (tabla siat_actividades_doc_sector).
 type PostgresSiatActividadDocSectorRepository struct{ db *gorm.DB }
 
 func NewPostgresSiatActividadDocSectorRepository(db *gorm.DB) domain.SiatActividadDocSectorRepository {
@@ -131,56 +100,68 @@ func NewPostgresSiatActividadDocSectorRepository(db *gorm.DB) domain.SiatActivid
 }
 
 func (r *PostgresSiatActividadDocSectorRepository) Replace(companyID string, items []domain.SiatActividadDocSector, syncedAt time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("company_id = ?", companyID).Delete(&models.SiatActividadDocSector{}).Error; err != nil {
-			return err
-		}
-		if len(items) == 0 {
-			return nil
-		}
-		rows := make([]models.SiatActividadDocSector, 0, len(items))
-		for _, it := range items {
-			rows = append(rows, models.SiatActividadDocSector{
-				ID:                    uuid.NewString(),
-				CompanyId:             companyID,
-				CodigoActividad:       it.CodigoActividad,
-				CodigoDocumentoSector: it.CodigoDocumentoSector,
-				TipoDocumentoSector:   it.TipoDocumentoSector,
-				SyncedAt:              syncedAt,
-			})
-		}
-		return tx.Create(&rows).Error
-	})
+	rows := make([]versionedCatalogItem, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, versionedCatalogItem{
+			Code:        fmt.Sprintf("%s:%d", item.CodigoActividad, item.CodigoDocumentoSector),
+			Description: item.TipoDocumentoSector,
+			Metadata: map[string]any{
+				"codigo_actividad":        item.CodigoActividad,
+				"codigo_documento_sector": item.CodigoDocumentoSector,
+				"tipo_documento_sector":   item.TipoDocumentoSector,
+			},
+		})
+	}
+	return replaceVersionedCatalog(r.db, companyID, catalogActividadesDocSector, syncedAt, rows)
 }
 
 func (r *PostgresSiatActividadDocSectorRepository) List(companyID string) ([]*domain.SiatActividadDocSector, error) {
-	var rows []models.SiatActividadDocSector
-	if err := r.db.Where("company_id = ?", companyID).
-		Order("codigo_actividad ASC, codigo_documento_sector ASC").
-		Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return toDomainDocSectores(rows), nil
+	return r.list(companyID, "")
 }
 
 func (r *PostgresSiatActividadDocSectorRepository) ListByActividad(companyID, codigoActividad string) ([]*domain.SiatActividadDocSector, error) {
-	var rows []models.SiatActividadDocSector
-	if err := r.db.Where("company_id = ? AND codigo_actividad = ?", companyID, codigoActividad).
-		Order("codigo_documento_sector ASC").
-		Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return toDomainDocSectores(rows), nil
+	return r.list(companyID, codigoActividad)
 }
 
-func toDomainDocSectores(rows []models.SiatActividadDocSector) []*domain.SiatActividadDocSector {
-	out := make([]*domain.SiatActividadDocSector, 0, len(rows))
-	for i := range rows {
+func (r *PostgresSiatActividadDocSectorRepository) list(companyID, activity string) ([]*domain.SiatActividadDocSector, error) {
+	items, _, err := latestCatalogItems(r.db, companyID, catalogActividadesDocSector)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.SiatActividadDocSector, 0, len(items))
+	for _, item := range items {
+		metadata, err := catalogMetadata(item)
+		if err != nil {
+			return nil, err
+		}
+		code := metadataString(metadata, "codigo_actividad")
+		if activity != "" && activity != code {
+			continue
+		}
 		out = append(out, &domain.SiatActividadDocSector{
-			CodigoActividad:       rows[i].CodigoActividad,
-			CodigoDocumentoSector: rows[i].CodigoDocumentoSector,
-			TipoDocumentoSector:   rows[i].TipoDocumentoSector,
+			CodigoActividad:       code,
+			CodigoDocumentoSector: metadataInt(metadata, "codigo_documento_sector"),
+			TipoDocumentoSector:   metadataString(metadata, "tipo_documento_sector"),
 		})
 	}
-	return out
+	return out, nil
+}
+
+func metadataString(metadata map[string]any, key string) string {
+	value, _ := metadata[key].(string)
+	return value
+}
+
+func metadataInt(metadata map[string]any, key string) int {
+	switch value := metadata[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case string:
+		parsed, _ := strconv.Atoi(value)
+		return parsed
+	default:
+		return 0
+	}
 }

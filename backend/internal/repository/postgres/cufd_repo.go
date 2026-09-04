@@ -3,9 +3,9 @@ package postgres
 import (
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"gorm.io/gorm"
 )
 
@@ -18,7 +18,16 @@ func NewPostgresCufdRepository(db *gorm.DB) domain.CufdRepository {
 }
 
 func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
+	var tenantID string
+	if err := r.db.Model(&models.PointOfSale{}).
+		Select("tenant_id").Where("id = ?", c.PointOfSaleID).Scan(&tenantID).Error; err != nil {
+		return err
+	}
+	if tenantID == "" {
+		return gorm.ErrRecordNotFound
+	}
 	model := models.Cufd{
+		TenantId:      tenantID,
 		PointOfSaleId: c.PointOfSaleID,
 		Cufd:          c.Cufd,
 		Direccion:     c.Direccion,
@@ -39,7 +48,7 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 func (r *PostgresCufdRepository) GetActiveByPos(pointOfSaleID string) (*domain.Cufd, error) {
 	var m models.Cufd
 	now := time.Now().In(siat.LaPaz)
-	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ? AND active = true", pointOfSaleID, now, now).
+	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ? AND is_active = true", pointOfSaleID, now, now).
 		Order("created_at DESC").First(&m).Error; err != nil {
 		return nil, err
 	}
@@ -52,12 +61,12 @@ func (r *PostgresCufdRepository) GetActiveByPos(pointOfSaleID string) (*domain.C
 func (r *PostgresCufdRepository) GetByPosAndWindow(pointOfSaleID string, from, to time.Time) (*domain.Cufd, error) {
 	var m models.Cufd
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ?", pointOfSaleID, from, to).
-		Order("active DESC, created_at DESC").First(&m).Error; err != nil {
+		Order("is_active DESC, created_at DESC").First(&m).Error; err != nil {
 		return nil, err
 	}
 	return toDomainCufd(&m), nil
 }
 
 func (r *PostgresCufdRepository) DeactivateExpired() error {
-	return r.db.Model(&models.Cufd{}).Where("valid_to < ? AND active = true", time.Now().In(siat.LaPaz)).Update("active", false).Error
+	return r.db.Model(&models.Cufd{}).Where("valid_to < ? AND is_active = true", time.Now().In(siat.LaPaz)).Update("is_active", false).Error
 }

@@ -1,77 +1,79 @@
 package postgres
 
 import (
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
-type PostgresCatalogRepository struct {
-	db *gorm.DB
-}
+type PostgresCatalogRepository struct{ db *gorm.DB }
 
 func NewPostgresCatalogRepository(db *gorm.DB) domain.CatalogRepository {
 	return &PostgresCatalogRepository{db: db}
 }
 
 func (r *PostgresCatalogRepository) Replace(companyID, tipo string, items []domain.CatalogItem, syncedAt time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("company_id = ? AND tipo = ?", companyID, tipo).Delete(&models.Catalog{}).Error; err != nil {
-			return err
-		}
-		if len(items) == 0 {
-			return nil
-		}
-		rows := make([]models.Catalog, 0, len(items))
-		for _, it := range items {
-			rows = append(rows, models.Catalog{
-				ID:          uuid.NewString(),
-				CompanyId:   companyID,
-				Tipo:        tipo,
-				Codigo:      it.Codigo,
-				Descripcion: it.Descripcion,
-				SyncedAt:    syncedAt,
-			})
-		}
-		return tx.Create(&rows).Error
-	})
+	rows := make([]versionedCatalogItem, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, versionedCatalogItem{Code: strconv.Itoa(item.Codigo), Description: item.Descripcion})
+	}
+	return replaceVersionedCatalog(r.db, companyID, tipo, syncedAt, rows)
 }
 
 func (r *PostgresCatalogRepository) List(companyID, tipo string) ([]*domain.CatalogItem, error) {
-	var rows []models.Catalog
-	if err := r.db.Where("company_id = ? AND tipo = ?", companyID, tipo).
-		Order("codigo ASC").
-		Find(&rows).Error; err != nil {
+	rows, _, err := latestCatalogItems(r.db, companyID, tipo)
+	if err != nil {
 		return nil, err
 	}
 	result := make([]*domain.CatalogItem, 0, len(rows))
-	for i := range rows {
-		result = append(result, &domain.CatalogItem{
-			Codigo:      rows[i].Codigo,
-			Descripcion: rows[i].Descripcion,
-			Tipo:        tipo,
-		})
+	for _, row := range rows {
+		code, err := strconv.Atoi(row.Codigo)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, &domain.CatalogItem{Codigo: code, Descripcion: row.Descripcion, Tipo: tipo})
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Codigo < result[j].Codigo })
 	return result, nil
 }
 
 func (r *PostgresCatalogRepository) ListAll(companyID string) (map[string][]*domain.CatalogItem, error) {
-	var rows []models.Catalog
-	if err := r.db.Where("company_id = ?", companyID).
-		Order("tipo ASC, codigo ASC").
-		Find(&rows).Error; err != nil {
+	type catalogRow struct {
+		models.CatalogItem
+		Tipo string
+	}
+	var rows []catalogRow
+	err := r.db.Raw(`
+		SELECT i.*, v.tipo
+		FROM catalog_items i
+		JOIN catalog_versions v ON v.id = i.version_id
+		JOIN (
+			SELECT tenant_id, tipo, MAX(version) AS version
+			FROM catalog_versions
+			WHERE tenant_id = ?
+			  AND tipo NOT IN ('tipoPuntoVenta', 'actividades', 'leyendasFactura', 'actividadesDocumentoSector')
+			GROUP BY tenant_id, tipo
+		) latest ON latest.tenant_id = v.tenant_id
+			AND latest.tipo = v.tipo AND latest.version = v.version
+		ORDER BY v.tipo, i.codigo`, companyID).Scan(&rows).Error
+	if err != nil {
 		return nil, err
 	}
 	result := make(map[string][]*domain.CatalogItem)
-	for i := range rows {
-		tipo := rows[i].Tipo
-		result[tipo] = append(result[tipo], &domain.CatalogItem{
-			Codigo:      rows[i].Codigo,
-			Descripcion: rows[i].Descripcion,
-			Tipo:        tipo,
+	for _, row := range rows {
+		code, err := strconv.Atoi(row.Codigo)
+		if err != nil {
+			continue
+		}
+		result[row.Tipo] = append(result[row.Tipo], &domain.CatalogItem{Codigo: code, Descripcion: row.Descripcion, Tipo: row.Tipo})
+	}
+	for catalogType := range result {
+		sort.Slice(result[catalogType], func(i, j int) bool {
+			return result[catalogType][i].Codigo < result[catalogType][j].Codigo
 		})
 	}
 	return result, nil

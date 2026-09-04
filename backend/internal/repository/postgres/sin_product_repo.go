@@ -19,7 +19,7 @@ func NewPostgresSinProductRepository(db *gorm.DB) domain.SinProductRepository {
 
 func (r *PostgresSinProductRepository) Replace(companyID string, products []domain.SinProduct, syncedAt time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("company_id = ?", companyID).Delete(&models.SinProduct{}).Error; err != nil {
+		if err := tx.Where("tenant_id = ?", companyID).Delete(&models.SinProduct{}).Error; err != nil {
 			return err
 		}
 		if len(products) == 0 {
@@ -55,7 +55,7 @@ func (r *PostgresSinProductRepository) List(companyID, query string, codigoActiv
 	if offset < 0 {
 		offset = 0
 	}
-	base := r.db.Model(&models.SinProduct{}).Where("company_id = ? AND active = true", companyID)
+	base := r.db.Model(&models.SinProduct{}).Where("tenant_id = ? AND is_active = true", companyID)
 	if codigoActividad > 0 {
 		base = base.Where("codigo_actividad = ?", codigoActividad)
 	}
@@ -80,7 +80,7 @@ func (r *PostgresSinProductRepository) List(companyID, query string, codigoActiv
 
 func (r *PostgresSinProductRepository) ListAll(companyID string) ([]*domain.SinProduct, error) {
 	var rows []models.SinProduct
-	if err := r.db.Where("company_id = ? AND active = true", companyID).
+	if err := r.db.Where("tenant_id = ? AND is_active = true", companyID).
 		Order("codigo_producto_sin ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (r *PostgresSinProductRepository) ListAll(companyID string) ([]*domain.SinP
 
 func (r *PostgresSinProductRepository) GetByCode(companyID string, code int64) (*domain.SinProduct, error) {
 	var row models.SinProduct
-	if err := r.db.First(&row, "company_id = ? AND codigo_producto_sin = ? AND active = true", companyID, code).Error; err != nil {
+	if err := r.db.First(&row, "tenant_id = ? AND codigo_producto_sin = ? AND is_active = true", companyID, code).Error; err != nil {
 		return nil, err
 	}
 	return toDomainSinProduct(&row), nil

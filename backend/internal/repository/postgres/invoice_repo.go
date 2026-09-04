@@ -87,7 +87,7 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 
 func (r *PostgresInvoiceRepository) GetByID(id string) (*domain.Invoice, error) {
 	var m models.Invoice
-	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company").Preload("Customer").Preload("CufdRecord").First(&m, "id = ?", id).Error; err != nil {
+	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company.Config").Preload("Customer").Preload("CufdRecord").First(&m, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return toDomainInvoice(&m), nil
@@ -182,7 +182,7 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 
 func (r *PostgresInvoiceRepository) GetByIdempotencyKey(pointOfSaleID, key string) (*domain.Invoice, error) {
 	var m models.Invoice
-	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company").Preload("Customer").Preload("CufdRecord").
+	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company.Config").Preload("Customer").Preload("CufdRecord").
 		First(&m, "point_of_sale_id = ? AND idempotency_key = ?", pointOfSaleID, key).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

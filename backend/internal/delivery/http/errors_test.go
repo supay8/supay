@@ -11,7 +11,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/usecase"
 	"gorm.io/gorm"
 )
@@ -74,7 +74,7 @@ func TestClassifyError(t *testing.T) {
 			name: "rechazo del siat con detalles",
 			err: &usecase.EmissionRejectedError{
 				CodigoEstado: 902,
-				Mensajes: []siat.Mensaje{
+				Mensajes: []ports.FiscalMessage{
 					{Codigo: 926, Descripcion: "CUF duplicado"},
 					{Codigo: 931, Descripcion: "sector no soportado"},
 				},
@@ -133,7 +133,7 @@ func TestRespondErrorEnvelope(t *testing.T) {
 func TestRespondErrorSiatRejectedConDetails(t *testing.T) {
 	rec := httptest.NewRecorder()
 	RespondError(rec, &usecase.EmissionRejectedError{
-		Mensajes: []siat.Mensaje{{Codigo: 926, Descripcion: "CUF duplicado"}},
+		Mensajes: []ports.FiscalMessage{{Codigo: 926, Descripcion: "CUF duplicado"}},
 	})
 
 	if rec.Code != http.StatusUnprocessableEntity {

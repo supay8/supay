@@ -21,7 +21,9 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/repository/postgres"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat/sandbox"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/storage"
 	"github.com/brandsrx/supay/internal/usecase"
 	"gorm.io/gorm"
@@ -278,6 +280,17 @@ func (c *Container) SiatService() *siat.Service {
 	return c.siatService
 }
 
+// FiscalService devuelve el adaptador SIAT real si está configurado; en
+// desarrollo/CI o cuando faltan credenciales legacy retorna el sandbox
+// determinístico para que la aplicación pueda arrancar y testearse sin el
+// SIAT real.
+func (c *Container) FiscalService() ports.FiscalService {
+	if svc := c.SiatService(); svc != nil {
+		return siat.NewFiscalAdapter(svc)
+	}
+	return sandbox.NewFiscalService()
+}
+
 func (c *Container) PdfService() *pdf.Service {
 	if c.pdfService == nil {
 		c.pdfService = pdf.NewServiceWithStorage(c.db, c.PdfStorage())
@@ -293,11 +306,11 @@ func (c *Container) CredentialService() *usecase.CredentialService {
 			c.SiatProvider(),
 			c.cfg.SiatInfra.Modalidad,
 		)
-		if client := c.SiatService(); client != nil && c.SiatProvider() == nil {
+		if c.SiatProvider() == nil {
 			c.credentialService = usecase.NewCredentialService(
 				c.PointOfSaleRepo(),
 				c.CufdRepo(),
-				client,
+				c.FiscalService(),
 				c.cfg.SiatInfra.Modalidad,
 			)
 		}
@@ -345,19 +358,14 @@ func (c *Container) CustomerUsecase() *usecase.CustomerUsecase {
 
 func (c *Container) InvoiceUsecase() *usecase.InvoiceUsecase {
 	if c.invoiceUsecase == nil {
-		var emissionService usecase.SiatEmissionService
-		if svc := c.SiatService(); svc != nil {
-			emissionService = svc
-		}
 		c.invoiceUsecase = usecase.NewInvoiceUsecase(
 			c.InvoiceRepo(), c.CustomerRepo(), c.CompanyRepo(),
 			c.PointOfSaleRepo(), c.CatalogRepo(), c.CufdRepo(),
-			emissionService, c.cfg.SiatInfra.Modalidad,
+			c.FiscalService(), c.cfg.SiatInfra.Modalidad,
 			c.ProductRepo(), c.SyncStateRepo(), c.SiatLeyendaRepo(),
 			c.SiatActividadDocSectorRepo(), c.CredentialService(),
 			c.PdfService(), c.cfg.AllowCustomIssueDate, c.SiatProvider(),
 		)
-		c.invoiceUsecase.SetAllowCustomIssueDate(c.cfg.AllowCustomIssueDate)
 	}
 	return c.invoiceUsecase
 }
@@ -367,7 +375,7 @@ func (c *Container) SiatUsecase() *usecase.SiatUsecase {
 		c.siatUsecase = usecase.NewSiatUsecase(
 			c.CompanyRepo(), c.PointOfSaleRepo(), c.CufdRepo(),
 			c.TipoPuntoVentaRepo(), c.CatalogRepo(), c.ContingencyRepo(),
-			c.SentPackageRepo(), c.SiatService(), c.cfg.SiatInfra.Modalidad,
+			c.SentPackageRepo(), c.FiscalService(), c.cfg.SiatInfra.Modalidad,
 			c.SinProductRepo(), c.SyncStateRepo(), c.SiatActividadRepo(),
 			c.SiatLeyendaRepo(), c.SiatActividadDocSectorRepo(),
 			c.InvoiceRepo(), c.SiatProvider(),

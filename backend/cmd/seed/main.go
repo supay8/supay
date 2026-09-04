@@ -10,7 +10,7 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/repository/database"
 	"github.com/brandsrx/supay/internal/repository/postgres"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/joho/godotenv"
 )
 

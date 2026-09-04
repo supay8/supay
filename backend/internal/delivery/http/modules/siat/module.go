@@ -1,8 +1,6 @@
 package siat
 
 import (
-	"github.com/brandsrx/supay/internal/pdf"
-	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -12,7 +10,7 @@ type Module struct {
 }
 
 // NewModule construye el módulo SIAT a partir de su usecase y servicio PDF.
-func NewModule(siatUC *usecase.SiatUsecase, pdfService *pdf.Service) *Module {
+func NewModule(siatUC siatService, pdfService pdfGenerator) *Module {
 	return &Module{h: newHandler(siatUC, pdfService)}
 }
 

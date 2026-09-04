@@ -4,16 +4,28 @@ import (
 	"net/http"
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
 
-type handler struct {
-	siatUC *usecase.SiatUsecase
+type catalogService interface {
+	CatalogReadiness(companyID, pointOfSaleID string) (*domain.CatalogReadiness, error)
+	ListActividadesEconomicas(companyID, tipoActividad string) (*usecase.ActividadesEconomicasResult, error)
+	ListCompanyActividadesEconomicas(companyID string) (*usecase.CompanyActividadesResult, error)
+	ListDocumentosSector(companyID, codigoActividad string) (*usecase.DocumentosSectorResult, error)
+	ListLeyendasFactura(companyID, codigoActividad string) (*usecase.LeyendasFacturaResult, error)
+	ListProductosSinQuery(companyID, query string, codigoActividad int64, limit, offset int) (*usecase.ProductosSinResult, error)
+	EmisionBootstrap(companyID, codigoActividad string) (*usecase.EmisionBootstrapResult, error)
+	ListParametricCatalog(companyID, catalogSlug string) (*usecase.CatalogItemsResult, error)
 }
 
-func newHandler(siatUC *usecase.SiatUsecase) *handler {
+type handler struct {
+	siatUC catalogService
+}
+
+func newHandler(siatUC catalogService) *handler {
 	return &handler{siatUC: siatUC}
 }
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
 )
 
 type Config struct {

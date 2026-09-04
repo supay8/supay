@@ -10,7 +10,7 @@ import (
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )

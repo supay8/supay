@@ -42,9 +42,9 @@ func (r *httpActividadRepo) List(string) ([]*domain.SiatActividad, error) {
 func TestCatalogRoutesDomainSlugs(t *testing.T) {
 	uc := usecase.NewSiatUsecase(nil, nil, nil, nil, &httpCatalogRepo{items: map[string][]*domain.CatalogItem{
 		"tipoMoneda": {{Codigo: 1, Descripcion: "BOLIVIANO", Tipo: "tipoMoneda"}},
-	}}, nil, nil, nil, 0, &httpActividadRepo{items: []domain.SiatActividad{
+	}}, nil, nil, nil, 0, nil, nil, &httpActividadRepo{items: []domain.SiatActividad{
 		{CodigoCaeb: "620100", Descripcion: "Software", TipoActividad: "P"},
-	}})
+	}}, nil, nil, nil, nil)
 	router := deliveryHttp.NewRouter([]modules.Module{
 		NewModule(uc),
 		siat.NewModule(uc, nil),

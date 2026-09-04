@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -12,7 +11,7 @@ type Module struct {
 }
 
 // NewModule construye el módulo catalog a partir del SiatUsecase.
-func NewModule(siatUC *usecase.SiatUsecase) *Module {
+func NewModule(siatUC catalogService) *Module {
 	return &Module{h: newHandler(siatUC)}
 }
 

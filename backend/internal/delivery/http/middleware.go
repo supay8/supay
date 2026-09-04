@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/brandsrx/supay/internal/models"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
 )
 
 const apiKeyHeader = "X-API-Key"

@@ -1,7 +1,6 @@
 package product
 
 import (
-	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -11,7 +10,7 @@ type Module struct {
 }
 
 // NewModule construye el módulo product a partir de su usecase.
-func NewModule(uc *usecase.ProductUsecase) *Module {
+func NewModule(uc productService) *Module {
 	return &Module{h: newHandler(uc)}
 }
 

@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
@@ -338,7 +339,7 @@ func TestEmitRechazoIncluyeInvoiceID(t *testing.T) {
 		emitFunc: func(_ context.Context, id string) (*domain.Invoice, error) {
 			return nil, &usecase.EmissionRejectedError{
 				CodigoEstado: 902,
-				Mensajes:     []siat.Mensaje{{Codigo: 123, Descripcion: "rechazo"}},
+				Mensajes:     []ports.FiscalMessage{{Codigo: 123, Descripcion: "rechazo"}},
 			}
 		},
 	}

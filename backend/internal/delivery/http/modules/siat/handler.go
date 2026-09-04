@@ -1,6 +1,7 @@
 package siat
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,18 +11,42 @@ import (
 	"strings"
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
-	"github.com/brandsrx/supay/internal/pdf"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 )
 
-type handler struct {
-	siatUC     *usecase.SiatUsecase
-	pdfService *pdf.Service
+type siatService interface {
+	SolicitarCUIS(ctx context.Context, companyID, posID string) (*usecase.CuisResultado, error)
+	SolicitarCUFD(ctx context.Context, companyID, posID string) (*usecase.CufdResultado, error)
+	RegistrarEventoSignificativo(ctx context.Context, companyID, posID string, body usecase.EventoSignificativoInput) (*usecase.EventoSignificativoResultado, error)
+	EnviarPaquete(ctx context.Context, companyID, posID string, body usecase.PaqueteInput) (*usecase.PaqueteResultado, error)
+	ValidarPaquete(ctx context.Context, companyID, posID string, body usecase.PaqueteValidacionInput) (*usecase.PaqueteResultado, error)
+	EnviarMasiva(ctx context.Context, companyID, posID string, body usecase.MasivaInput) (*usecase.PaqueteResultado, error)
+	ValidarMasiva(ctx context.Context, companyID, posID string, body usecase.PaqueteValidacionInput) (*usecase.PaqueteResultado, error)
+	EnviarCompras(ctx context.Context, companyID, posID string, body usecase.ComprasInput) (*usecase.ComprasResultado, error)
+	FirmarFactura(ctx context.Context, companyID, posID string, body usecase.FirmaInput) (*usecase.FirmaResultado, error)
+	Setup(ctx context.Context, companyID, posID string) (*usecase.SetupResultado, error)
+	Sincronizar(ctx context.Context, companyID, posID, opRaw string) (*usecase.SincronizacionResultado, error)
+	BuildSincronizacionResumen(companyID, posID string, res *usecase.SincronizacionResultado) *usecase.SincronizacionResumen
+	ListSinProducts(companyID, query string, limit, offset int) ([]*domain.SinProduct, int64, error)
+	ListActivitesDocumentSectors(companyID, query string, limit, offset int) ([]*domain.SiatActividadDocSector, int64, error)
+	CatalogReadiness(companyID, pointOfSaleID string) (*domain.CatalogReadiness, error)
+	ListCatalog(companyID, tipo string) (any, error)
+	EmitirDocumentoAjuste(ctx context.Context, companyID, posID string, body usecase.DocumentoAjusteInput) (*usecase.DocumentoAjusteResultado, error)
 }
 
-func newHandler(siatUC *usecase.SiatUsecase, pdfService *pdf.Service) *handler {
+type pdfGenerator interface {
+	GenerateInvoicePDF(invoiceID string) ([]byte, error)
+}
+
+type handler struct {
+	siatUC     siatService
+	pdfService pdfGenerator
+}
+
+func newHandler(siatUC siatService, pdfService pdfGenerator) *handler {
 	return &handler{siatUC: siatUC, pdfService: pdfService}
 }
 
@@ -54,7 +79,7 @@ func (h *handler) solicitarCUFD(w http.ResponseWriter, r *http.Request) {
 		"success": res.Response.Transaccion,
 		"data": map[string]any{
 			"cufd":           res.Response.Codigo,
-			"fecha_vigencia": res.Response.FechaVigencia.Time.Format("2006-01-02 15:04:05"),
+			"fecha_vigencia": res.Response.FechaVigencia.Format("2006-01-02 15:04:05"),
 			"codigo_control": res.Response.CodigoControl,
 		},
 	})

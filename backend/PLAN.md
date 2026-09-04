@@ -632,9 +632,9 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 **Mejora:** tipado, testabilidad, claridad.
 
-- [ ] Eliminar `extras ...any`.
-- [ ] Handlers dependen de interfaces.
-- [ ] Actualizar tests.
+- [x] Eliminar `extras ...any`.
+- [x] Handlers dependen de interfaces.
+- [x] Actualizar tests.
 
 **Entregable:** código compilado sin `interface{}` en DI.
 
@@ -644,12 +644,12 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 **Mejora:** el dominio deja de depender del SDK; tests determinísticos.
 
-- [ ] Crear `internal/ports/fiscal.go`.
-- [ ] Mover `internal/siat` a `internal/adapters/siat`.
-- [ ] Crear `FiscalDocument`, `FiscalResult`, etc. en dominio.
-- [ ] Mover todo el mapping al adaptador.
-- [ ] Crear `adapters/siat/fake` o `adapters/siat/sandbox`: implementación de `FiscalService` que devuelve respuestas determinísticas sin llamar al SIAT real.
-- [ ] Configurar el sandbox como default en CI y desarrollo local.
+- [x] Crear `internal/ports/fiscal.go`.
+- [x] Mover `internal/siat` a `internal/adapters/siat`.
+- [x] Crear `FiscalDocument`, `FiscalResult`, etc. en dominio.
+- [x] Mover todo el mapping al adaptador.
+- [x] Crear `adapters/siat/sandbox`: implementación de `FiscalService` que devuelva respuestas determinísticas sin llamar al SIAT real.
+- [x] Configurar el sandbox como default en CI y desarrollo local.
 
 **Entregable:** `application` no importa `go-siat`; tests de contrato corren sin SIAT real.
 

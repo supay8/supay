@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat"
 )
 
 // invoiceCustomerDTO es la representación mínima del cliente en una factura.

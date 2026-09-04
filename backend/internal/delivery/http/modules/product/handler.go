@@ -5,15 +5,22 @@ import (
 	"net/http"
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
 
-type handler struct {
-	uc *usecase.ProductUsecase
+type productService interface {
+	Create(req usecase.CreateProductRequest) (*domain.Product, error)
+	List(companyID string) ([]*domain.Product, error)
+	AddMapping(companyID, productID string, req usecase.ProductMappingRequest) error
 }
 
-func newHandler(uc *usecase.ProductUsecase) *handler {
+type handler struct {
+	uc productService
+}
+
+func newHandler(uc productService) *handler {
 	return &handler{uc: uc}
 }
 

@@ -119,6 +119,7 @@ type InvoiceRepository interface {
 	// campos pesados (xml/archivo), junto con el total de coincidencias.
 	ListFiltered(filter InvoiceListFilter) ([]*Invoice, int64, error)
 	Update(inv *Invoice) error
+	TransitionStatus(id string, from, to InvoiceStatus, reason InvoiceTransitionReason, fields map[string]any, event *InvoiceEvent) (bool, error)
 	// ClaimForEmission marca la factura como SENDING si está PENDING
 	// (transición atómica), retornando false si el estado ya no es PENDING.
 	ClaimForEmission(id string) (bool, error)
@@ -126,12 +127,6 @@ type InvoiceRepository interface {
 	// durante más de olderThan (crash del proceso, fallo del update final),
 	// devolviendo cuántas fueron liberadas.
 	ReleaseStaleSending(olderThan time.Duration) (int64, error)
-	// ClaimStatus aplica una transición de estado condicional: si la factura
-	// está en `from`, la mueve a `to` aplicando los campos indicados (nombres
-	// de columna) y devuelve true; si no, devuelve false sin tocar nada.
-	// Evita que operaciones concurrentes (p.ej. dos anulaciones) pasen ambos
-	// el chequeo de estado y pisen sus resultados.
-	ClaimStatus(id string, from InvoiceStatus, to InvoiceStatus, fields map[string]any) (bool, error)
 	FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*Cufd, error)
 	// GetByIdempotencyKey devuelve la factura asociada a una clave de
 	// idempotencia dentro de un punto de venta. nil si no existe.

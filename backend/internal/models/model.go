@@ -271,8 +271,8 @@ type CatalogSyncState struct {
 
 type Product struct {
 	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId string `gorm:"type:uuid;uniqueIndex:idx_company_product_sku,priority:1;not null"`
-	SKU       string `gorm:"type:varchar(100);uniqueIndex:idx_company_product_sku,priority:2;not null"`
+	CompanyId string `gorm:"column:tenant_id;type:uuid;uniqueIndex:idx_products_tenant_sku,priority:1;not null"`
+	SKU       string `gorm:"type:varchar(100);uniqueIndex:idx_products_tenant_sku,priority:2;not null"`
 	Name      string `gorm:"type:varchar(200);not null"`
 	Active    bool   `gorm:"default:true;not null"`
 	CreatedAt time.Time
@@ -354,7 +354,7 @@ type ContingencyEvent struct {
 // trg_customers_immutability (ver internal/repository/database/db.go).
 type Customer struct {
 	ID             string       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId      string       `gorm:"type:uuid;not null"`
+	CompanyId      string       `gorm:"column:tenant_id;type:uuid;not null"`
 	DocumentType   DocumentType `gorm:"type:varchar(20);not null"`
 	DocumentNumber string       `gorm:"type:varchar(30);not null"`
 	Complement     *string      `gorm:"type:varchar(10)"`
@@ -369,7 +369,7 @@ type Customer struct {
 
 type Invoice struct {
 	ID                    string         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId             string         `gorm:"type:uuid;not null"`
+	CompanyId             string         `gorm:"column:tenant_id;type:uuid;not null"`
 	CustomerId            string         `gorm:"type:uuid;index;not null"`
 	PointOfSaleId         string         `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;uniqueIndex:idx_invoice_idem_key,priority:1;not null"`
 	IdempotencyKey        *string        `gorm:"type:varchar(100);uniqueIndex:idx_invoice_idem_key,priority:2"`
@@ -416,6 +416,28 @@ type Invoice struct {
 	Events []InvoiceEvent `gorm:"foreignKey:InvoiceId"`
 }
 
+type InvoiceSequence struct {
+	TenantID      string `gorm:"column:tenant_id;type:uuid;primaryKey"`
+	PointOfSaleID string `gorm:"column:point_of_sale_id;type:uuid;primaryKey"`
+	NextNumber    int    `gorm:"not null"`
+	UpdatedAt     time.Time
+}
+
+type InvoiceDocument struct {
+	ID           string  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	InvoiceID    string  `gorm:"column:invoice_id;type:uuid;index;not null"`
+	DocumentType string  `gorm:"column:document_type;type:varchar(20);not null"`
+	Version      int     `gorm:"not null"`
+	Content      *string `gorm:"type:text"`
+	StorageRef   *string `gorm:"column:storage_ref;type:text"`
+	MIMEType     *string `gorm:"column:mime_type;type:varchar(100)"`
+	SHA256       *string `gorm:"column:sha256;type:varchar(128)"`
+	IsCurrent    bool    `gorm:"column:is_current;not null;default:true"`
+	CreatedAt    time.Time
+}
+
+func (InvoiceDocument) TableName() string { return "invoice_documents" }
+
 type InvoiceItem struct {
 	ID                string  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	InvoiceId         string  `gorm:"type:uuid;index;not null"`
@@ -437,6 +459,8 @@ type InvoiceItem struct {
 type InvoiceEvent struct {
 	ID        string         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	InvoiceId string         `gorm:"type:uuid;index;not null"`
+	TenantID  string         `gorm:"column:tenant_id;type:uuid;index;not null"`
+	EventKey  *string        `gorm:"column:event_key;type:varchar(100)"`
 	Type      string         `gorm:"type:varchar(50);not null"`
 	Message   string         `gorm:"type:text;not null"`
 	Payload   datatypes.JSON `gorm:"type:jsonb"`
@@ -447,7 +471,7 @@ type InvoiceEvent struct {
 
 type SentPackage struct {
 	ID                    string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId             string    `gorm:"type:uuid;index:idx_sent_pkg_company;not null"`
+	CompanyId             string    `gorm:"column:tenant_id;type:uuid;index:idx_sent_packages_tenant;not null"`
 	PointOfSaleId         string    `gorm:"type:uuid;index:idx_sent_pkg_pos;not null"`
 	Type                  string    `gorm:"type:varchar(20);not null"`
 	CodigoRecepcion       string    `gorm:"type:varchar(100);uniqueIndex;not null"`

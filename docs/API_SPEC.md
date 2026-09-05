@@ -15,14 +15,14 @@ This document is the single source of truth for a web frontend agent. All routes
 
 | Header | Required | Description |
 |---|---|---|
-| `X-API-Key` | Yes (unless `API_KEY=""`) | Shared secret from env `API_KEY`. Missing/invalid → `401 UNAUTHORIZED` (`backend/internal/delivery/http/middleware.go:16`). |
-| `X-Company-Id` | No | Optional tenant hint. Injected into `context` via `siat.WithCompanyID`. If omitted, `company_id` in body/query is used. No validation here; provider fails later if company missing. |
-| `Authorization: Bearer <jwt>` | No | Future JWT with `company_id` claim. Currently parsed but not validated (`middleware.go:54`). Ignored if `X-Company-Id` present. |
-| `Idempotency-Key` | No (invoices only) | `POST /invoices` header, max 100 chars (`invoice_handler.go:17`). Same `point_of_sale_id` + key returns existing invoice (replay, `200 OK`). Race returns `409` unique violation fallback. |
+| `X-API-Key` | Yes (unless `lookup == nil` in tests) | Tenant API key `sup_<prefix>_<random>`. Resolved via `extractKeyPrefix` + `FindByPrefix` + `bcrypt` verify (`backend/internal/delivery/http/middleware.go:55`, `backend/internal/app/container.go:431` `SetVerifyAPIKey`). Missing/empty → `401 UNAUTHORIZED` `{"error":{"code":"UNAUTHORIZED","message":"no autorizado: falta el header X-API-Key"}}` (`middleware.go:27`). Invalid/inactive → `401` `{"error":{"code":"UNAUTHORIZED","message":"no autorizado: API key inválida o inactiva"}}` (`middleware.go:37`). On success injects `company_id` into `context` via `WithCompanyID` + legacy `siat.WithCompanyID` fallback (`middleware.go:44`). `TouchLastUsed` fire-and-forget. No `X-Company-Id` header accepted — tenant is derived solely from the key. |
+| `Idempotency-Key` | No (invoices only) | `POST /invoices` header, max 100 chars (`modules/invoice/handler.go:17`). Same `point_of_sale_id` + key returns existing invoice (replay, `200 OK`). Race returns `409` unique violation fallback. |
 | `Content-Type` | Yes | `application/json` except `POST /companies/{id}/certificates` → `multipart/form-data`. |
 | `Accept` | No | `application/json` except `GET /invoices/{id}/xml` → `application/xml`, `GET .../pdf` → `application/pdf` |
 
-- Max body size: `10 MB` (`router.go:13` `maxBodyBytes = 10 << 20`), enforced via `http.MaxBytesReader`.
+CORS (`router.go:27`): `AllowedOrigins` `http://localhost:3000`, `http://127.0.0.1:3000`, `http://0.0.0.0:3000`, `http://localhost:5173`, `http://127.0.0.1:5173`; `AllowedMethods` `GET, POST, PUT, DELETE, OPTIONS`; `AllowedHeaders` `Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, X-API-Key`; `AllowCredentials: true`, `MaxAge: 300`.
+
+- Max body size: `10 MB` (`router.go:13` `maxBodyBytes = 10 << 20`), enforced via `http.MaxBytesReader` (`middleware.go:97` `LimitBody`).
 - Global timeout: `60s` (`middleware.Timeout`).
 - Logging: `middleware.Logger` + `Recoverer`.
 
@@ -477,7 +477,7 @@ Upserts mapping. Same validations as create.
 
 #### `POST /invoices/` — Create draft (optionally emit immediately)
 
-**Headers:** `X-API-Key`, optional `Idempotency-Key: <100 chars>`, `Content-Type: application/json`, optional `X-Company-Id`
+**Headers:** `X-API-Key` (tenant, required), optional `Idempotency-Key: <100 chars>` (see `1.1`), `Content-Type: application/json`. No `X-Company-Id` — `company_id` is derived from `X-API-Key` via `TenantMiddleware` (`middleware.go:44`); `company_id` in body is optional and validated against the key tenant.
 
 **Query:** `?include=xml,company,point_of_sale,cufd,archivo,all` (comma-separated, `all` enables all)
 
@@ -642,7 +642,7 @@ All under `/siat/...` need `companyId` + `pointOfSaleId` path params, validated 
   "errors": []
 }
 ```
-- On single op failure → `500` with `FAILED` sync state. On all ops → `200` even with partial errors; `status` per op `SUCCESS|FAILED|EMPTY`.
+- On single-op failure → `403 Forbidden` (`siat/handler.go:250` `!resumen.Success && err != nil` → `Max retries exceeded` / SIAT unavailable), with `FAILED` sync state. On all ops → `200` even with partial errors; `status` per op `SUCCESS|FAILED|EMPTY` (partial `errors[]` populated, HTTP still `200`).
 
 #### `POST /siat/evento-significativo/{companyId}/{pointOfSaleId}`
 ```json
@@ -755,8 +755,27 @@ Requires `syncStateRepo` <24h for critical catalogs.
 
 #### `GET /catalogs/perfiles-documento-sector` → all `SectorProfile` metadata (non-company, static)
 ```json
-{ "items": [{ "codigo_documento_sector":1, "nombre":"Compra y Venta","tipo_factura_documento":1,"layout":"","soportado":true,"campos_extra":[{ "clave":"periodo_facturado","tipo":"string","requerido":true }] }], "total":52 }
+{
+  "items": [{
+    "codigo_documento_sector": 1,
+    "nombre": "Compra y Venta",
+    "tipo_factura_documento": 1,
+    "layout": "",
+    "soportado": true,
+    "tiene_builder": true,
+    "requiere_archivo": false,
+    "con_detalle": true,
+    "detalle_unico": false,
+    "monto_sujeto_iva_cero": false,
+    "es_ajuste": false,
+    "campos_datos_sector": [{ "json":"periodo_facturado","requerido":false,"tipo":"string","etiqueta":"Período facturado","ejemplo":"2026-08" }],
+    "campos_datos_sector_detalle": []
+  }],
+  "total": 52
+}
 ```
+Shape mirrors `GET /invoices/sectores` (`SectorDTO`: `codigo`, `nombre`, `tipo_documento`, `operacion`, `fachada`, `modalidades[]`, `soportado`, `tiene_builder`, `requiere_archivo`, `con_detalle`, `detalle_unico`, `monto_sujeto_iva_cero`, `es_ajuste`, `habilitado`, `campos_datos_sector[]`, `campos_datos_sector_detalle[]`; types `string|int|float|fecha|json`). Use as truth for dynamic forms.
+
 #### `GET /catalogs/perfiles-documento-sector/{codigo}` → single profile or `404`
 #### Legacy `GET /catalogs/*` (siat_handler legacy compatibility):
 - `GET /catalogs/activites-document-sectors?company_id=&query=&limit=&offset=` (typo kept)
@@ -779,7 +798,7 @@ Requires `syncStateRepo` <24h for critical catalogs.
 6. **Sync if needed** → `POST /siat/sincronizar/{companyId}/{posId}` on failure
 7. **Create Customers** → `POST /customers/` or inline in invoice
 8. **Products + Mappings** → need synchronized catalogs first; use `GET /companies/{id}/catalogs/productos-sin` search; then `POST /products/` with validated mapping
-9. **Create Invoice** → fetch `GET /invoices/sectores?company_id=` to build dynamic `datos_sector` forms (each `CampoSector` has `tipo`, `requerido`, `etiqueta`, `ejemplo`). Validate client-side before submit. Use `Idempotency-Key` header for retry safety.
+9. **Create Invoice** → fetch `GET /invoices/sectores?company_id=` to build dynamic `datos_sector` (header) + `datos_sector` per `items[]` (detail) forms. Each `CampoSector` has `tipo` (`string|int|float|fecha|json`), `requerido`, `etiqueta`, `ejemplo`; detalle fields via `campos_datos_sector_detalle` when `con_detalle=true`. Validate client-side before submit. Use `Idempotency-Key` header for retry safety.
 10. **Emit** → `POST /invoices/{id}/emit` or `emit:true`; poll `GET /invoices/{id}` or `.../siat-status`
 11. **Download** → `GET /invoices/{id}/xml` (inline view) vs `GET /invoices/{id}/pdf` (generate)
 12. **Contingency UI** → event form → `POST /siat/evento-significativo` → show `codigo_recepcion` → paquete/masiva with invoice IDs multi-select (limit 500), visualize `SentPackage` status.
@@ -819,10 +838,10 @@ curl -X POST http://localhost:8081/setup \
 # list sectores for form
 curl http://localhost:8081/invoices/sectores?company_id=$COMPANY_ID -H "X-API-Key: $API_KEY"
 
-# create invoice (compra venta)
+# create invoice (compra venta) — tenant resolved solely via X-API-Key, no X-Company-Id needed
 curl -X POST "http://localhost:8081/invoices/?include=xml" \
   -H "X-API-Key: $API_KEY" -H "Idempotency-Key: order-123" \
-  -H "Content-Type: application/json" -H "X-Company-Id: $COMPANY_ID" \
+  -H "Content-Type: application/json" \
   -d '{
     "point_of_sale_id":"'$POS_ID'",
     "client_document_type":"CI","client_document_number":"1234567","client_name":"Juan Perez",
@@ -865,4 +884,4 @@ Full catalog: `backend/internal/siat/sectores_catalogo.go:17`.
 - Product `sku` is user-facing code; `code` in invoice item defaults to `product.SKU` if empty.
 - `archivo`/`hash_archivo` only for sectores without builder; otherwise auto-generated via go-siat XML + `SignXML` + `CompressAndHash`.
 
-*Last verified against:* `router.go:31`, `invoice_handler.go:40`, `siat_handler.go:37`, `errors.go:20`, `invoice_usecase.go:192`, `sectores.go:114`, `domain/*.go`, `config.go:57` on 2026-09-02.
+*Last verified against:* `router.go:20`, `middleware.go:23`, `modules/invoice/handler.go:41`, `modules/siat/handler.go:59`, `modules/catalog/handler.go:32`, `errors.go:20`, `usecase/invoice_usecase.go:192`, `sectores_catalogo.go:17`, `domain/*.go`, `config.go:57` on 2026-09-04. No Go code changed — docs only.

@@ -21,4 +21,4 @@ ALTER TABLE customers RENAME COLUMN tenant_id TO company_id;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_company_product_sku
     ON products(company_id, sku);
-CREATE INDEX IF NOT EXISTS idx_api_keys_company ON api_keys(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);

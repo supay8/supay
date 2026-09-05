@@ -50,6 +50,12 @@ export interface DashboardHost {
   updateCompany(id: string, payload: Partial<Company>): Promise<Company>
   setupCompany(companyId: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>
 
+  // API Keys
+  bootstrapCompany(payload: Partial<Company>): Promise<BootstrapCompanyResponse>
+  listApiKeys(companyId: string): Promise<ApiKeyItem[]>
+  createApiKey(companyId: string, name: string): Promise<CreateApiKeyResponse>
+  revokeApiKey(companyId: string, keyId: string): Promise<void>
+
   // Branches
   listBranches(companyId: string): Promise<Paginated<Branch>>
   getBranch(id: string): Promise<Branch>
@@ -91,6 +97,30 @@ export interface DashboardHost {
 
   // Allow host to expose arbitrary extra capabilities without changing core
   capabilities?: Record<string, unknown>
+}
+
+export interface BootstrapCompanyResponse {
+  company: Company
+  api_key: string
+  key_prefix: string
+  key_id: string
+}
+
+export interface ApiKeyItem {
+  id: string
+  key_prefix: string
+  name: string
+  is_active: boolean
+  last_used_at: string | null
+  created_at: string
+}
+
+export interface CreateApiKeyResponse {
+  api_key: string
+  key_prefix: string
+  id: string
+  name: string
+  created_at: string
 }
 
 export type HostCapabilities = Record<string, unknown>

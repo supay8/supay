@@ -89,11 +89,13 @@ type Invoice struct {
 	Status                InvoiceStatus   `json:"status"`
 	CreatedAt             time.Time       `json:"created_at"`
 
-	Company     Company       `json:"company"`
-	Customer    Customer      `json:"customer"`
-	PointOfSale PointOfSale   `json:"point_of_sale"`
-	CufdRecord  Cufd          `json:"cufd_record"`
-	Items       []InvoiceItem `json:"items"`
+	Company     Company           `json:"company"`
+	Customer    Customer          `json:"customer"`
+	PointOfSale PointOfSale       `json:"point_of_sale"`
+	CufdRecord  Cufd              `json:"cufd_record"`
+	Items       []InvoiceItem     `json:"items"`
+	Events      []InvoiceEvent    `json:"events,omitempty"`
+	Documents   []InvoiceDocument `json:"documents,omitempty"`
 }
 
 // InvoiceListFilter acota el listado de facturas por punto de venta, estado y

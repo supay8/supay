@@ -48,3 +48,29 @@ func HashKey(plain string) (string, error) {
 func VerifyKey(plain, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
 }
+
+// Create inserta una nueva API key.
+func (r *PostgresApiKeyRepository) Create(key *models.ApiKey) error {
+	return r.db.Create(key).Error
+}
+
+// ListByTenant devuelve todas las API keys de un tenant ordenadas por fecha de creación.
+func (r *PostgresApiKeyRepository) ListByTenant(tenantID string) ([]models.ApiKey, error) {
+	var keys []models.ApiKey
+	err := r.db.Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&keys).Error
+	return keys, err
+}
+
+// GetByID busca una API key por su ID.
+func (r *PostgresApiKeyRepository) GetByID(id string) (*models.ApiKey, error) {
+	var key models.ApiKey
+	if err := r.db.First(&key, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &key, nil
+}
+
+// Deactivate desactiva una API key (soft delete por tenant).
+func (r *PostgresApiKeyRepository) Deactivate(id, tenantID string) error {
+	return r.db.Model(&models.ApiKey{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("is_active", false).Error
+}

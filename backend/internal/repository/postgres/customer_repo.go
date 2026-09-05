@@ -34,7 +34,7 @@ func (r *PostgresCustomerRepository) Create(c *domain.Customer) error {
 	if err := r.db.Create(&dbModel).Error; err != nil {
 		// 23505 (idx_company_doc): carrera entre dos creates del mismo
 		// documento; el usecase lo resuelve re-asociando el existente.
-		if err != nil && strings.Contains(err.Error(), "23505") {
+		if strings.Contains(err.Error(), "23505") {
 			return domain.ErrCustomerDocumentConflict
 		}
 		return err
@@ -65,8 +65,9 @@ func (r *PostgresCustomerRepository) GetByCompanyAndFiscalIdentity(companyID str
 
 	var m models.Customer
 
-	if err := r.db.Where("tenant_id = ? AND document_type = ? AND document_number = ? AND email = ? AND name = ?",
-		companyID, models.DocumentType(documentType), documentNumber, email, name).First(&m).Error; err != nil {
+	query := r.db.Where("tenant_id = ? AND document_type = ? AND document_number = ? AND COALESCE(complement, '') = COALESCE(?, '')",
+		companyID, models.DocumentType(documentType), documentNumber, complement)
+	if err := query.First(&m).Error; err != nil {
 		return nil, err
 	}
 	return toDomainCustomer(&m), nil

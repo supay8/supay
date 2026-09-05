@@ -412,8 +412,9 @@ type Invoice struct {
 	ContingencyEvent *ContingencyEvent `gorm:"foreignKey:ContingencyEventId"`
 	AjustaFactura    *Invoice          `gorm:"foreignKey:AjustaFacturaId"`
 
-	Items  []InvoiceItem  `gorm:"foreignKey:InvoiceId"`
-	Events []InvoiceEvent `gorm:"foreignKey:InvoiceId"`
+	Items     []InvoiceItem     `gorm:"foreignKey:InvoiceId"`
+	Events    []InvoiceEvent    `gorm:"foreignKey:InvoiceId"`
+	Documents []InvoiceDocument `gorm:"foreignKey:InvoiceID"`
 }
 
 type InvoiceSequence struct {

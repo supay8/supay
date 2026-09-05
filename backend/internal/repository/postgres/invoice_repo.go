@@ -91,7 +91,7 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 
 func (r *PostgresInvoiceRepository) GetByID(id string) (*domain.Invoice, error) {
 	var m models.Invoice
-	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company.Config").Preload("Customer").Preload("CufdRecord").First(&m, "id = ?", id).Error; err != nil {
+	if err := r.db.Preload("Items").Preload("Events").Preload("Documents").Preload("PointOfSale").Preload("Company.Config").Preload("Customer").Preload("CufdRecord").First(&m, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return toDomainInvoice(&m), nil
@@ -251,28 +251,38 @@ func persistInvoiceDocuments(tx *gorm.DB, invoiceID string, fields map[string]an
 }
 
 func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
-	if err := (domain.InvoiceStateMachine{}).Transition(domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart); err != nil {
-		return false, err
+	event := &domain.InvoiceEvent{
+		Type:    "STATUS_TRANSITION",
+		Message: "invoice status changed from PENDING to SENDING",
+		Payload: []byte(`{"from_status":"PENDING","to_status":"SENDING","reason":"EMISSION_START","source":"ClaimForEmission"}`),
 	}
-	res := r.db.Model(&models.Invoice{}).
-		Where("id = ? AND status = ?", id, models.StatusPending).
-		Update("status", models.StatusSending)
-	if res.Error != nil {
-		return false, res.Error
-	}
-	return res.RowsAffected == 1, nil
+	return r.TransitionStatus(id, domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart, nil, event)
 }
 
 func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-olderThan)
-	// updated_at IS NULL cubre filas históricas previas a la columna.
-	res := r.db.Model(&models.Invoice{}).
+	var ids []string
+	if err := r.db.Model(&models.Invoice{}).
 		Where("status = ? AND (updated_at IS NULL OR updated_at < ?)", models.StatusSending, cutoff).
-		Update("status", models.StatusPending)
-	if res.Error != nil {
-		return 0, res.Error
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
 	}
-	return res.RowsAffected, nil
+	var released int64
+	for _, id := range ids {
+		event := &domain.InvoiceEvent{
+			Type:    "STATUS_TRANSITION",
+			Message: "invoice status changed from SENDING to PENDING",
+			Payload: []byte(`{"from_status":"SENDING","to_status":"PENDING","reason":"STALE_RECOVERY","source":"StaleEmissionReaper"}`),
+		}
+		claimed, err := r.TransitionStatus(id, domain.InvoiceSending, domain.InvoicePending, domain.TransitionStaleRecovery, nil, event)
+		if err != nil {
+			return released, err
+		}
+		if claimed {
+			released++
+		}
+	}
+	return released, nil
 }
 
 func (r *PostgresInvoiceRepository) GetByIdempotencyKey(pointOfSaleID, key string) (*domain.Invoice, error) {
@@ -436,6 +446,25 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 			Discount:          mi.Discount,
 			Subtotal:          mi.Subtotal,
 			SectorData:        json.RawMessage(mi.SectorData),
+		})
+	}
+	inv.Events = make([]domain.InvoiceEvent, 0, len(m.Events))
+	for i := range m.Events {
+		event := m.Events[i]
+		inv.Events = append(inv.Events, domain.InvoiceEvent{
+			ID: event.ID, InvoiceID: event.InvoiceId, TenantID: event.TenantID,
+			EventKey: event.EventKey, Type: event.Type, Message: event.Message,
+			Payload: json.RawMessage(event.Payload), CreatedAt: event.CreatedAt,
+		})
+	}
+	inv.Documents = make([]domain.InvoiceDocument, 0, len(m.Documents))
+	for i := range m.Documents {
+		document := m.Documents[i]
+		inv.Documents = append(inv.Documents, domain.InvoiceDocument{
+			ID: document.ID, InvoiceID: document.InvoiceID,
+			DocumentType: domain.InvoiceDocumentType(document.DocumentType), Version: document.Version,
+			Content: document.Content, StorageRef: document.StorageRef, MIMEType: document.MIMEType,
+			SHA256: document.SHA256, IsCurrent: document.IsCurrent, CreatedAt: document.CreatedAt,
 		})
 	}
 	return inv

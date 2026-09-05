@@ -20,18 +20,18 @@ type Config struct {
 	SiatModalidad int         `json:"-"`
 
 	// SiatInfra contiene solo parámetros de infraestructura compartida.
-	SiatInfra SiatInfraConfig
-
+	SiatInfra     SiatInfraConfig
+	BackendSecret string
 	// APIKey protege la API HTTP: todas las rutas (excepto /health) exigen el
 	// header X-API-Key con este valor. Vacío deshabilita la protección.
 	APIKey string
 	// EncryptionKey es la llave maestra AES-GCM para cifrar tokens y P12 por empresa.
-	EncryptionKey          string
-	DeploymentMode         string // selfhosted | cloud
-	StorageDriver          string // none | local | r2
-	StoragePath            string // base path para driver local
-	R2                     R2Config
-	AllowCustomIssueDate   bool // dev-only: permite POST /invoices con issue_date arbitrario
+	EncryptionKey        string
+	DeploymentMode       string // selfhosted | cloud
+	StorageDriver        string // none | local | r2
+	StoragePath          string // base path para driver local
+	R2                   R2Config
+	AllowCustomIssueDate bool // dev-only: permite POST /invoices con issue_date arbitrario
 }
 
 // SiatInfraConfig retiene solo infra compartida, sin credenciales por empresa.
@@ -68,7 +68,7 @@ func Load() Config {
 			baseURL = "https://pilotosiatservicios.impuestos.gob.bo/v2"
 		}
 	}
-
+	BackendSecret := strings.TrimSpace(os.Getenv("BACKEND_SECRET"))
 	// Infra compartida: sin validar credenciales por empresa
 	modalidad := parseInt(getEnv("SIAT_MODALIDAD", "1"), siat.ModalidadElectronica)
 	if modalidad != siat.ModalidadElectronica && modalidad != siat.ModalidadComputarizada {
@@ -160,6 +160,7 @@ func Load() Config {
 		StorageDriver:        storageDriver,
 		StoragePath:          storagePath,
 		R2:                   r2Cfg,
+		BackendSecret:        BackendSecret,
 		AllowCustomIssueDate: allowCustomIssueDate,
 	}
 }

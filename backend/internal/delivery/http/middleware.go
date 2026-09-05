@@ -1,11 +1,15 @@
 package http
 
 import (
+	"crypto/subtle"
+	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
-	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/models"
 )
 
 const apiKeyHeader = "X-API-Key"
@@ -15,6 +19,28 @@ const apiKeyHeader = "X-API-Key"
 type ApiKeyLookup interface {
 	FindByPrefix(prefix string) (*models.ApiKey, error)
 	TouchLastUsed(id string) error
+}
+
+func InternalBootstrapMiddleware(secret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Este log ahora sí se ejecuta en cada petición que llega a este grupo
+			log.Println("Pasa por el middleware de bootstrap interno")
+
+			token := r.Header.Get("X-Backend-Token")
+
+			// Comparamos de forma segura contra tiempos de respuesta
+			match := subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1
+
+			// CORREGIDO: Si NO coincide (!match), bloqueamos con Unauthorized
+			if !match {
+				http.Error(w, "Unauthorized internal request", http.StatusUnauthorized)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // TenantMiddleware autentica la petición por X-API-Key e inyecta el company_id
@@ -103,4 +129,109 @@ func LimitBody(maxBytes int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RateLimiterIP implementa un token bucket por IP para limitar peticiones.
+type RateLimiterIP struct {
+	mu      sync.Mutex
+	buckets map[string]*tokenBucket
+	rate    int
+	burst   int
+	cleanup *time.Ticker
+}
+
+type tokenBucket struct {
+	tokens     float64
+	lastRefill time.Time
+}
+
+func newTokenBucket(rate, burst int) *tokenBucket {
+	return &tokenBucket{
+		tokens:     float64(burst),
+		lastRefill: time.Now(),
+	}
+}
+
+func (tb *tokenBucket) take(rate, burst int) bool {
+	now := time.Now()
+	elapsed := now.Sub(tb.lastRefill).Seconds()
+	tb.tokens += elapsed * float64(rate)
+	if tb.tokens > float64(burst) {
+		tb.tokens = float64(burst)
+	}
+	tb.lastRefill = now
+	if tb.tokens >= 1 {
+		tb.tokens--
+		return true
+	}
+	return false
+}
+
+// RateLimitIP crea un middleware que limita las peticiones por IP.
+// rate: peticiones permitidas por segundo (sustained rate).
+// burst: máximo burst permitido.
+// cleanupInterval: cada cuánto limpiar buckets inactivos.
+func RateLimitIP(rate, burst int, cleanupInterval time.Duration) func(http.Handler) http.Handler {
+	rl := &RateLimiterIP{
+		buckets: make(map[string]*tokenBucket),
+		rate:    rate,
+		burst:   burst,
+	}
+
+	if cleanupInterval > 0 {
+		rl.cleanup = time.NewTicker(cleanupInterval)
+		go func() {
+			for range rl.cleanup.C {
+				rl.mu.Lock()
+				now := time.Now()
+				for ip, bucket := range rl.buckets {
+					if now.Sub(bucket.lastRefill) > 10*time.Minute {
+						delete(rl.buckets, ip)
+					}
+				}
+				rl.mu.Unlock()
+			}
+		}()
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := clientIP(r)
+			rl.mu.Lock()
+			bucket, ok := rl.buckets[ip]
+			if !ok {
+				bucket = newTokenBucket(rate, burst)
+				rl.buckets[ip] = bucket
+			}
+			allowed := bucket.take(rate, burst)
+			rl.mu.Unlock()
+
+			if !allowed {
+				writeErrorBody(w, http.StatusTooManyRequests, errorBody{
+					Code:    CodeRateLimited,
+					Message: "demasiadas peticiones, intente más tarde",
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func clientIP(r *http.Request) string {
+	// Check X-Forwarded-For header first (for proxied requests)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Take the first IP in the list
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	// Fall back to RemoteAddr
+	return r.RemoteAddr
 }

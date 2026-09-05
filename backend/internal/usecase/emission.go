@@ -187,7 +187,12 @@ func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, res
 			"source": "Emit", "codigo_estado": result.CodigoEstado,
 			"codigo_recepcion": result.CodigoRecepcion, "transaccion": result.Transaccion,
 		})
-		if _, err = uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, inv.Status, reason, fields, event); err == nil {
+		var claimed bool
+		claimed, err = uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, inv.Status, reason, fields, event)
+		if err == nil && !claimed {
+			return domain.NewConflictError("la factura cambió de estado mientras se persistía la respuesta del SIAT")
+		}
+		if err == nil {
 			return nil
 		}
 		slog.Error("emisión: fallo al persistir resultado del SIAT",
@@ -236,8 +241,12 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 
 	if estado, ok := siatEstadoToDomain(result.CodigoEstado); ok && inv.Status != estado {
 		event := invoiceTransitionEvent(inv, inv.Status, estado, domain.TransitionSIATReconciliation, map[string]any{"source": "VerifyStatus", "codigo_estado": result.CodigoEstado})
-		if _, err := uc.invoiceRepo.TransitionStatus(inv.ID, inv.Status, estado, domain.TransitionSIATReconciliation, nil, event); err != nil {
+		claimed, err := uc.invoiceRepo.TransitionStatus(inv.ID, inv.Status, estado, domain.TransitionSIATReconciliation, nil, event)
+		if err != nil {
 			return nil, err
+		}
+		if !claimed {
+			return nil, domain.NewConflictError("la factura cambió de estado durante la reconciliación SIAT")
 		}
 		inv.Status = estado
 	}

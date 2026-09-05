@@ -25,6 +25,9 @@ func main() {
 		}
 		log.Println("Migraciones completadas.")
 	}
+	if os.Getenv("BACKEND_SECRET") == "false" {
+		log.Fatalf("BACKEND_SECRET required")
+	}
 
 	container := app.NewContainer(cfg, db)
 	app.StartStaleEmissionReaper(container.InvoiceRepo())

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brandsrx/supay/internal/config"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	"github.com/brandsrx/supay/internal/delivery/http/modules"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/siat"
@@ -40,15 +41,16 @@ func (r *httpActividadRepo) List(string) ([]*domain.SiatActividad, error) {
 }
 
 func TestCatalogRoutesDomainSlugs(t *testing.T) {
+	cfg := config.Load()
 	uc := usecase.NewSiatUsecase(nil, nil, nil, nil, &httpCatalogRepo{items: map[string][]*domain.CatalogItem{
 		"tipoMoneda": {{Codigo: 1, Descripcion: "BOLIVIANO", Tipo: "tipoMoneda"}},
 	}}, nil, nil, nil, 0, nil, nil, &httpActividadRepo{items: []domain.SiatActividad{
 		{CodigoCaeb: "620100", Descripcion: "Software", TipoActividad: "P"},
 	}}, nil, nil, nil, nil)
-	router := deliveryHttp.NewRouter([]modules.Module{
+	router := deliveryHttp.NewRouter(cfg, []modules.Module{
 		NewModule(uc),
 		siat.NewModule(uc, nil),
-	}, nil)
+	}, nil, nil)
 
 	t.Run("parametrico", func(t *testing.T) {
 		rec := httptest.NewRecorder()

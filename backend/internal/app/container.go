@@ -1,16 +1,19 @@
 package app
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/adapters/siat/sandbox"
+	"github.com/brandsrx/supay/internal/config"
 	appconfig "github.com/brandsrx/supay/internal/config"
 	"github.com/brandsrx/supay/internal/crypto"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	deliveryModules "github.com/brandsrx/supay/internal/delivery/http/modules"
+	"github.com/brandsrx/supay/internal/delivery/http/modules/apikey"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/branch"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/catalog"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/certificate"
@@ -67,6 +70,7 @@ type Container struct {
 
 	// Usecases
 	companyUsecase     *usecase.CompanyUsecase
+	apiKeyUsecase      *usecase.ApiKeyUsecase
 	pointOfSaleUsecase *usecase.PointOfSaleUsecase
 	productUsecase     *usecase.ProductUsecase
 	branchUsecase      *usecase.BranchUsecase
@@ -341,6 +345,13 @@ func (c *Container) CompanyUsecase() *usecase.CompanyUsecase {
 	return c.companyUsecase
 }
 
+func (c *Container) ApiKeyUsecase() *usecase.ApiKeyUsecase {
+	if c.apiKeyUsecase == nil {
+		c.apiKeyUsecase = usecase.NewApiKeyUsecase(c.CompanyRepo(), c.ApiKeyRepo(), c.db)
+	}
+	return c.apiKeyUsecase
+}
+
 func (c *Container) PointOfSaleUsecase() *usecase.PointOfSaleUsecase {
 	if c.pointOfSaleUsecase == nil {
 		c.pointOfSaleUsecase = usecase.NewPointOfSaleUsecase(c.PointOfSaleRepo(), c.CompanyRepo())
@@ -413,6 +424,7 @@ func (c *Container) Modules() []deliveryModules.Module {
 	if c.modules == nil {
 		c.modules = []deliveryModules.Module{
 			company.NewModule(c.CompanyUsecase()),
+			apikey.NewModule(c.ApiKeyUsecase()),
 			pos.NewModule(c.PointOfSaleUsecase()),
 			branch.NewModule(c.BranchUsecase()),
 			customer.NewModule(c.CustomerUsecase()),
@@ -427,11 +439,30 @@ func (c *Container) Modules() []deliveryModules.Module {
 }
 
 func (c *Container) Router() http.Handler {
+	config := config.Load()
 	if c.router == nil {
 		deliveryHttp.SetVerifyAPIKey(postgres.VerifyKey)
-		c.router = deliveryHttp.NewRouter(c.Modules(), c.ApiKeyRepo())
+		companyCreateHandler := c.companyCreateHandler()
+		c.router = deliveryHttp.NewRouter(config, c.Modules(), c.ApiKeyRepo(), companyCreateHandler)
 	}
 	return c.router
+}
+
+func (c *Container) companyCreateHandler() http.HandlerFunc {
+	uc := c.ApiKeyUsecase()
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req usecase.BootstrapCompanyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			deliveryHttp.RespondValidation(w, "payload JSON inválido")
+			return
+		}
+		resp, err := uc.BootstrapCompany(req)
+		if err != nil {
+			deliveryHttp.RespondError(w, err)
+			return
+		}
+		deliveryHttp.WriteJSON(w, http.StatusCreated, resp)
+	}
 }
 
 func (c *Container) Server() *http.Server {

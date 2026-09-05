@@ -25,6 +25,7 @@ const (
 	CodeSiatRejected    = "SIAT_REJECTED"
 	CodeSiatUnavailable = "SIAT_UNAVAILABLE"
 	CodeInternal        = "INTERNAL"
+	CodeRateLimited     = "RATE_LIMITED"
 )
 
 // errorDetail es un mensaje individual dentro de un error (p.ej. cada

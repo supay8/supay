@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/brandsrx/supay/internal/config"
 	"github.com/brandsrx/supay/internal/delivery/http/modules"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -17,7 +18,8 @@ const maxBodyBytes int64 = 10 << 20
 // NewRouter construye el router de Chi con todas las rutas de la API.
 // lookup resuelve API keys a tenants. Si lookup es nil la API queda abierta
 // (útil para tests de handlers aislados).
-func NewRouter(modules []modules.Module, lookup ApiKeyLookup) http.Handler {
+// companyCreateHandler es el handler público para POST /companies (bootstrap).
+func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup, companyCreateHandler http.HandlerFunc) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
@@ -33,7 +35,7 @@ func NewRouter(modules []modules.Module, lookup ApiKeyLookup) http.Handler {
 			"http://127.0.0.1:5173",
 		},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With", "X-API-Key"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With", "X-API-Key", "X-Backend-Token"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
@@ -44,6 +46,13 @@ func NewRouter(modules []modules.Module, lookup ApiKeyLookup) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok","message":"Supay API running"}`))
+	})
+
+	// POST /companies es público para bootstrap (con rate-limit por IP)
+	r.Group(func(r chi.Router) {
+		r.Use(InternalBootstrapMiddleware(cfg.BackendSecret))
+		r.With(RateLimitIP(10/60, 10, 5*time.Minute)).Post("/internal/companies", companyCreateHandler)
+
 	})
 
 	r.Group(func(r chi.Router) {

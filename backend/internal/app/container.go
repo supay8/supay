@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/notification"
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/adapters/siat/sandbox"
 	"github.com/brandsrx/supay/internal/config"
@@ -59,6 +60,7 @@ type Container struct {
 	invoiceEventRepo           domain.InvoiceEventRepository
 	invoiceDocumentRepo        domain.InvoiceDocumentRepository
 	certificateRepo            domain.CertificateRepository
+	maintenanceRepo            domain.MaintenanceRepository
 
 	// Servicios de infraestructura
 	cryptoSvc    *crypto.Service
@@ -67,6 +69,7 @@ type Container struct {
 	siatProvider siat.SiatClientProvider
 	siatService  *siat.Service
 	pdfService   *pdf.Service
+	notifier     ports.Notifier
 
 	// Usecases
 	companyUsecase     *usecase.CompanyUsecase
@@ -79,6 +82,8 @@ type Container struct {
 	siatUsecase        *usecase.SiatUsecase
 	certificateUsecase *usecase.CertificateUsecase
 	credentialService  *usecase.CredentialService
+	maintenanceService *usecase.MaintenanceService
+	maintenanceMetrics *usecase.MaintenanceMetrics
 
 	// HTTP
 	modules []deliveryModules.Module
@@ -231,6 +236,13 @@ func (c *Container) CertificateRepo() domain.CertificateRepository {
 	return c.certificateRepo
 }
 
+func (c *Container) MaintenanceRepo() domain.MaintenanceRepository {
+	if c.maintenanceRepo == nil {
+		c.maintenanceRepo = postgres.NewPostgresMaintenanceRepository(c.db)
+	}
+	return c.maintenanceRepo
+}
+
 func (c *Container) CryptoService() *crypto.Service {
 	if c.cryptoSvc == nil {
 		if key := c.cfg.EncryptionKey; key != "" {
@@ -318,6 +330,13 @@ func (c *Container) PdfService() *pdf.Service {
 	return c.pdfService
 }
 
+func (c *Container) Notifier() ports.Notifier {
+	if c.notifier == nil {
+		c.notifier = notification.NewWebhookNotifier(c.cfg.Maintenance.NotificationTimeout)
+	}
+	return c.notifier
+}
+
 func (c *Container) CredentialService() *usecase.CredentialService {
 	if c.credentialService == nil {
 		c.credentialService = usecase.NewCredentialServiceWithProvider(
@@ -334,8 +353,37 @@ func (c *Container) CredentialService() *usecase.CredentialService {
 				c.cfg.SiatInfra.Modalidad,
 			)
 		}
+		c.credentialService.SetRenewalPolicy(
+			c.cfg.Maintenance.CuisRenewalLead,
+			c.cfg.Maintenance.CuisFallbackValidity,
+		)
 	}
 	return c.credentialService
+}
+
+func (c *Container) MaintenanceMetrics() *usecase.MaintenanceMetrics {
+	if c.maintenanceMetrics == nil {
+		c.maintenanceMetrics = &usecase.MaintenanceMetrics{}
+	}
+	return c.maintenanceMetrics
+}
+
+func (c *Container) MaintenanceService() *usecase.MaintenanceService {
+	if c.maintenanceService == nil {
+		c.maintenanceService = usecase.NewMaintenanceService(
+			c.MaintenanceRepo(),
+			c.CredentialService(),
+			c.Notifier(),
+			c.MaintenanceMetrics(),
+			usecase.MaintenanceOptions{
+				CufdRenewalLead:      c.cfg.Maintenance.CufdRenewalLead,
+				CuisRenewalLead:      c.cfg.Maintenance.CuisRenewalLead,
+				CuisFallbackValidity: c.cfg.Maintenance.CuisFallbackValidity,
+				DefaultWebhookURL:    c.cfg.Maintenance.CertificateWebhookURL,
+			},
+		)
+	}
+	return c.maintenanceService
 }
 
 func (c *Container) CompanyUsecase() *usecase.CompanyUsecase {

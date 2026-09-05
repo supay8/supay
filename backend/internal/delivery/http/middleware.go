@@ -28,11 +28,8 @@ func InternalBootstrapMiddleware(secret string) func(http.Handler) http.Handler 
 			log.Println("Pasa por el middleware de bootstrap interno")
 
 			token := r.Header.Get("X-Backend-Token")
-
-			// Comparamos de forma segura contra tiempos de respuesta
 			match := subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1
 
-			// CORREGIDO: Si NO coincide (!match), bloqueamos con Unauthorized
 			if !match {
 				http.Error(w, "Unauthorized internal request", http.StatusUnauthorized)
 				return

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -31,6 +32,8 @@ func main() {
 
 	container := app.NewContainer(cfg, db)
 	app.StartStaleEmissionReaper(container.InvoiceRepo())
+	stopMaintenance := app.StartMaintenanceScheduler(context.Background(), container.MaintenanceService(), cfg.Maintenance)
+	defer stopMaintenance()
 
 	log.Printf("Servidor escuchando en el puerto :%s", cfg.Port)
 	if err := app.RunServer(container.Server()); err != nil {

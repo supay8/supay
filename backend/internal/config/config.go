@@ -32,6 +32,7 @@ type Config struct {
 	StoragePath          string // base path para driver local
 	R2                   R2Config
 	AllowCustomIssueDate bool // dev-only: permite POST /invoices con issue_date arbitrario
+	Maintenance          MaintenanceConfig
 }
 
 // SiatInfraConfig retiene solo infra compartida, sin credenciales por empresa.
@@ -52,6 +53,20 @@ type R2Config struct {
 	Bucket          string
 	PublicURL       string
 	Endpoint        string // override opcional, por defecto https://<account>.r2.cloudflarestorage.com
+}
+
+// MaintenanceConfig controla el scheduler liviano de la fase 8. Todos los
+// intervalos son configurables para poder acelerar pruebas y despliegues.
+type MaintenanceConfig struct {
+	Enabled               bool
+	CredentialInterval    time.Duration
+	CertificateInterval   time.Duration
+	JobTimeout            time.Duration
+	CufdRenewalLead       time.Duration
+	CuisRenewalLead       time.Duration
+	CuisFallbackValidity  time.Duration
+	NotificationTimeout   time.Duration
+	CertificateWebhookURL string
 }
 
 func Load() Config {
@@ -136,6 +151,17 @@ func Load() Config {
 	}
 
 	allowCustomIssueDate := parseBoolEnv("ALLOW_CUSTOM_ISSUE_DATE", ambiente == siat.AmbientePruebas)
+	maintenance := MaintenanceConfig{
+		Enabled:               parseBoolEnv("MAINTENANCE_ENABLED", true),
+		CredentialInterval:    parseDuration(getEnv("CREDENTIAL_RENEWAL_INTERVAL", "1h"), time.Hour),
+		CertificateInterval:   parseDuration(getEnv("CERTIFICATE_CHECK_INTERVAL", "24h"), 24*time.Hour),
+		JobTimeout:            parseDuration(getEnv("MAINTENANCE_JOB_TIMEOUT", "5m"), 5*time.Minute),
+		CufdRenewalLead:       parseDuration(getEnv("CUFD_RENEWAL_LEAD", "4h"), 4*time.Hour),
+		CuisRenewalLead:       parseDuration(getEnv("CUIS_RENEWAL_LEAD", "720h"), 30*24*time.Hour),
+		CuisFallbackValidity:  parseDuration(getEnv("CUIS_FALLBACK_VALIDITY", "8760h"), 365*24*time.Hour),
+		NotificationTimeout:   parseDuration(getEnv("CERTIFICATE_NOTIFICATION_TIMEOUT", "10s"), 10*time.Second),
+		CertificateWebhookURL: strings.TrimSpace(os.Getenv("CERTIFICATE_ALERT_WEBHOOK_URL")),
+	}
 
 	encryptionKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
 	if encryptionKey == "" {
@@ -162,6 +188,7 @@ func Load() Config {
 		R2:                   r2Cfg,
 		BackendSecret:        BackendSecret,
 		AllowCustomIssueDate: allowCustomIssueDate,
+		Maintenance:          maintenance,
 	}
 }
 

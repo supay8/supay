@@ -703,16 +703,22 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 **Mejora:** el tenant nunca se queda sin credenciales vigentes, y la cola de emisión se prueba con CUFDs reales. Además, se alerta antes de que venza el certificado P12 (que no se renueva automáticamente).
 
-- [ ] Crear job programado que revise CUFD próximos a vencer (~4h antes del vencimiento).
-- [ ] Crear job programado que renueve CUIS cuando esté próximo a vencer.
-- [ ] Antes de encolar una factura, validar CUFD vigente; si no, renovar primero.
-- [ ] Alertas/métricas cuando la renovación falle.
-- [ ] Job diario que revise `certificates.not_after` a 30, 15 y 7 días del vencimiento.
-- [ ] Notificar al tenant vía webhook o email en cada umbral.
-- [ ] Auto-transicionar certificados vencidos a `status = 'EXPIRED'` y alertar internamente si un certificado `ACTIVE` ya pasó `not_after`.
-- [ ] Tests de escenario: "factura en cola espera CUFD"; "certificado a 7 días de vencer dispara alerta".
+- [x] Crear job programado que revise CUFD próximos a vencer (~4h antes del vencimiento).
+- [x] Crear job programado que renueve CUIS cuando esté próximo a vencer.
+- [x] Antes de encolar una factura, validar CUFD vigente; si no, renovar primero.
+- [x] Alertas/métricas cuando la renovación falle.
+- [x] Job diario que revise `certificates.not_after` a 30, 15 y 7 días del vencimiento.
+- [x] Notificar al tenant vía webhook o email en cada umbral.
+- [x] Auto-transicionar certificados vencidos a `status = 'EXPIRED'` y alertar internamente si un certificado `ACTIVE` ya pasó `not_after`.
+- [x] Tests de escenario: "factura en cola espera CUFD"; "certificado a 7 días de vencer dispara alerta".
 
 > **Nota técnica:** los jobs de esta fase usan un scheduler liviano propio (cron/ticker) para no depender de River, que se elige en Fase 9. Si finalmente se usa River para todo, Fase 8 y Fase 9 se planifican juntas, aunque se documenten por separado.
+>
+> **Implementación:** el webhook por tenant se configura con `certificate_webhook_url`
+> al registrar o actualizar la compañía (se persiste en `tenant_configs.settings`);
+> `CERTIFICATE_ALERT_WEBHOOK_URL`
+> funciona como fallback operativo global. Las alertas se deduplican en
+> `certificate_notifications` y reintentan entregas fallidas.
 
 **Entregable:** credenciales SIAT siempre vigentes; certificados P12 monitoreados; fallback controlado si falla renovación.
 

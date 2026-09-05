@@ -1,9 +1,12 @@
 package postgres
 
 import (
+	"encoding/json"
+
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -31,9 +34,13 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 		PiePagina:       c.PiePagina,
 		UsuarioSiat:     c.UsuarioSiat,
 	}
+	settings, err := tenantSettingsWithCertificateWebhook(nil, c.CertificateWebhookURL)
+	if err != nil {
+		return err
+	}
 	config := models.TenantConfig{
 		TenantID: tenant.ID, CodigoSistema: c.CodigoSistema,
-		Ambiente: models.SiatEnvironment(c.Ambiente), CodigoModalidad: modalidad,
+		Ambiente: models.SiatEnvironment(c.Ambiente), CodigoModalidad: modalidad, Settings: settings,
 	}
 
 	if err := r.db.Transaction(func(tx *gorm.DB) error {
@@ -92,26 +99,31 @@ func toDomainCompany(dbModel *models.Company) *domain.Company {
 		modalidad = dbModel.Config.CodigoModalidad
 	}
 	return &domain.Company{
-		ID:              dbModel.ID,
-		Nit:             dbModel.Nit,
-		BusinessName:    dbModel.BusinessName,
-		CodigoSistema:   codigoSistema,
-		Ambiente:        domain.SiatEnvironment(ambiente),
-		Modalidad:       modalidad,
-		Municipio:       dbModel.Municipio,
-		Direccion:       dbModel.Direccion,
-		Telefono:        dbModel.Telefono,
-		CodigoActividad: dbModel.CodigoActividad,
-		PiePagina:       dbModel.PiePagina,
-		UsuarioSiat:     dbModel.UsuarioSiat,
-		CreatedAt:       dbModel.CreatedAt,
-		UpdatedAt:       dbModel.UpdatedAt,
+		ID:                    dbModel.ID,
+		Nit:                   dbModel.Nit,
+		BusinessName:          dbModel.BusinessName,
+		CodigoSistema:         codigoSistema,
+		Ambiente:              domain.SiatEnvironment(ambiente),
+		Modalidad:             modalidad,
+		Municipio:             dbModel.Municipio,
+		Direccion:             dbModel.Direccion,
+		Telefono:              dbModel.Telefono,
+		CodigoActividad:       dbModel.CodigoActividad,
+		PiePagina:             dbModel.PiePagina,
+		UsuarioSiat:           dbModel.UsuarioSiat,
+		CertificateWebhookURL: certificateWebhookURL(json.RawMessage(dbModel.Config.Settings)),
+		CreatedAt:             dbModel.CreatedAt,
+		UpdatedAt:             dbModel.UpdatedAt,
 	}
 }
 
 func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	var tenant models.Company
 	if err := r.db.Where("id = ?", c.ID).First(&tenant).Error; err != nil {
+		return err
+	}
+	var tenantConfig models.TenantConfig
+	if err := r.db.Where("tenant_id = ?", c.ID).First(&tenantConfig).Error; err != nil {
 		return err
 	}
 
@@ -128,6 +140,10 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	tenant.PiePagina = c.PiePagina
 	tenant.UsuarioSiat = c.UsuarioSiat
 
+	settings, err := tenantSettingsWithCertificateWebhook(tenantConfig.Settings, c.CertificateWebhookURL)
+	if err != nil {
+		return err
+	}
 	if err := r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&tenant).Error; err != nil {
 			return err
@@ -136,6 +152,7 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 			"codigo_sistema":   c.CodigoSistema,
 			"ambiente":         models.SiatEnvironment(c.Ambiente),
 			"codigo_modalidad": modalidad,
+			"settings":         settings,
 			"updated_at":       gorm.Expr("now()"),
 		}).Error
 	}); err != nil {
@@ -147,6 +164,33 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 
 	c.UpdatedAt = tenant.UpdatedAt
 	return nil
+}
+
+func tenantSettingsWithCertificateWebhook(raw datatypes.JSON, webhookURL string) (datatypes.JSON, error) {
+	settings := make(map[string]any)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return nil, err
+		}
+	}
+	// Normaliza el formato legacy top-level al bloque canónico.
+	delete(settings, "certificate_webhook_url")
+	alerts, _ := settings["certificate_alerts"].(map[string]any)
+	if alerts == nil {
+		alerts = make(map[string]any)
+	}
+	if webhookURL == "" {
+		delete(alerts, "webhook_url")
+	} else {
+		alerts["webhook_url"] = webhookURL
+	}
+	if len(alerts) == 0 {
+		delete(settings, "certificate_alerts")
+	} else {
+		settings["certificate_alerts"] = alerts
+	}
+	encoded, err := json.Marshal(settings)
+	return datatypes.JSON(encoded), err
 }
 
 func (r *PostgresCompanyRepository) Delete(id string) error {

@@ -1348,6 +1348,25 @@ func TestBuildSolicitudFacturaSinProviderMantieneError(t *testing.T) {
 	}
 }
 
+func TestEmitEsperaCufdAntesDeClaim(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	inv := testInvoice()
+	repo.invoices[inv.ID] = inv
+	provider := &fakeCredentialProvider{cufdErr: errors.New("renovación CUFD temporalmente no disponible")}
+	uc := newTestUsecase(repo, &fakeCatalogRepo{}, &fakeEmissionService{})
+	uc.credentials = provider
+
+	if _, err := uc.Emit(context.Background(), inv.ID); err == nil {
+		t.Fatal("se esperaba que la emisión esperara la renovación del CUFD")
+	}
+	if repo.claimCalls != 0 {
+		t.Fatalf("ClaimForEmission fue llamado %d veces antes de tener CUFD", repo.claimCalls)
+	}
+	if inv.Status != domain.InvoicePending {
+		t.Fatalf("status=%s, la factura debe permanecer PENDING mientras espera CUFD", inv.Status)
+	}
+}
+
 func TestListInvoices(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,

@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"errors"
+	"net/url"
+	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
 	"gorm.io/gorm"
@@ -23,24 +25,26 @@ type RegisterCompanyRequest struct {
 	UsuarioSiat   string                 `json:"usuario_siat,omitempty"`
 	// Datos del emisor que viajan en la cabecera de la factura. Municipio y
 	// dirección deben coincidir con el padrón del SIAT.
-	Municipio       string  `json:"municipio,omitempty"`
-	Direccion       string  `json:"direccion,omitempty"`
-	Telefono        string  `json:"telefono,omitempty"`
-	CodigoActividad *string `json:"codigo_actividad,omitempty"`
-	PiePagina       string  `json:"pie_pagina,omitempty"`
+	Municipio             string  `json:"municipio,omitempty"`
+	Direccion             string  `json:"direccion,omitempty"`
+	Telefono              string  `json:"telefono,omitempty"`
+	CodigoActividad       *string `json:"codigo_actividad,omitempty"`
+	PiePagina             string  `json:"pie_pagina,omitempty"`
+	CertificateWebhookURL string  `json:"certificate_webhook_url,omitempty"`
 }
 
 type UpdateCompanyRequest struct {
-	Nit             *string                 `json:"nit,omitempty"`
-	BusinessName    *string                 `json:"business_name,omitempty"`
-	CodigoSistema   *string                 `json:"codigo_sistema,omitempty"`
-	Ambiente        *domain.SiatEnvironment `json:"ambiente,omitempty"`
-	UsuarioSiat     *string                 `json:"usuario_siat,omitempty"`
-	Municipio       *string                 `json:"municipio,omitempty"`
-	Direccion       *string                 `json:"direccion,omitempty"`
-	Telefono        *string                 `json:"telefono,omitempty"`
-	CodigoActividad *string                 `json:"codigo_actividad,omitempty"`
-	PiePagina       *string                 `json:"pie_pagina,omitempty"`
+	Nit                   *string                 `json:"nit,omitempty"`
+	BusinessName          *string                 `json:"business_name,omitempty"`
+	CodigoSistema         *string                 `json:"codigo_sistema,omitempty"`
+	Ambiente              *domain.SiatEnvironment `json:"ambiente,omitempty"`
+	UsuarioSiat           *string                 `json:"usuario_siat,omitempty"`
+	Municipio             *string                 `json:"municipio,omitempty"`
+	Direccion             *string                 `json:"direccion,omitempty"`
+	Telefono              *string                 `json:"telefono,omitempty"`
+	CodigoActividad       *string                 `json:"codigo_actividad,omitempty"`
+	PiePagina             *string                 `json:"pie_pagina,omitempty"`
+	CertificateWebhookURL *string                 `json:"certificate_webhook_url,omitempty"`
 }
 
 func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company, error) {
@@ -62,16 +66,17 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 	}
 
 	company := &domain.Company{
-		Nit:             req.Nit,
-		BusinessName:    req.BusinessName,
-		CodigoSistema:   req.CodigoSistema,
-		Ambiente:        req.Ambiente,
-		UsuarioSiat:     req.UsuarioSiat,
-		Municipio:       req.Municipio,
-		Direccion:       req.Direccion,
-		Telefono:        req.Telefono,
-		CodigoActividad: req.CodigoActividad,
-		PiePagina:       req.PiePagina,
+		Nit:                   req.Nit,
+		BusinessName:          req.BusinessName,
+		CodigoSistema:         req.CodigoSistema,
+		Ambiente:              req.Ambiente,
+		UsuarioSiat:           req.UsuarioSiat,
+		Municipio:             req.Municipio,
+		Direccion:             req.Direccion,
+		Telefono:              req.Telefono,
+		CodigoActividad:       req.CodigoActividad,
+		PiePagina:             req.PiePagina,
+		CertificateWebhookURL: strings.TrimSpace(req.CertificateWebhookURL),
 	}
 
 	if company.Ambiente == "" {
@@ -84,6 +89,9 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 	if !validEnvironment(company.Ambiente) {
 		return nil, domain.NewBadRequestError("el ambiente debe ser PILOTO o PRODUCCION")
 	}
+	if !validWebhookURL(company.CertificateWebhookURL) {
+		return nil, domain.NewBadRequestError("certificate_webhook_url debe ser una URL HTTP(S) válida")
+	}
 
 	if err := uc.repo.Create(company); err != nil {
 		return nil, err
@@ -94,6 +102,14 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 
 func validEnvironment(a domain.SiatEnvironment) bool {
 	return a == domain.EnvironmentPiloto || a == domain.EnvironmentProduccion
+}
+
+func validWebhookURL(value string) bool {
+	if value == "" {
+		return true
+	}
+	parsed, err := url.ParseRequestURI(value)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != "" && parsed.User == nil
 }
 
 func (uc *CompanyUsecase) GetByNit(nit string) (*domain.Company, error) {
@@ -160,6 +176,13 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 	}
 	if req.PiePagina != nil {
 		existing.PiePagina = *req.PiePagina
+	}
+	if req.CertificateWebhookURL != nil {
+		webhookURL := strings.TrimSpace(*req.CertificateWebhookURL)
+		if !validWebhookURL(webhookURL) {
+			return nil, domain.NewBadRequestError("certificate_webhook_url debe ser una URL HTTP(S) válida")
+		}
+		existing.CertificateWebhookURL = webhookURL
 	}
 
 	if err := uc.repo.Update(existing); err != nil {

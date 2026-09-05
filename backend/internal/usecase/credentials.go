@@ -34,24 +34,64 @@ type CredentialProvider interface {
 // CUIS/CUFD que antes vivía duplicada en SiatUsecase: construir la solicitud
 // con la identidad de la empresa/PV, llamar al SIAT y persistir el resultado.
 type CredentialService struct {
-	posRepo     CredentialPosStore
-	cufdRepo    CredentialCufdStore
-	siatService ports.FiscalService
-	modalidad   int
-	provider    siat.SiatClientProvider
+	posRepo              CredentialPosStore
+	cufdRepo             CredentialCufdStore
+	siatService          ports.FiscalService
+	modalidad            int
+	provider             siat.SiatClientProvider
+	cuisRenewalLead      time.Duration
+	cuisFallbackValidity time.Duration
 }
 
+const (
+	defaultCuisRenewalLead      = 30 * 24 * time.Hour
+	defaultCuisFallbackValidity = 365 * 24 * time.Hour
+)
+
 func NewCredentialService(posRepo CredentialPosStore, cufdRepo CredentialCufdStore, siatService ports.FiscalService, modalidad int) *CredentialService {
-	return &CredentialService{posRepo: posRepo, cufdRepo: cufdRepo, siatService: siatService, modalidad: modalidad}
+	return &CredentialService{
+		posRepo: posRepo, cufdRepo: cufdRepo, siatService: siatService, modalidad: modalidad,
+		cuisRenewalLead: defaultCuisRenewalLead, cuisFallbackValidity: defaultCuisFallbackValidity,
+	}
 }
 
 // NewCredentialServiceWithProvider crea el servicio con resolución por empresa via provider.
 func NewCredentialServiceWithProvider(posRepo CredentialPosStore, cufdRepo CredentialCufdStore, provider siat.SiatClientProvider, modalidad int) *CredentialService {
-	return &CredentialService{posRepo: posRepo, cufdRepo: cufdRepo, provider: provider, modalidad: modalidad}
+	return &CredentialService{
+		posRepo: posRepo, cufdRepo: cufdRepo, provider: provider, modalidad: modalidad,
+		cuisRenewalLead: defaultCuisRenewalLead, cuisFallbackValidity: defaultCuisFallbackValidity,
+	}
 }
 
 // SetProvider inyecta el provider multi-tenant después de construir (para wiring sin ciclo).
 func (s *CredentialService) SetProvider(p siat.SiatClientProvider) { s.provider = p }
+
+// SetRenewalPolicy permite que el scheduler y la resolución lazy compartan la
+// misma política de vigencia. Los valores no positivos conservan los defaults.
+func (s *CredentialService) SetRenewalPolicy(cuisLead, cuisFallbackValidity time.Duration) {
+	if cuisLead > 0 {
+		s.cuisRenewalLead = cuisLead
+	}
+	if cuisFallbackValidity > 0 {
+		s.cuisFallbackValidity = cuisFallbackValidity
+	}
+}
+
+// CuisNeedsRenewal informa si el CUIS falta o entra en la ventana preventiva.
+// Los registros legacy sin ninguna fecha se consideran utilizables; la
+// migración de fase 8 completa la expiración de los registros persistidos.
+func CuisNeedsRenewal(pos *domain.PointOfSale, now time.Time, lead, fallbackValidity time.Duration) bool {
+	if pos == nil || pos.Cuis == nil || *pos.Cuis == "" {
+		return true
+	}
+	if pos.CuisExpiresAt != nil {
+		return !pos.CuisExpiresAt.After(now.Add(lead))
+	}
+	if pos.CuisCreatedAt != nil {
+		return !pos.CuisCreatedAt.Add(fallbackValidity).After(now.Add(lead))
+	}
+	return false
+}
 
 func (s *CredentialService) effectiveModalidad() int {
 	if s.modalidad <= 0 {
@@ -84,31 +124,25 @@ func (s *CredentialService) resolveClient(ctx context.Context, company *domain.C
 	return s.siatService, nil
 }
 
-// EnsureCuis garantiza que el punto de venta tenga un CUIS persistido. Si ya
-// tiene uno, no hace nada (el CUIS es vigente por meses).
+// EnsureCuis garantiza que el punto de venta tenga un CUIS persistido y fuera
+// de la ventana preventiva de renovación.
 func (s *CredentialService) EnsureCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) error {
-	if pos.Cuis != nil && *pos.Cuis != "" {
+	now := time.Now().In(siat.LaPaz)
+	if !CuisNeedsRenewal(pos, now, s.cuisRenewalLead, s.cuisFallbackValidity) {
 		return nil
 	}
-	resp, err := s.requestCuis(ctx, company, pos)
-	if err != nil {
-		return err
-	}
-	pos.Cuis = &resp.Codigo
-	now := time.Now().In(siat.LaPaz)
-	pos.CuisCreatedAt = &now
-	if err := s.posRepo.Update(pos); err != nil {
-		slog.Error("no se pudo persistir el cuis en el punto de venta", "pos_id", pos.ID, "error", err)
-		return domain.NewConflictError("no se pudo persistir el cuis en el punto de venta")
-	}
-	return nil
+	_, err := s.RefreshCuis(ctx, company, pos)
+	return err
 }
 
 // EnsureCufd devuelve el CUFD vigente del punto de venta, solicitando uno
 // nuevo al SIAT cuando no existe o venció (validez ~24h).
 func (s *CredentialService) EnsureCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*domain.Cufd, error) {
 	if cufd, err := s.cufdRepo.GetActiveByPos(pos.ID); err == nil && cufd != nil {
-		return cufd, nil
+		now := time.Now().In(siat.LaPaz)
+		if cufd.Active && !now.Before(cufd.ValidFrom) && !now.After(cufd.ValidTo) {
+			return cufd, nil
+		}
 	}
 	resp, err := s.requestCufd(ctx, company, pos)
 	if err != nil {
@@ -141,6 +175,11 @@ func (s *CredentialService) RefreshCuis(ctx context.Context, company *domain.Com
 	pos.Cuis = &resp.Codigo
 	now := time.Now().In(siat.LaPaz)
 	pos.CuisCreatedAt = &now
+	expiresAt := resp.FechaVigencia
+	if !expiresAt.After(now) {
+		expiresAt = now.Add(s.cuisFallbackValidity)
+	}
+	pos.CuisExpiresAt = &expiresAt
 	if err := s.posRepo.Update(pos); err != nil {
 		slog.Error("no se pudo persistir el cuis en el punto de venta", "pos_id", pos.ID, "error", err)
 		return nil, domain.NewConflictError("no se pudo persistir el cuis en el punto de venta")

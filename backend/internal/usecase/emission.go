@@ -73,6 +73,12 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		}
 		return nil, domain.NewConflictError("solo se pueden emitir facturas en estado PENDING")
 	}
+	// La factura permanece PENDING mientras espera credenciales. Esto evita
+	// ocupar el estado SENDING (y, en fase 9, un worker de la cola) con una
+	// factura que todavía no tiene CUIS/CUFD utilizable.
+	if err := uc.prepareCredentialsForEmission(ctx, inv); err != nil {
+		return nil, err
+	}
 
 	// Claim atómico PENDING->SENDING: evita emisiones duplicadas concurrentes.
 	claimed, err := uc.invoiceRepo.ClaimForEmission(id)
@@ -168,6 +174,29 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	return inv, nil
 }
 
+func (uc *InvoiceUsecase) prepareCredentialsForEmission(ctx context.Context, inv *domain.Invoice) error {
+	if uc.credentials == nil {
+		return nil
+	}
+	company := inv.Company
+	pos := inv.PointOfSale
+	if err := uc.credentials.EnsureCuis(ctx, &company, &pos); err != nil {
+		return err
+	}
+	cufd, err := uc.credentials.EnsureCufd(ctx, &company, &pos)
+	if err != nil {
+		return err
+	}
+	if cufd == nil || cufd.ID == "" {
+		return domain.NewConflictError("no se pudo obtener un cufd vigente antes de emitir")
+	}
+	inv.Company = company
+	inv.PointOfSale = pos
+	inv.CufdId = cufd.ID
+	inv.CufdRecord = *cufd
+	return nil
+}
+
 // persistResultadoConReintentos persiste el resultado de la emisión reintentando
 // ante fallos transitorios del repositorio. Es crítico: el SIAT ya aceptó (o
 // rechazó) la factura, así que perder el CUF dejaría la factura irrecuperable
@@ -182,6 +211,7 @@ func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, res
 			"cuf": inv.Cuf, "xml": inv.Xml, "xml_hash": inv.XmlHash,
 			"archivo": inv.Archivo, "hash_archivo": inv.HashArchivo,
 			"siat_reception_code": inv.SiatReceptionCode, "siat_mensajes": inv.SiatMensajes,
+			"cufd_id": inv.CufdId,
 		}
 		event := invoiceTransitionEvent(inv, domain.InvoiceSending, inv.Status, reason, map[string]any{
 			"source": "Emit", "codigo_estado": result.CodigoEstado,
@@ -574,6 +604,10 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		if now.Before(cufd.ValidFrom) || now.After(cufd.ValidTo) {
 			return nil, domain.NewConflictError("el cufd asociado a la factura está vencido; solicite uno nuevo")
 		}
+	}
+	if cufd.ID != "" {
+		inv.CufdId = cufd.ID
+		inv.CufdRecord = cufd
 	}
 
 	if company.CodigoActividad == nil || strings.TrimSpace(*company.CodigoActividad) == "" {

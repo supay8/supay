@@ -48,6 +48,7 @@ func (r *PostgresPointOfSaleRepository) Create(pos *domain.PointOfSale) error {
 			Description:      pos.Description,
 			Cuis:             pos.Cuis,
 			CuisCreatedAt:    pos.CuisCreatedAt,
+			CuisExpiresAt:    pos.CuisExpiresAt,
 			IsActive:         pos.IsActive,
 			SiatCode:         pos.SiatCode,
 			Status:           pos.Status,
@@ -122,6 +123,7 @@ func (r *PostgresPointOfSaleRepository) Update(pos *domain.PointOfSale) error {
 	dbModel.Description = pos.Description
 	dbModel.Cuis = pos.Cuis
 	dbModel.CuisCreatedAt = pos.CuisCreatedAt
+	dbModel.CuisExpiresAt = pos.CuisExpiresAt
 	dbModel.IsActive = pos.IsActive
 	dbModel.SiatCode = pos.SiatCode
 	dbModel.Status = pos.Status
@@ -160,6 +162,7 @@ func toDomainPointOfSale(dbModel *models.PointOfSale) *domain.PointOfSale {
 		Description:      dbModel.Description,
 		Cuis:             dbModel.Cuis,
 		CuisCreatedAt:    dbModel.CuisCreatedAt,
+		CuisExpiresAt:    dbModel.CuisExpiresAt,
 		IsActive:         dbModel.IsActive,
 		SiatCode:         dbModel.SiatCode,
 		Status:           dbModel.Status,

@@ -13,9 +13,9 @@ import (
 )
 
 type ApiKeyUsecase struct {
-	companyRepo    domain.CompanyRepository
-	apiKeyRepo     *postgres.PostgresApiKeyRepository
-	db             *gorm.DB
+	companyRepo domain.CompanyRepository
+	apiKeyRepo  *postgres.PostgresApiKeyRepository
+	db          *gorm.DB
 }
 
 func NewApiKeyUsecase(companyRepo domain.CompanyRepository, apiKeyRepo *postgres.PostgresApiKeyRepository, db *gorm.DB) *ApiKeyUsecase {
@@ -31,20 +31,20 @@ type CreateApiKeyRequest struct {
 }
 
 type CreateApiKeyResponse struct {
-	APIKey     string          `json:"api_key"`
-	KeyPrefix  string          `json:"key_prefix"`
-	ID         string          `json:"id"`
-	Name       string          `json:"name"`
-	CreatedAt  string          `json:"created_at"`
+	APIKey    string `json:"api_key"`
+	KeyPrefix string `json:"key_prefix"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
 }
 
 type ListApiKeyResponse struct {
-	ID         string `json:"id"`
-	KeyPrefix  string `json:"key_prefix"`
-	Name       string `json:"name"`
-	IsActive   bool   `json:"is_active"`
+	ID         string  `json:"id"`
+	KeyPrefix  string  `json:"key_prefix"`
+	Name       string  `json:"name"`
+	IsActive   bool    `json:"is_active"`
 	LastUsedAt *string `json:"last_used_at,omitempty"`
-	CreatedAt  string `json:"created_at"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 func (uc *ApiKeyUsecase) Generate(tenantID, name string) (string, *models.ApiKey, error) {
@@ -156,10 +156,10 @@ type BootstrapCompanyRequest struct {
 }
 
 type BootstrapCompanyResponse struct {
-	Company  *domain.Company `json:"company"`
-	APIKey   string          `json:"api_key"`
-	KeyPrefix string         `json:"key_prefix"`
-	KeyID    string          `json:"key_id"`
+	Company   *domain.Company `json:"company"`
+	APIKey    string          `json:"api_key"`
+	KeyPrefix string          `json:"key_prefix"`
+	KeyID     string          `json:"key_id"`
 }
 
 func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (BootstrapCompanyResponse, error) {
@@ -171,16 +171,17 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 	}
 
 	company := &domain.Company{
-		Nit:             req.Nit,
-		BusinessName:    req.BusinessName,
-		CodigoSistema:   req.CodigoSistema,
-		Ambiente:        req.Ambiente,
-		UsuarioSiat:     req.UsuarioSiat,
-		Municipio:       req.Municipio,
-		Direccion:       req.Direccion,
-		Telefono:        req.Telefono,
-		CodigoActividad: req.CodigoActividad,
-		PiePagina:       req.PiePagina,
+		Nit:                   req.Nit,
+		BusinessName:          req.BusinessName,
+		CodigoSistema:         req.CodigoSistema,
+		Ambiente:              req.Ambiente,
+		UsuarioSiat:           req.UsuarioSiat,
+		Municipio:             req.Municipio,
+		Direccion:             req.Direccion,
+		Telefono:              req.Telefono,
+		CodigoActividad:       req.CodigoActividad,
+		PiePagina:             req.PiePagina,
+		CertificateWebhookURL: strings.TrimSpace(req.CertificateWebhookURL),
 	}
 
 	if company.Ambiente == "" {
@@ -192,6 +193,9 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 
 	if company.Ambiente != domain.EnvironmentPiloto && company.Ambiente != domain.EnvironmentProduccion {
 		return BootstrapCompanyResponse{}, domain.NewBadRequestError("el ambiente debe ser PILOTO o PRODUCCION")
+	}
+	if !validWebhookURL(company.CertificateWebhookURL) {
+		return BootstrapCompanyResponse{}, domain.NewBadRequestError("certificate_webhook_url debe ser una URL HTTP(S) válida")
 	}
 
 	var result BootstrapCompanyResponse

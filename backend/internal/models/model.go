@@ -115,6 +115,7 @@ type PointOfSale struct {
 	Description      string  `gorm:"type:varchar(150);not null"`
 	Cuis             *string `gorm:"type:varchar(100)"`
 	CuisCreatedAt    *time.Time
+	CuisExpiresAt    *time.Time
 	IsActive         bool   `gorm:"default:true;not null"`
 	SiatCode         *int   `gorm:"type:int"`
 	Status           string `gorm:"type:varchar(50);default:'CREATING'"`
@@ -528,3 +529,19 @@ type Certificate struct {
 
 	Company Company `gorm:"foreignKey:CompanyId"`
 }
+
+type CertificateNotification struct {
+	ID            string  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	TenantID      string  `gorm:"column:tenant_id;type:uuid;not null;index"`
+	CertificateID string  `gorm:"column:certificate_id;type:uuid;not null;uniqueIndex:idx_certificate_notification_once,priority:1"`
+	ThresholdDays int     `gorm:"column:threshold_days;not null;uniqueIndex:idx_certificate_notification_once,priority:2"`
+	Channel       string  `gorm:"type:varchar(20);not null;uniqueIndex:idx_certificate_notification_once,priority:3"`
+	Status        string  `gorm:"type:varchar(20);not null"`
+	Attempts      int     `gorm:"not null;default:1"`
+	LastError     *string `gorm:"type:text"`
+	DeliveredAt   *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func (CertificateNotification) TableName() string { return "certificate_notifications" }

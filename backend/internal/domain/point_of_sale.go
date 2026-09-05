@@ -27,6 +27,7 @@ type PointOfSale struct {
 	Description      string     `json:"description"`
 	Cuis             *string    `json:"cuis,omitempty"`
 	CuisCreatedAt    *time.Time `json:"cuis_created_at,omitempty"`
+	CuisExpiresAt    *time.Time `json:"cuis_expires_at,omitempty"`
 	IsActive         bool       `json:"is_active"`
 	SiatCode         *int       `json:"siat_code,omitempty"`
 	Status           string     `json:"status,omitempty"`

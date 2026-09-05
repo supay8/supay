@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
@@ -152,7 +152,8 @@ func TestEnsureCuisYaPresenteNoLlamaSIAT(t *testing.T) {
 }
 
 func TestEnsureCuisAusenteSolicitaYPersiste(t *testing.T) {
-	client := &fakeCredClient{cuis: &siat.RespuestaCuis{Codigo: "CUIS-NUEVO", Transaccion: true}}
+	expiresAt := time.Now().Add(365 * 24 * time.Hour)
+	client := &fakeCredClient{cuis: &siat.RespuestaCuis{Codigo: "CUIS-NUEVO", FechaVigencia: siat.XMLDateTime{Time: expiresAt}, Transaccion: true}}
 	posStore := &fakeCredPOSStore{}
 	svc := NewCredentialService(posStore, &fakeCredCufdStore{}, client, 0)
 	company, pos := credFixtures()
@@ -170,8 +171,30 @@ func TestEnsureCuisAusenteSolicitaYPersiste(t *testing.T) {
 	if pos.CuisCreatedAt == nil {
 		t.Fatal("cuis_created_at no asignado")
 	}
+	if pos.CuisExpiresAt == nil || !pos.CuisExpiresAt.Equal(expiresAt) {
+		t.Fatalf("cuis_expires_at=%v, se esperaba %v", pos.CuisExpiresAt, expiresAt)
+	}
 	if len(posStore.updated) != 1 {
 		t.Fatalf("persistencias=%d, se esperaba 1", len(posStore.updated))
+	}
+}
+
+func TestEnsureCuisProximoAVencerSeRenueva(t *testing.T) {
+	expiresAt := time.Now().Add(24 * time.Hour)
+	newExpiry := time.Now().Add(365 * 24 * time.Hour)
+	client := &fakeCredClient{cuis: &siat.RespuestaCuis{
+		Codigo: "CUIS-RENOVADO", FechaVigencia: siat.XMLDateTime{Time: newExpiry}, Transaccion: true,
+	}}
+	posStore := &fakeCredPOSStore{}
+	svc := NewCredentialService(posStore, &fakeCredCufdStore{}, client, 0)
+	company, pos := credFixtures()
+	pos.CuisExpiresAt = &expiresAt
+
+	if err := svc.EnsureCuis(context.Background(), company, pos); err != nil {
+		t.Fatalf("EnsureCuis: %v", err)
+	}
+	if client.cuisCalls != 1 || pos.Cuis == nil || *pos.Cuis != "CUIS-RENOVADO" {
+		t.Fatalf("el CUIS próximo a vencer no se renovó: calls=%d cuis=%v", client.cuisCalls, pos.Cuis)
 	}
 }
 
@@ -259,7 +282,6 @@ func TestEnsureCufdRechazoSiatEsConflicto(t *testing.T) {
 		t.Fatalf("err=%v, se esperaba ConflictError", err)
 	}
 }
-
 
 func convertMensajes(in []siat.Mensaje) []ports.FiscalMessage {
 	out := make([]ports.FiscalMessage, len(in))

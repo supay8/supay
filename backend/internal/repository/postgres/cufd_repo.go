@@ -37,7 +37,21 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 		ValidTo:       c.ValidTo,
 		Active:        c.Active,
 	}
-	if err := r.db.Create(&model).Error; err != nil {
+	if err := r.db.Transaction(func(tx *gorm.DB) error {
+		if model.Active {
+			// Serializa la rotación por POS: el CUFD recién emitido reemplaza al
+			// anterior aunque este aún estuviera dentro de su ventana temporal.
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", c.PointOfSaleID).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.Cufd{}).
+				Where("tenant_id = ? AND point_of_sale_id = ? AND is_active = true", tenantID, c.PointOfSaleID).
+				Update("is_active", false).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&model).Error
+	}); err != nil {
 		return err
 	}
 	c.ID = model.ID

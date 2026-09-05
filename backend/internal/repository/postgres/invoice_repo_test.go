@@ -208,11 +208,11 @@ func TestClaimStatusTransicionCondicional(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	ok, err := repo.ClaimStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, map[string]any{"motivo_anulacion": 1})
+	ok, err := repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, map[string]any{"motivo_anulacion": 1}, nil)
 	if err != nil || !ok {
 		t.Fatalf("primera transición debe ser true, got ok=%v err=%v", ok, err)
 	}
-	ok, err = repo.ClaimStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, map[string]any{"motivo_anulacion": 1})
+	ok, err = repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, map[string]any{"motivo_anulacion": 1}, nil)
 	if err != nil || ok {
 		t.Fatalf("segunda transición debe ser false, got ok=%v err=%v", ok, err)
 	}

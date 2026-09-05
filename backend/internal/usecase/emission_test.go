@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
@@ -113,8 +113,21 @@ func (f *fakeInvoiceRepo) ClaimForEmission(id string) (bool, error) {
 	if inv.Status != domain.InvoicePending {
 		return false, nil
 	}
-	inv.Status = domain.InvoiceSending
+	claimed := *inv
+	claimed.Status = domain.InvoiceSending
+	f.invoices[id] = &claimed
 	return true, nil
+}
+
+func (f *fakeInvoiceRepo) TransitionStatus(id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
+	if err := (domain.InvoiceStateMachine{}).Transition(from, to, reason); err != nil {
+		return false, err
+	}
+	claimed, err := f.ClaimStatus(id, from, to, fields)
+	if claimed {
+		f.updateCalls++
+	}
+	return claimed, err
 }
 
 func (f *fakeInvoiceRepo) ClaimStatus(id string, from, to domain.InvoiceStatus, fields map[string]any) (bool, error) {
@@ -1704,9 +1717,9 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 	uc, _, _, _ := createTestUsecaseBuilder()
 
 	tests := []struct {
-		name     string
-		req      CreateInvoiceRequest
-		wantErr  bool
+		name    string
+		req     CreateInvoiceRequest
+		wantErr bool
 	}{
 		{
 			name: "none provided",
@@ -1768,7 +1781,6 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 		})
 	}
 }
-
 
 // toSiatSolicitudFactura convierte un FiscalDocument a SolicitudFactura para
 // poder reutilizar helpers de perfil en tests de buildSolicitudFactura.

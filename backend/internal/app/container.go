@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/adapters/siat/sandbox"
 	appconfig "github.com/brandsrx/supay/internal/config"
 	"github.com/brandsrx/supay/internal/crypto"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
@@ -20,10 +22,8 @@ import (
 	siatModule "github.com/brandsrx/supay/internal/delivery/http/modules/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/pdf"
-	"github.com/brandsrx/supay/internal/repository/postgres"
-	"github.com/brandsrx/supay/internal/adapters/siat"
-	"github.com/brandsrx/supay/internal/adapters/siat/sandbox"
 	"github.com/brandsrx/supay/internal/ports"
+	"github.com/brandsrx/supay/internal/repository/postgres"
 	"github.com/brandsrx/supay/internal/storage"
 	"github.com/brandsrx/supay/internal/usecase"
 	"gorm.io/gorm"
@@ -53,6 +53,8 @@ type Container struct {
 	sentPackageRepo            domain.SentPackageRepository
 	customerRepo               domain.CustomerRepository
 	invoiceRepo                domain.InvoiceRepository
+	invoiceEventRepo           domain.InvoiceEventRepository
+	invoiceDocumentRepo        domain.InvoiceDocumentRepository
 	certificateRepo            domain.CertificateRepository
 
 	// Servicios de infraestructura
@@ -202,6 +204,20 @@ func (c *Container) InvoiceRepo() domain.InvoiceRepository {
 		c.invoiceRepo = postgres.NewPostgresInvoiceRepository(c.db)
 	}
 	return c.invoiceRepo
+}
+
+func (c *Container) InvoiceEventRepo() domain.InvoiceEventRepository {
+	if c.invoiceEventRepo == nil {
+		c.invoiceEventRepo = postgres.NewPostgresInvoiceEventRepository(c.db)
+	}
+	return c.invoiceEventRepo
+}
+
+func (c *Container) InvoiceDocumentRepo() domain.InvoiceDocumentRepository {
+	if c.invoiceDocumentRepo == nil {
+		c.invoiceDocumentRepo = postgres.NewPostgresInvoiceDocumentRepository(c.db)
+	}
+	return c.invoiceDocumentRepo
 }
 
 func (c *Container) CertificateRepo() domain.CertificateRepository {

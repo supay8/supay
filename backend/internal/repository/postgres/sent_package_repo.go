@@ -72,7 +72,7 @@ func (r *PostgresSentPackageRepository) ListByPointOfSale(pointOfSaleID string) 
 
 func (r *PostgresSentPackageRepository) ListByCompany(companyID string) ([]*domain.SentPackage, error) {
 	var dbModels []models.SentPackage
-	if err := r.db.Where("company_id = ?", companyID).
+	if err := r.db.Where("tenant_id = ?", companyID).
 		Order("created_at DESC").
 		Find(&dbModels).Error; err != nil {
 		return nil, err

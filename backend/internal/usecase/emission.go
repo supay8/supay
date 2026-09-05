@@ -10,12 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
-
 
 // EmissionRejectedError indica que el SIAT respondió y rechazó la factura
 // (Transaccion=false). La factura queda persistida como REJECTED.
@@ -23,6 +22,25 @@ type EmissionRejectedError struct {
 	CodigoEstado    int
 	CodigoRecepcion string
 	Mensajes        []ports.FiscalMessage
+}
+
+func invoiceTransitionEvent(inv *domain.Invoice, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, details map[string]any) *domain.InvoiceEvent {
+	payload := map[string]any{
+		"from_status": string(from),
+		"to_status":   string(to),
+		"reason":      string(reason),
+	}
+	for key, value := range details {
+		payload[key] = value
+	}
+	encoded, _ := json.Marshal(payload)
+	return &domain.InvoiceEvent{
+		InvoiceID: inv.ID,
+		TenantID:  inv.CompanyId,
+		Type:      "STATUS_TRANSITION",
+		Message:   fmt.Sprintf("invoice status changed from %s to %s", from, to),
+		Payload:   encoded,
+	}
 }
 
 func (e *EmissionRejectedError) Error() string {
@@ -68,11 +86,12 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	// Un fallo de transporte o de prerrequisitos revierte a PENDING (reintentable);
 	// un rechazo del SIAT queda persistido como REJECTED.
 	rollback := func() {
-		inv.Status = domain.InvoicePending
-		if err := uc.invoiceRepo.Update(inv); err != nil {
+		event := invoiceTransitionEvent(inv, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, map[string]any{"source": "Emit"})
+		if _, err := uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, nil, event); err != nil {
 			slog.Error("emisión: no se pudo revertir la factura a PENDING",
 				"invoice_id", inv.ID, "error", err)
 		}
+		inv.Status = domain.InvoicePending
 	}
 
 	req, err := uc.buildSolicitudFactura(ctx, inv)
@@ -112,19 +131,22 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	if msgs, err := marshalMensajes(result.Mensajes); err == nil {
 		inv.SiatMensajes = &msgs
 	}
+	transitionReason := domain.TransitionSIATRejected
 	if result.Transaccion {
 		// Según el catálogo mensajesServicios del SIAT, 904 = RECEPCION OBSERVADA
 		// (no es un caso correcto); solo 908 = RECEPCION VALIDADA.
 		if result.CodigoEstado == 904 {
 			inv.Status = domain.InvoiceObserved
+			transitionReason = domain.TransitionSIATObserved
 		} else {
 			inv.Status = domain.InvoiceAccepted
+			transitionReason = domain.TransitionSIATAccepted
 		}
 	} else {
 		inv.Status = domain.InvoiceRejected
 	}
 
-	if err := uc.persistResultadoConReintentos(inv, result); err != nil {
+	if err := uc.persistResultadoConReintentos(inv, result, transitionReason); err != nil {
 		return nil, err
 	}
 	if !result.Transaccion {
@@ -152,11 +174,20 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 // por API. Si aun así falla, se loguea a nivel crítico con los datos para
 // conciliar manualmente (el reaper devolverá la factura a PENDING y el reenvío
 // con el mismo numeroFactura/CUF es idempotente ante el SIAT).
-func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, result ports.FiscalResult) error {
+func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, result ports.FiscalResult, reason domain.InvoiceTransitionReason) error {
 	const maxIntentos = 3
 	var err error
 	for intento := 1; intento <= maxIntentos; intento++ {
-		if err = uc.invoiceRepo.Update(inv); err == nil {
+		fields := map[string]any{
+			"cuf": inv.Cuf, "xml": inv.Xml, "xml_hash": inv.XmlHash,
+			"archivo": inv.Archivo, "hash_archivo": inv.HashArchivo,
+			"siat_reception_code": inv.SiatReceptionCode, "siat_mensajes": inv.SiatMensajes,
+		}
+		event := invoiceTransitionEvent(inv, domain.InvoiceSending, inv.Status, reason, map[string]any{
+			"source": "Emit", "codigo_estado": result.CodigoEstado,
+			"codigo_recepcion": result.CodigoRecepcion, "transaccion": result.Transaccion,
+		})
+		if _, err = uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, inv.Status, reason, fields, event); err == nil {
 			return nil
 		}
 		slog.Error("emisión: fallo al persistir resultado del SIAT",
@@ -204,10 +235,11 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 	}
 
 	if estado, ok := siatEstadoToDomain(result.CodigoEstado); ok && inv.Status != estado {
-		inv.Status = estado
-		if err := uc.invoiceRepo.Update(inv); err != nil {
+		event := invoiceTransitionEvent(inv, inv.Status, estado, domain.TransitionSIATReconciliation, map[string]any{"source": "VerifyStatus", "codigo_estado": result.CodigoEstado})
+		if _, err := uc.invoiceRepo.TransitionStatus(inv.ID, inv.Status, estado, domain.TransitionSIATReconciliation, nil, event); err != nil {
 			return nil, err
 		}
+		inv.Status = estado
 	}
 
 	return inv, nil
@@ -267,7 +299,8 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	}
 	// Transición condicional ACCEPTED->CANCELLED: si otra anulación concurrente
 	// ya la aplicó, aquí llega false en lugar de pisar el estado.
-	claimed, err := uc.invoiceRepo.ClaimStatus(id, domain.InvoiceAccepted, domain.InvoiceCancelled, fields)
+	event := invoiceTransitionEvent(inv, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, map[string]any{"source": "Annul", "codigo_motivo": codigoMotivo})
+	claimed, err := uc.invoiceRepo.TransitionStatus(id, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, fields, event)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +367,8 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 		fields["siat_reception_code"] = result.CodigoRecepcion
 	}
 	// Transición condicional CANCELLED->ACCEPTED (simétrica a Annul).
-	claimed, err := uc.invoiceRepo.ClaimStatus(id, domain.InvoiceCancelled, domain.InvoiceAccepted, fields)
+	event := invoiceTransitionEvent(inv, domain.InvoiceCancelled, domain.InvoiceAccepted, domain.TransitionCancellationRevert, map[string]any{"source": "RevertAnnul"})
+	claimed, err := uc.invoiceRepo.TransitionStatus(id, domain.InvoiceCancelled, domain.InvoiceAccepted, domain.TransitionCancellationRevert, fields, event)
 	if err != nil {
 		return nil, err
 	}

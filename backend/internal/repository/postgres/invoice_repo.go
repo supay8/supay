@@ -3,6 +3,7 @@ package postgres
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -22,19 +23,22 @@ func NewPostgresInvoiceRepository(db *gorm.DB) domain.InvoiceRepository {
 
 func (r *PostgresInvoiceRepository) Create(inv *domain.Invoice) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		// Advisory lock por punto de venta: serializa la asignación del
-		// número correlativo entre emisiones concurrentes.
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))",
-			"invoice_number", inv.PointOfSaleId).Error; err != nil {
+		// La secuencia se incrementa atómicamente y evita escanear invoices.
+		if err := tx.Exec(`
+			INSERT INTO invoice_sequences (tenant_id, point_of_sale_id, next_number)
+			VALUES (?, ?, 1)
+			ON CONFLICT (tenant_id, point_of_sale_id) DO NOTHING`,
+			inv.CompanyId, inv.PointOfSaleId).Error; err != nil {
 			return err
 		}
-		var maxNumber int
-		if err := tx.Raw(
-			"SELECT COALESCE(MAX(invoice_number), 0) FROM invoices WHERE point_of_sale_id = ?",
-			inv.PointOfSaleId).Scan(&maxNumber).Error; err != nil {
+		if err := tx.Raw(`
+			UPDATE invoice_sequences
+			SET next_number = next_number + 1, updated_at = now()
+			WHERE tenant_id = ? AND point_of_sale_id = ?
+			RETURNING next_number - 1`, inv.CompanyId, inv.PointOfSaleId).
+			Scan(&inv.InvoiceNumber).Error; err != nil {
 			return err
 		}
-		inv.InvoiceNumber = maxNumber + 1
 
 		m := toModelInvoice(inv)
 		if err := tx.Create(&m).Error; err != nil {
@@ -113,10 +117,11 @@ func (r *PostgresInvoiceRepository) ListByPointOfSale(pointOfSaleID string) ([]*
 // (montos, número correlativo, etc.).
 func invoiceMutableFields(inv *domain.Invoice) map[string]any {
 	return map[string]any{
-		"status":              models.InvoiceStatus(inv.Status),
 		"cuf":                 inv.Cuf,
 		"xml":                 inv.Xml,
 		"xml_hash":            inv.XmlHash,
+		"archivo":             inv.Archivo,
+		"hash_archivo":        inv.HashArchivo,
 		"siat_reception_code": inv.SiatReceptionCode,
 		"siat_mensajes":       inv.SiatMensajes,
 		"motivo_anulacion":    inv.MotivoAnulacion,
@@ -125,6 +130,13 @@ func invoiceMutableFields(inv *domain.Invoice) map[string]any {
 }
 
 func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
+	var current models.Invoice
+	if err := r.db.Select("status").Where("id = ?", inv.ID).First(&current).Error; err != nil {
+		return err
+	}
+	if domain.InvoiceStatus(current.Status) != inv.Status {
+		return domain.ErrStatusUpdateRequiresTransition
+	}
 	res := r.db.Model(&models.Invoice{}).
 		Where("id = ?", inv.ID).
 		Updates(invoiceMutableFields(inv))
@@ -143,22 +155,105 @@ func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
 	return nil
 }
 
-func (r *PostgresInvoiceRepository) ClaimStatus(id string, from domain.InvoiceStatus, to domain.InvoiceStatus, fields map[string]any) (bool, error) {
-	values := make(map[string]any, len(fields)+1)
-	for k, v := range fields {
-		values[k] = v
+func (r *PostgresInvoiceRepository) TransitionStatus(id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
+	if err := (domain.InvoiceStateMachine{}).Transition(from, to, reason); err != nil {
+		return false, err
 	}
-	values["status"] = models.InvoiceStatus(to)
-	res := r.db.Model(&models.Invoice{}).
-		Where("id = ? AND status = ?", id, models.InvoiceStatus(from)).
-		Updates(values)
-	if res.Error != nil {
-		return false, res.Error
+	claimed := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var tenantID string
+		if err := tx.Model(&models.Invoice{}).Select("tenant_id").Where("id = ?", id).Scan(&tenantID).Error; err != nil {
+			return err
+		}
+		if tenantID == "" {
+			return gorm.ErrRecordNotFound
+		}
+		values := make(map[string]any, len(fields)+1)
+		for key, value := range fields {
+			if key != "status" {
+				values[key] = value
+			}
+		}
+		values["status"] = models.InvoiceStatus(to)
+		result := tx.Model(&models.Invoice{}).
+			Where("id = ? AND status = ?", id, models.InvoiceStatus(from)).
+			Updates(values)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return nil
+		}
+		claimed = true
+		if err := persistInvoiceDocuments(tx, id, fields); err != nil {
+			return err
+		}
+		if event == nil {
+			return nil
+		}
+		if event.InvoiceID == "" {
+			event.InvoiceID = id
+		}
+		if event.TenantID == "" {
+			event.TenantID = tenantID
+		}
+		model := models.InvoiceEvent{
+			ID: event.ID, InvoiceId: event.InvoiceID, TenantID: event.TenantID,
+			EventKey: event.EventKey, Type: event.Type, Message: event.Message,
+			Payload: datatypes.JSON(event.Payload),
+		}
+		if model.ID == "" {
+			model.ID = uuid.NewString()
+		}
+		if err := tx.Create(&model).Error; err != nil {
+			return err
+		}
+		event.ID = model.ID
+		event.CreatedAt = model.CreatedAt
+		return nil
+	})
+	return claimed, err
+}
+
+func persistInvoiceDocuments(tx *gorm.DB, invoiceID string, fields map[string]any) error {
+	definitions := []struct {
+		key, hashKey, documentType, mimeType string
+	}{
+		{"xml", "xml_hash", "XML", "application/xml"},
+		{"archivo", "hash_archivo", "FILE", "application/octet-stream"},
 	}
-	return res.RowsAffected == 1, nil
+	for _, definition := range definitions {
+		content, ok := fields[definition.key].(*string)
+		if !ok {
+			if value, stringOK := fields[definition.key].(string); stringOK && strings.TrimSpace(value) != "" {
+				content = &value
+				ok = true
+			}
+		}
+		if !ok || content == nil || strings.TrimSpace(*content) == "" {
+			continue
+		}
+		var hash *string
+		if value, ok := fields[definition.hashKey].(*string); ok {
+			hash = value
+		} else if value, ok := fields[definition.hashKey].(string); ok && value != "" {
+			hash = &value
+		}
+		document := &domain.InvoiceDocument{
+			InvoiceID: invoiceID, DocumentType: domain.InvoiceDocumentType(definition.documentType),
+			Content: content, SHA256: hash, MIMEType: &definition.mimeType, IsCurrent: true,
+		}
+		if _, err := rotateInvoiceDocument(tx, document); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
+	if err := (domain.InvoiceStateMachine{}).Transition(domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart); err != nil {
+		return false, err
+	}
 	res := r.db.Model(&models.Invoice{}).
 		Where("id = ? AND status = ?", id, models.StatusPending).
 		Update("status", models.StatusSending)

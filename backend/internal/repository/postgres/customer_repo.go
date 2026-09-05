@@ -54,7 +54,7 @@ func (r *PostgresCustomerRepository) GetByID(id string) (*domain.Customer, error
 
 func (r *PostgresCustomerRepository) GetByCompanyAndDocument(companyID, documentType, documentNumber string) (*domain.Customer, error) {
 	var m models.Customer
-	if err := r.db.Where("company_id = ? AND document_type = ? AND document_number = ?",
+	if err := r.db.Where("tenant_id = ? AND document_type = ? AND document_number = ?",
 		companyID, models.DocumentType(documentType), documentNumber).First(&m).Error; err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (r *PostgresCustomerRepository) GetByCompanyAndFiscalIdentity(companyID str
 
 	var m models.Customer
 
-	if err := r.db.Where("company_id = ? AND document_type = ? AND document_number = ? AND email = ? AND name = ?",
+	if err := r.db.Where("tenant_id = ? AND document_type = ? AND document_number = ? AND email = ? AND name = ?",
 		companyID, models.DocumentType(documentType), documentNumber, email, name).First(&m).Error; err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (r *PostgresCustomerRepository) List(companyID string) ([]*domain.Customer,
 		return nil, domain.ErrMissingCompanyID
 	}
 	var modelsList []models.Customer
-	if err := r.db.Where("company_id = ?", companyID).Order("created_at ASC").Find(&modelsList).Error; err != nil {
+	if err := r.db.Where("tenant_id = ?", companyID).Order("created_at ASC").Find(&modelsList).Error; err != nil {
 		return nil, err
 	}
 	res := make([]*domain.Customer, 0, len(modelsList))

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/joho/godotenv"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
+	"github.com/riverqueue/river/rivermigrate"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -124,6 +127,18 @@ func MigrateDB(db *gorm.DB) error {
 			return fmt.Errorf("aplicar migraciones: PostgreSQL %s (%s): %s; detalle: %s; sugerencia: %s", pgErr.Code, pgErr.Severity, pgErr.Message, pgErr.Detail, pgErr.Hint)
 		}
 		return fmt.Errorf("aplicar migraciones: %w", err)
+	}
+
+	// River owns and versions its queue schema. Running its bundled migrations
+	// here keeps AUTO_MIGRATE and integration tests on one deterministic path.
+	riverMigrator, err := rivermigrate.New(riverdatabasesql.New(sqlDB), nil)
+	if err != nil {
+		return fmt.Errorf("inicializar migraciones River: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := riverMigrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		return fmt.Errorf("aplicar migraciones River: %w", err)
 	}
 	return nil
 }

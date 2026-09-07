@@ -33,6 +33,7 @@ type Config struct {
 	R2                   R2Config
 	AllowCustomIssueDate bool // dev-only: permite POST /invoices con issue_date arbitrario
 	Maintenance          MaintenanceConfig
+	Queue                QueueConfig
 }
 
 // SiatInfraConfig retiene solo infra compartida, sin credenciales por empresa.
@@ -67,6 +68,25 @@ type MaintenanceConfig struct {
 	CuisFallbackValidity  time.Duration
 	NotificationTimeout   time.Duration
 	CertificateWebhookURL string
+}
+
+// QueueConfig controls the PostgreSQL outbox dispatcher, River workers,
+// tenant fairness and SIAT circuit breaker used by phase 9.
+type QueueConfig struct {
+	Enabled             bool
+	DispatchInterval    time.Duration
+	DispatchBatchSize   int
+	OutboxLockTimeout   time.Duration
+	MaxWorkers          int
+	MaxAttempts         int
+	JobTimeout          time.Duration
+	SoftStopTimeout     time.Duration
+	RetryBase           time.Duration
+	RetryMax            time.Duration
+	TenantRatePerSecond float64
+	TenantRateBurst     int
+	CircuitThreshold    int
+	CircuitCooldown     time.Duration
 }
 
 func Load() Config {
@@ -162,6 +182,22 @@ func Load() Config {
 		NotificationTimeout:   parseDuration(getEnv("CERTIFICATE_NOTIFICATION_TIMEOUT", "10s"), 10*time.Second),
 		CertificateWebhookURL: strings.TrimSpace(os.Getenv("CERTIFICATE_ALERT_WEBHOOK_URL")),
 	}
+	queue := QueueConfig{
+		Enabled:             parseBoolEnv("EMISSION_QUEUE_ENABLED", true),
+		DispatchInterval:    parseDuration(getEnv("OUTBOX_DISPATCH_INTERVAL", "500ms"), 500*time.Millisecond),
+		DispatchBatchSize:   parseInt(getEnv("OUTBOX_DISPATCH_BATCH_SIZE", "100"), 100),
+		OutboxLockTimeout:   parseDuration(getEnv("OUTBOX_LOCK_TIMEOUT", "1m"), time.Minute),
+		MaxWorkers:          parseInt(getEnv("EMISSION_QUEUE_WORKERS", "10"), 10),
+		MaxAttempts:         parseInt(getEnv("EMISSION_MAX_ATTEMPTS", "8"), 8),
+		JobTimeout:          parseDuration(getEnv("EMISSION_JOB_TIMEOUT", "2m"), 2*time.Minute),
+		SoftStopTimeout:     parseDuration(getEnv("EMISSION_SOFT_STOP_TIMEOUT", "30s"), 30*time.Second),
+		RetryBase:           parseDuration(getEnv("EMISSION_RETRY_BASE", "2s"), 2*time.Second),
+		RetryMax:            parseDuration(getEnv("EMISSION_RETRY_MAX", "5m"), 5*time.Minute),
+		TenantRatePerSecond: parseFloat(getEnv("SIAT_TENANT_RATE_PER_SECOND", "2"), 2),
+		TenantRateBurst:     parseInt(getEnv("SIAT_TENANT_RATE_BURST", "2"), 2),
+		CircuitThreshold:    parseInt(getEnv("SIAT_CIRCUIT_FAILURE_THRESHOLD", "5"), 5),
+		CircuitCooldown:     parseDuration(getEnv("SIAT_CIRCUIT_COOLDOWN", "30s"), 30*time.Second),
+	}
 
 	encryptionKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
 	if encryptionKey == "" {
@@ -189,6 +225,7 @@ func Load() Config {
 		BackendSecret:        BackendSecret,
 		AllowCustomIssueDate: allowCustomIssueDate,
 		Maintenance:          maintenance,
+		Queue:                queue,
 	}
 }
 
@@ -252,6 +289,14 @@ func parseInt(value string, fallback int) int {
 func parseInt64(value string, fallback int64) int64 {
 	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseFloat(value string, fallback float64) float64 {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || parsed <= 0 {
 		return fallback
 	}
 	return parsed

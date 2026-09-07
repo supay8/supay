@@ -1,6 +1,8 @@
 package postgres
 
 import (
+	"time"
+
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/google/uuid"
@@ -37,6 +39,9 @@ func (r *PostgresCertificateRepository) Create(c *domain.Certificate) error {
 		Ambiente:             c.Ambiente,
 		Nit:                  c.Nit,
 		IsActive:             c.Status == domain.CertificateActive,
+		UploadedAt:           time.Now(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
 	}
 
 	if err := r.db.Transaction(func(tx *gorm.DB) error {

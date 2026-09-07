@@ -471,6 +471,28 @@ type InvoiceEvent struct {
 	Invoice Invoice `gorm:"foreignKey:InvoiceId"`
 }
 
+// OutboxEvent is the durable hand-off between the HTTP transaction and River.
+// Payload contains identifiers only; invoice data is always reloaded by the worker.
+type OutboxEvent struct {
+	ID            string         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	TenantID      string         `gorm:"column:tenant_id;type:uuid;index;not null"`
+	AggregateType string         `gorm:"column:aggregate_type;type:varchar(50);not null"`
+	AggregateID   string         `gorm:"column:aggregate_id;type:uuid;not null"`
+	EventType     string         `gorm:"column:event_type;type:varchar(100);not null"`
+	Payload       datatypes.JSON `gorm:"type:jsonb;not null"`
+	Status        string         `gorm:"type:varchar(20);index;not null"`
+	Attempts      int            `gorm:"not null;default:0"`
+	AvailableAt   time.Time      `gorm:"column:available_at;not null"`
+	LockedAt      *time.Time     `gorm:"column:locked_at"`
+	LockedBy      *string        `gorm:"column:locked_by;type:varchar(100)"`
+	PublishedAt   *time.Time     `gorm:"column:published_at"`
+	LastError     *string        `gorm:"column:last_error;type:text"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func (OutboxEvent) TableName() string { return "outbox" }
+
 type SentPackage struct {
 	ID                    string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	CompanyId             string    `gorm:"column:tenant_id;type:uuid;index:idx_sent_packages_tenant;not null"`

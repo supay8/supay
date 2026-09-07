@@ -159,7 +159,7 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 	if err != nil {
 		return nil, fmt.Errorf("siat provider: empresa no encontrada %s: %w", companyID, err)
 	}
-	if strings.TrimSpace(company.Nit) == "" || strings.TrimSpace(company.CodigoSistema) == "" {
+	if strings.TrimSpace(company.Nit) == "" {
 		return nil, fmt.Errorf("siat provider: empresa %s sin NIT o codigoSistema", companyID)
 	}
 

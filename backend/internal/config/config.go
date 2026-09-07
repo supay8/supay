@@ -40,6 +40,7 @@ type Config struct {
 type SiatInfraConfig struct {
 	BaseURL        string
 	CodigoAmbiente int
+	CodigoSistema  string
 	Timeout        time.Duration
 	TraceId        string
 	UserAgent      string
@@ -112,6 +113,7 @@ func Load() Config {
 	siatInfra := SiatInfraConfig{
 		BaseURL:        baseURL,
 		CodigoAmbiente: ambiente,
+		CodigoSistema:  strings.TrimSpace(os.Getenv("SIAT_CODIGO_SISTEMA")),
 		Timeout:        parseDuration(getEnv("SIAT_TIMEOUT", "45s"), 45*time.Second),
 		TraceId:        strings.TrimSpace(os.Getenv("SIAT_TRACE_ID")),
 		UserAgent:      strings.TrimSpace(os.Getenv("SIAT_USER_AGENT")),
@@ -121,9 +123,8 @@ func Load() Config {
 	// Compatibilidad: SIAT legado desde env solo para advertencia, no bloquea arranque
 	legacyToken := strings.TrimSpace(os.Getenv("SIAT_TOKEN_DELEGADO"))
 	legacyNit := strings.TrimSpace(os.Getenv("SIAT_NIT"))
-	legacySistema := strings.TrimSpace(os.Getenv("SIAT_CODIGO_SISTEMA"))
 	legacyP12 := strings.TrimSpace(os.Getenv("SIAT_CERT_P12"))
-	if legacyToken != "" || legacyNit != "" || legacySistema != "" || legacyP12 != "" {
+	if legacyToken != "" || legacyNit != "" || legacyP12 != "" {
 		log.Printf("⚠️ Variables SIAT_* legacy detectadas (SIAT_NIT/TOKEN/CERT). Serán ignoradas: configure credenciales por empresa via API/certificates (multi-tenant).")
 	}
 	// SIAT deprecated vacío (solo para no romper callers antiguos que leen cfg.SIAT.BaseURL)

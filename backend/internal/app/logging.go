@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/brandsrx/supay/internal/observability"
 )
 
 // SetupLogging configura slog como logger por defecto. LOG_LEVEL ajusta la
@@ -23,10 +25,10 @@ func SetupLogging() {
 
 	opts := &slog.HandlerOptions{Level: level}
 	var handler slog.Handler
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_FORMAT")), "json") {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_FORMAT")), "text") {
 		handler = slog.NewTextHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(observability.NewRedactingHandler(handler)))
 }

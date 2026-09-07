@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: Supay
+    folder: Supay
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

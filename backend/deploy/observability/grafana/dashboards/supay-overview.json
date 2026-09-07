@@ -1,0 +1,67 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Emisiones por resultado",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (result) (rate(supay_invoice_emissions_total[5m]))", "legendFormat": "{{result}}", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "title": "Emisiones exitosas",
+      "type": "stat",
+      "targets": [{"expr": "sum(rate(supay_invoice_emissions_total{result=\"success\"}[5m])) / clamp_min(sum(rate(supay_invoice_emissions_total[5m])), 0.000001)", "legendFormat": "éxito", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+    },
+    {
+      "id": 3,
+      "title": "Latencia p95 de emisión",
+      "type": "stat",
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(supay_invoice_emission_duration_seconds_bucket[5m])))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+    },
+    {
+      "id": 4,
+      "title": "Solicitudes HTTP por ruta",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (method, route) (rate(supay_http_requests_total[5m]))", "legendFormat": "{{method}} {{route}}", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "id": 5,
+      "title": "Latencia HTTP p95",
+      "type": "timeseries",
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, route) (rate(supay_http_request_duration_seconds_bucket[5m])))", "legendFormat": "{{route}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    },
+    {
+      "id": 6,
+      "title": "Errores HTTP 5xx",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (route) (rate(supay_http_requests_total{status=~\"5..\"}[5m]))", "legendFormat": "{{route}}", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+    },
+    {
+      "id": 7,
+      "title": "Outbox por resultado",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (result) (rate(supay_outbox_events_total[5m]))", "legendFormat": "{{result}}", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["supay", "backend", "facturación"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "Supay — API y emisiones",
+  "uid": "supay-overview",
+  "version": 1
+}

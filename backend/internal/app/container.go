@@ -25,6 +25,7 @@ import (
 	"github.com/brandsrx/supay/internal/delivery/http/modules/product"
 	siatModule "github.com/brandsrx/supay/internal/delivery/http/modules/siat"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/emissionqueue"
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/repository/postgres"
@@ -61,6 +62,7 @@ type Container struct {
 	invoiceDocumentRepo        domain.InvoiceDocumentRepository
 	certificateRepo            domain.CertificateRepository
 	maintenanceRepo            domain.MaintenanceRepository
+	outboxRepo                 domain.OutboxRepository
 
 	// Servicios de infraestructura
 	cryptoSvc    *crypto.Service
@@ -84,6 +86,7 @@ type Container struct {
 	credentialService  *usecase.CredentialService
 	maintenanceService *usecase.MaintenanceService
 	maintenanceMetrics *usecase.MaintenanceMetrics
+	emissionQueue      *emissionqueue.Service
 
 	// HTTP
 	modules []deliveryModules.Module
@@ -243,6 +246,13 @@ func (c *Container) MaintenanceRepo() domain.MaintenanceRepository {
 	return c.maintenanceRepo
 }
 
+func (c *Container) OutboxRepo() domain.OutboxRepository {
+	if c.outboxRepo == nil {
+		c.outboxRepo = postgres.NewPostgresOutboxRepository(c.db)
+	}
+	return c.outboxRepo
+}
+
 func (c *Container) CryptoService() *crypto.Service {
 	if c.cryptoSvc == nil {
 		if key := c.cfg.EncryptionKey; key != "" {
@@ -288,6 +298,7 @@ func (c *Container) SiatProvider() siat.SiatClientProvider {
 			siat.ProviderInfra{
 				BaseURL:        c.cfg.SiatInfra.BaseURL,
 				CodigoAmbiente: c.cfg.SiatInfra.CodigoAmbiente,
+				CodigoSistema:  c.cfg.SiatInfra.CodigoSistema,
 				Timeout:        c.cfg.SiatInfra.Timeout,
 				TraceId:        c.cfg.SiatInfra.TraceId,
 				UserAgent:      c.cfg.SiatInfra.UserAgent,
@@ -441,8 +452,35 @@ func (c *Container) InvoiceUsecase() *usecase.InvoiceUsecase {
 			c.SiatActividadDocSectorRepo(), c.CredentialService(),
 			c.PdfService(), c.cfg.AllowCustomIssueDate, c.SiatProvider(),
 		)
+		c.invoiceUsecase.SetContingencyRepository(c.ContingencyRepo())
 	}
 	return c.invoiceUsecase
+}
+
+func (c *Container) EmissionQueue() (*emissionqueue.Service, error) {
+	if c.emissionQueue != nil {
+		return c.emissionQueue, nil
+	}
+	queue, err := emissionqueue.NewService(c.db, c.OutboxRepo(), c.InvoiceUsecase(), emissionqueue.Config{
+		DispatchInterval:  c.cfg.Queue.DispatchInterval,
+		DispatchBatchSize: c.cfg.Queue.DispatchBatchSize,
+		OutboxLockTimeout: c.cfg.Queue.OutboxLockTimeout,
+		MaxWorkers:        c.cfg.Queue.MaxWorkers,
+		MaxAttempts:       c.cfg.Queue.MaxAttempts,
+		JobTimeout:        c.cfg.Queue.JobTimeout,
+		SoftStopTimeout:   c.cfg.Queue.SoftStopTimeout,
+		RetryBase:         c.cfg.Queue.RetryBase,
+		RetryMax:          c.cfg.Queue.RetryMax,
+		RatePerSecond:     c.cfg.Queue.TenantRatePerSecond,
+		RateBurst:         c.cfg.Queue.TenantRateBurst,
+		CircuitThreshold:  c.cfg.Queue.CircuitThreshold,
+		CircuitCooldown:   c.cfg.Queue.CircuitCooldown,
+	})
+	if err != nil {
+		return nil, err
+	}
+	c.emissionQueue = queue
+	return c.emissionQueue, nil
 }
 
 func (c *Container) SiatUsecase() *usecase.SiatUsecase {

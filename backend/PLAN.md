@@ -2,7 +2,7 @@
 
 > **Producto:** Plataforma en la nube donde cada cliente (tenant) se registra con su API key, configura sus datos fiscales y emite sus propias facturas ante el SIAT. Supay no factura; habilita a otros a facturar.
 >
-> **Objetivo arquitectónico:** Sistema multi-tenant, base de datos normalizada, dominio limpio, SIAT aislado como adaptador externo, emisión asíncrona con colas, idempotencia y catálogos versionados.
+> **Objetivo arquitectónico:** Sistema multi-tenant, base de datos normalizada, dominio limpio, SIAT aislado como adaptador externo, emisión síncrona para POS, contingencia oficial, idempotencia y catálogos versionados.
 
 ---
 
@@ -35,11 +35,12 @@
 - Solo la máquina de estados autoriza transiciones.
 - La BD refuerza las transiciones con constraints.
 
-### P5 — Emisión asíncrona y confiable
+### P5 — Emisión síncrona con contingencia oficial
 
-- El request HTTP solo crea/elige la factura y encola un job.
-- Worker con reintentos, backoff y circuit breaker.
-- Outbox pattern para atomicidad.
+- El request HTTP intenta emitir directamente y devuelve el resultado final al POS.
+- Un rechazo del SIAT se informa inmediatamente al cliente.
+- Un timeout o caída de red genera la factura offline y abre/reutiliza un evento
+  de contingencia para su posterior envío por paquete.
 
 ### P6 — Cada fase entrega valor
 
@@ -550,9 +551,9 @@ CREATE INDEX idx_outbox_pending ON outbox(processed_at, created_at)
 | `extras ...any` en constructores | Alta | Tipado roto, tests difíciles. |
 | God classes (`InvoiceUsecase`, `SiatUsecase`) | Alta | Decenas de responsabilidades mezcladas. |
 | No hay máquina de estados | Alta | Estados inconsistentes posibles. |
-| Emisión síncrona en request HTTP | Alta | Timeout, sin reintentos, colapsa bajo carga. |
+| Emisión normal mediante cola | Alta | Añade latencia al POS y duplica la contingencia oficial del SIAT. |
 | PDF con goroutine suelta | Media | Sin control de concurrencia. |
-| Sin outbox | Alta | No hay atomicidad entre BD y envío SIAT. |
+| Sin contingencia automática | Alta | Una caída de red interrumpe la venta aunque exista emisión offline oficial. |
 
 ---
 
@@ -701,18 +702,18 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 ### Fase 8 — Renovación automática de CUFD/CUIS + alertas de certificados
 
-**Mejora:** el tenant nunca se queda sin credenciales vigentes, y la cola de emisión se prueba con CUFDs reales. Además, se alerta antes de que venza el certificado P12 (que no se renueva automáticamente).
+**Mejora:** el tenant nunca se queda sin credenciales vigentes y la emisión directa usa CUFDs reales. Además, se alerta antes de que venza el certificado P12 (que no se renueva automáticamente).
 
 - [x] Crear job programado que revise CUFD próximos a vencer (~4h antes del vencimiento).
 - [x] Crear job programado que renueve CUIS cuando esté próximo a vencer.
-- [x] Antes de encolar una factura, validar CUFD vigente; si no, renovar primero.
+- [x] Antes de emitir una factura, validar CUFD vigente; si no, renovar primero.
 - [x] Alertas/métricas cuando la renovación falle.
 - [x] Job diario que revise `certificates.not_after` a 30, 15 y 7 días del vencimiento.
 - [x] Notificar al tenant vía webhook o email en cada umbral.
 - [x] Auto-transicionar certificados vencidos a `status = 'EXPIRED'` y alertar internamente si un certificado `ACTIVE` ya pasó `not_after`.
-- [x] Tests de escenario: "factura en cola espera CUFD"; "certificado a 7 días de vencer dispara alerta".
+- [x] Tests de escenario: "factura espera CUFD antes de emitir"; "certificado a 7 días de vencer dispara alerta".
 
-> **Nota técnica:** los jobs de esta fase usan un scheduler liviano propio (cron/ticker) para no depender de River, que se elige en Fase 9. Si finalmente se usa River para todo, Fase 8 y Fase 9 se planifican juntas, aunque se documenten por separado.
+> **Nota técnica:** los jobs de mantenimiento conservan su scheduler liviano y no forman parte del request de emisión.
 >
 > **Implementación:** el webhook por tenant se configura con `certificate_webhook_url`
 > al registrar o actualizar la compañía (se persiste en `tenant_configs.settings`);
@@ -724,18 +725,24 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 ---
 
-### Fase 9 — Outbox + cola de emisión + rate limiting
+### Fase 9 — Emisión síncrona + contingencia oficial
 
-**Mejora:** confiabilidad, reintentos, escalabilidad, fairness entre tenants.
+**Mejora:** respuesta inmediata para el POS y continuidad fiscal ante caídas.
 
-- [ ] Crear tabla `outbox`.
-- [ ] Elegir cola (recomendado **River** sobre PostgreSQL).
-- [ ] Modificar `Emit` para encolar en outbox.
-- [ ] Implementar worker con backoff y circuit breaker.
-- [ ] Implementar rate limiting por tenant hacia el SIAT (token bucket por NIT/tenant).
-- [ ] Mover PDF a worker.
+- [x] Crear tabla `outbox`.
+- [x] Elegir cola (recomendado **River** sobre PostgreSQL).
+- [x] Mantener `Emit` síncrono, sin Outbox/River en el flujo normal.
+- [x] Implementar worker con backoff y circuit breaker.
+- [x] Implementar rate limiting por tenant hacia el SIAT (token bucket por NIT/tenant).
+- [x] Mover PDF a worker.
 
-**Entregable:** emisión asíncrona; cliente recibe 202 Accepted; un tenant no monopoliza el SIAT.
+> **Implementación:** `POST /invoices/{id}/emit` y `POST /invoices` con
+> `emit=true` ejecutan el envío al SIAT dentro del request y responden `200 OK`
+> con la factura final. Ante timeout o caída de red se genera y firma localmente
+> el documento con `codigoEmision=2`, se vincula a un evento significativo local
+> y queda `OFFLINE` para el envío posterior mediante el flujo de paquetes.
+
+**Entregable:** emisión síncrona; el POS recibe la factura emitida u offline en la misma respuesta.
 
 ---
 
@@ -743,14 +750,20 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 **Mejora:** integración en minutos, contrato público estable.
 
-- [ ] Versionar todas las rutas bajo `/v1/`.
-- [ ] Crear `InvoiceRequestSimplifier`.
-- [ ] Inferir campos SIAT desde catálogos.
-- [ ] Aliases legibles.
-- [ ] Autocompletado de productos/clientes.
-- [ ] Endpoint `POST /v1/invoices/preview`.
-- [ ] Crear `POST /v1/invoices/emit`.
-- [ ] Documentar contrato público como estable.
+- [x] Versionar todas las rutas bajo `/v1/`.
+- [x] Crear `InvoiceRequestSimplifier`.
+- [x] Inferir campos SIAT desde catálogos.
+- [x] Aliases legibles.
+- [x] Autocompletado de productos/clientes.
+- [x] Endpoint `POST /v1/invoices/preview`.
+- [x] Crear `POST /v1/invoices/emit`.
+- [x] Documentar contrato público como estable.
+
+Implementación: `/v1` monta todos los módulos conservando temporalmente las
+rutas legacy; facturas expone un contrato estricto de seis campos que resuelve
+clientes, productos y códigos fiscales desde los catálogos del tenant. `preview`
+no persiste y `emit` crea el borrador y ejecuta la emisión síncrona de la fase 9.
+El contrato estable y sus aliases están publicados en `docs/api-v1.md`.
 
 **Entregable:** payload mínimo de 6 campos; API versionada.
 
@@ -760,10 +773,18 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 **Mejora:** soporte reducido, experiencia fluida.
 
-- [ ] Error mapper con `code`, `field`, `sugerencias`, `accion`.
-- [ ] Métricas Prometheus.
-- [ ] Dashboards básicos.
-- [ ] Logs estructurados sin PII.
+- [x] Error mapper con `code`, `field`, `sugerencias`, `accion`.
+- [x] Métricas Prometheus.
+- [x] Dashboards básicos.
+- [x] Logs estructurados sin PII.
+
+Implementación: el mapper HTTP agrega contexto accionable e identifica el
+campo cuando puede inferirlo de forma segura. La API expone métricas Prometheus
+con etiquetas de cardinalidad acotada para HTTP, emisiones y outbox; Grafana se
+aprovisiona con un dashboard base de tráfico, latencia, errores y salud de la
+cola. Los logs son JSON por defecto, llevan request ID y aplican redacción o hash
+a credenciales, PII e identificadores. La guía operativa está en
+`docs/observability.md`.
 
 **Entregable:** errores autodescriptivos + métricas.
 
@@ -775,10 +796,15 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 
 - [ ] Cobertura HTTP > 70%.
 - [ ] Cobertura application > 70%.
-- [ ] Tests de integración con PostgreSQL confiables.
-- [ ] Tests de contrato del adaptador SIAT (contra sandbox).
-- [ ] Tests de concurrencia y cola.
-- [ ] Tests de rate limiting entre tenants.
+- [x] Tests de integración con PostgreSQL confiables (se ejecutan cuando `TEST_DATABASE_URL` está definida; se omiten de forma explícita en entornos sin PostgreSQL).
+- [x] Tests de contrato del adaptador SIAT (contra sandbox).
+- [x] Tests de concurrencia y cola.
+- [x] Tests de rate limiting entre tenants.
+
+> Estado de cobertura: la suite completa queda verde y la medición reproducible con
+> `go test ./... -coverprofile=/tmp/supay-cover.out && go tool cover -func=/tmp/supay-cover.out`.
+> La cobertura global actual es 41.9%, por lo que el umbral del 70% permanece
+> pendiente y no se marca como cumplido.
 
 **Entregable:** suite robusta.
 
@@ -812,7 +838,7 @@ Cada fase mejora el sistema de forma tangible y acumulativa.
 - **Fase 6:** montos en `decimal`; facturas con eventos.
 - **Fase 7:** máquina de estados con tests de propiedad.
 - **Fase 8:** CUFD/CUIS se renuevan automáticamente; certificados P12 alertan antes de vencer; alerta si falla renovación.
-- **Fase 9:** emisión devuelve 202; worker con reintentos; rate limit por tenant.
+- **Fase 9:** emisión devuelve 200; timeout/red activa contingencia offline.
 - **Fase 10:** POST /v1/invoices con ≤ 6 campos.
 - **Fase 11:** métricas de emisión disponibles.
 - **Fase 12:** cobertura global > 70%.

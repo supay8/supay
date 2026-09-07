@@ -124,9 +124,15 @@ func TestRespondErrorEnvelope(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	want := `{"error":{"code":"VALIDATION_ERROR","message":"el sku es obligatorio"}}`
-	if got := strings.TrimSpace(rec.Body.String()); got != want {
-		t.Fatalf("body=%s, se esperaba %s", got, want)
+	var env errorEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("json inválido: %v", err)
+	}
+	if env.Error.Code != CodeValidation || env.Error.Field != "items[].sku" {
+		t.Fatalf("clasificación inesperada: %+v", env.Error)
+	}
+	if len(env.Error.Suggestions) == 0 || env.Error.Action == "" {
+		t.Fatalf("el error no enseña cómo recuperarse: %+v", env.Error)
 	}
 }
 
@@ -224,9 +230,12 @@ func TestTenantMiddlewareEnvelope(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status=%d", rec.Code)
 		}
-		want := `{"error":{"code":"UNAUTHORIZED","message":"no autorizado: falta el header X-API-Key"}}`
-		if got := strings.TrimSpace(rec.Body.String()); got != want {
-			t.Fatalf("body=%s", got)
+		var env errorEnvelope
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("json inválido: %v", err)
+		}
+		if env.Error.Code != CodeUnauthorized || env.Error.Field != "X-API-Key" || env.Error.Action == "" {
+			t.Fatalf("body=%s", strings.TrimSpace(rec.Body.String()))
 		}
 	})
 

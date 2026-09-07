@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
@@ -99,14 +99,17 @@ func TestSectoresExponeSoportadoYEtiquetas(t *testing.T) {
 // ---- Mocks ----
 
 type mockInvoiceService struct {
-	createFunc       func(context.Context, usecase.CreateInvoiceRequest) (*domain.Invoice, error)
-	getByIDFunc      func(string) (*domain.Invoice, error)
-	listInvoicesFunc func(domain.InvoiceListFilter) ([]*domain.Invoice, int64, error)
-	emitFunc         func(context.Context, string) (*domain.Invoice, error)
-	verifyStatusFunc func(context.Context, string) (*domain.Invoice, error)
-	annulFunc        func(context.Context, string, int) (*domain.Invoice, error)
-	revertAnnulFunc  func(context.Context, string) (*domain.Invoice, error)
-	sectoresFunc     func(string) (map[int]bool, error)
+	createFunc        func(context.Context, usecase.CreateInvoiceRequest) (*domain.Invoice, error)
+	createSimpleFunc  func(context.Context, usecase.MinimalInvoiceRequest, string) (*domain.Invoice, error)
+	previewSimpleFunc func(context.Context, usecase.MinimalInvoiceRequest) (*usecase.InvoicePreview, error)
+	emitSimpleFunc    func(context.Context, usecase.MinimalInvoiceRequest, string) (*domain.Invoice, error)
+	getByIDFunc       func(string) (*domain.Invoice, error)
+	listInvoicesFunc  func(domain.InvoiceListFilter) ([]*domain.Invoice, int64, error)
+	emitFunc          func(context.Context, string) (*domain.Invoice, error)
+	verifyStatusFunc  func(context.Context, string) (*domain.Invoice, error)
+	annulFunc         func(context.Context, string, int) (*domain.Invoice, error)
+	revertAnnulFunc   func(context.Context, string) (*domain.Invoice, error)
+	sectoresFunc      func(string) (map[int]bool, error)
 }
 
 func (m *mockInvoiceService) Create(ctx context.Context, req usecase.CreateInvoiceRequest) (*domain.Invoice, error) {
@@ -114,6 +117,26 @@ func (m *mockInvoiceService) Create(ctx context.Context, req usecase.CreateInvoi
 		return m.createFunc(ctx, req)
 	}
 	return sampleInvoice(), nil
+}
+func (m *mockInvoiceService) CreateSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {
+	if m.createSimpleFunc != nil {
+		return m.createSimpleFunc(ctx, req, key)
+	}
+	return sampleInvoice(), nil
+}
+func (m *mockInvoiceService) PreviewSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*usecase.InvoicePreview, error) {
+	if m.previewSimpleFunc != nil {
+		return m.previewSimpleFunc(ctx, req)
+	}
+	return &usecase.InvoicePreview{PointOfSaleID: req.PointOfSaleID, Total: 100}, nil
+}
+func (m *mockInvoiceService) EmitSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {
+	if m.emitSimpleFunc != nil {
+		return m.emitSimpleFunc(ctx, req, key)
+	}
+	inv := sampleInvoice()
+	inv.Status = domain.InvoicePending
+	return inv, nil
 }
 func (m *mockInvoiceService) GetByID(id string) (*domain.Invoice, error) {
 	if m.getByIDFunc != nil {
@@ -294,7 +317,7 @@ func TestCreateIdempotencyHeader(t *testing.T) {
 
 func TestCreateEmitTrue(t *testing.T) {
 	emitted := sampleInvoice()
-	emitted.Status = domain.InvoiceAccepted
+	emitted.Status = domain.InvoicePending
 	var emitCalled bool
 	svc := &mockInvoiceService{
 		createFunc: func(_ context.Context, _ usecase.CreateInvoiceRequest) (*domain.Invoice, error) {
@@ -319,8 +342,8 @@ func TestCreateEmitTrue(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status=%d, se esperaba 201", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d, se esperaba 202", rec.Code)
 	}
 	if !emitCalled {
 		t.Fatal("Emit no fue invocado")
@@ -329,8 +352,11 @@ func TestCreateEmitTrue(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
 		t.Fatalf("JSON inválido: %v", err)
 	}
-	if dto.Status != domain.InvoiceAccepted {
+	if dto.Status != domain.InvoicePending {
 		t.Errorf("status=%s", dto.Status)
+	}
+	if location := rec.Header().Get("Location"); location != "/invoices/inv-1" {
+		t.Errorf("Location=%q", location)
 	}
 }
 
@@ -367,6 +393,25 @@ func TestEmitRechazoIncluyeInvoiceID(t *testing.T) {
 	}
 	if env.Error.InvoiceID != "inv-42" {
 		t.Errorf("invoice_id=%q, se esperaba inv-42", env.Error.InvoiceID)
+	}
+}
+
+func TestEmitAceptaTrabajoAsincrono(t *testing.T) {
+	pending := sampleInvoice()
+	pending.Status = domain.InvoicePending
+	h := newHandler(&mockInvoiceService{emitFunc: func(context.Context, string) (*domain.Invoice, error) {
+		return pending, nil
+	}})
+	r := chi.NewRouter()
+	r.Post("/invoices/{id}/emit", h.emit)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/invoices/inv-1/emit", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d, se esperaba 202", rec.Code)
+	}
+	if location := rec.Header().Get("Location"); location != "/invoices/inv-1" {
+		t.Fatalf("Location=%q", location)
 	}
 }
 
@@ -415,13 +460,14 @@ func TestCreateEmitIdempotencyReplay(t *testing.T) {
 	r.Post("/invoices", h.create)
 
 	body := `{"point_of_sale_id":"pos-1","customer_id":"cust-1","emit":true,"items":[{"code":"P001","description":"Producto","quantity":1,"unit_price":100}]}`
+	expectedStatuses := []int{http.StatusAccepted, http.StatusOK}
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body))
 		req.Header.Set("Idempotency-Key", "orden-emit-1")
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("request %d: status=%d, se esperaba 200", i+1, rec.Code)
+		if rec.Code != expectedStatuses[i] {
+			t.Fatalf("request %d: status=%d, se esperaba %d", i+1, rec.Code, expectedStatuses[i])
 		}
 	}
 	if emitCalls != 1 {
@@ -503,6 +549,82 @@ func TestCreateRejectsOversizedIdempotencyKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, se esperaba 400", rec.Code)
+	}
+}
+
+func TestV1PreviewUsaContratoMinimo(t *testing.T) {
+	var captured usecase.MinimalInvoiceRequest
+	svc := &mockInvoiceService{previewSimpleFunc: func(_ context.Context, req usecase.MinimalInvoiceRequest) (*usecase.InvoicePreview, error) {
+		captured = req
+		return &usecase.InvoicePreview{PointOfSaleID: req.PointOfSaleID, CodigoDocumentoSector: 1, Total: 25}, nil
+	}}
+	h := newHandler(svc)
+	r := chi.NewRouter()
+	r.Post("/v1/invoices/preview", h.previewV1)
+
+	body := `{"point_of_sale_id":"pos-1","customer":{"document_number":"123"},"items":[{"sku":"SKU-1","quantity":2,"price":12.5}],"invoice_type":"venta","sector":"auto"}`
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invoices/preview", strings.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if captured.PointOfSaleID != "pos-1" || len(captured.Items) != 1 || captured.Items[0].Price != 12.5 {
+		t.Fatalf("payload mínimo no propagado: %+v", captured)
+	}
+}
+
+func TestRegisterV1RoutesExponePreviewSinSlashFinal(t *testing.T) {
+	svc := &mockInvoiceService{}
+	module := &Module{h: newHandler(svc)}
+	r := chi.NewRouter()
+	r.Route("/v1/invoices", module.RegisterV1Routes)
+
+	body := `{"point_of_sale_id":"pos-1","customer":{"id":"cust-1"},"items":[{"sku":"SKU-1","quantity":1,"price":100}]}`
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invoices/preview", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestV1EmitCreaYEncolaCon202(t *testing.T) {
+	var capturedKey string
+	svc := &mockInvoiceService{emitSimpleFunc: func(_ context.Context, _ usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {
+		capturedKey = key
+		inv := sampleInvoice()
+		inv.Status = domain.InvoicePending
+		return inv, nil
+	}}
+	h := newHandler(svc)
+	r := chi.NewRouter()
+	r.Post("/v1/invoices/emit", h.emitV1)
+
+	body := `{"point_of_sale_id":"pos-1","customer":{"id":"cust-1"},"items":[{"sku":"SKU-1","quantity":1,"price":100}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/invoices/emit", strings.NewReader(body))
+	req.Header.Set("Idempotency-Key", "sale-42")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if capturedKey != "sale-42" {
+		t.Fatalf("idempotency key=%q", capturedKey)
+	}
+	if got := rec.Header().Get("Location"); got != "/v1/invoices/inv-1" {
+		t.Fatalf("Location=%q", got)
+	}
+}
+
+func TestV1RechazaCamposFueraDelContrato(t *testing.T) {
+	h := newHandler(&mockInvoiceService{})
+	r := chi.NewRouter()
+	r.Post("/v1/invoices", h.createV1)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invoices", strings.NewReader(`{"point_of_sale_id":"pos-1","customer":{},"items":[],"codigo_moneda":1}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d, se esperaba 400", rec.Code)
 	}

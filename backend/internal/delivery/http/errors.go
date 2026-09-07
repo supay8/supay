@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/usecase"
@@ -37,10 +38,13 @@ type errorDetail struct {
 
 // errorBody es el payload estándar de error.
 type errorBody struct {
-	Code      string        `json:"code"`
-	Message   string        `json:"message"`
-	InvoiceID string        `json:"invoice_id,omitempty"`
-	Details   []errorDetail `json:"details,omitempty"`
+	Code        string        `json:"code"`
+	Message     string        `json:"message"`
+	Field       string        `json:"field,omitempty"`
+	Suggestions []string      `json:"sugerencias,omitempty"`
+	Action      string        `json:"accion,omitempty"`
+	InvoiceID   string        `json:"invoice_id,omitempty"`
+	Details     []errorDetail `json:"details,omitempty"`
 }
 
 // errorEnvelope es la forma única de error en toda la API:
@@ -105,6 +109,90 @@ func classifyError(err error) (int, errorBody) {
 	}
 }
 
+// enrichError convierte un error técnico en una respuesta que indica al
+// integrador qué revisar y cuál es el siguiente paso seguro.
+func enrichError(status int, body errorBody) errorBody {
+	if body.Field == "" {
+		body.Field = inferErrorField(body.Message)
+	}
+	if len(body.Suggestions) > 0 && body.Action != "" {
+		return body
+	}
+	switch body.Code {
+	case CodeValidation:
+		body.Suggestions = []string{
+			"Revise el tipo, formato y valor del campo indicado.",
+			"Use POST /v1/invoices/preview para validar una factura antes de emitirla.",
+		}
+		body.Action = "Corrija el payload y vuelva a enviar la solicitud."
+	case CodeUnauthorized:
+		body.Suggestions = []string{"Envíe una credencial vigente en el header X-API-Key."}
+		body.Action = "Corrija la autenticación y repita la solicitud."
+	case CodeNotFound:
+		body.Suggestions = []string{
+			"Verifique que el identificador exista y pertenezca a la empresa autenticada.",
+			"Consulte primero el recurso mediante su endpoint GET.",
+		}
+		body.Action = "Corrija el identificador y vuelva a intentar."
+	case CodeConflict:
+		body.Suggestions = []string{
+			"Consulte el recurso existente antes de crear o modificar otro.",
+			"Sincronice catálogos y parámetros SIAT si el conflicto depende de configuración tributaria.",
+		}
+		body.Action = "Resuelva el conflicto indicado y repita la operación."
+	case CodeSiatRejected:
+		body.Suggestions = []string{
+			"Revise las observaciones incluidas en details.",
+			"Valide nuevamente los datos y catálogos utilizados por la factura.",
+		}
+		body.Action = "Corrija la factura rechazada antes de solicitar una nueva emisión."
+	case CodeSiatUnavailable:
+		body.Suggestions = []string{
+			"Espere unos segundos y consulte el estado de la factura.",
+			"Mantenga la misma clave de idempotencia al reintentar la misma operación.",
+		}
+		body.Action = "Reintente más tarde; no duplique la factura."
+	case CodeRateLimited:
+		body.Suggestions = []string{"Respete el header Retry-After antes de realizar otro intento."}
+		body.Action = "Espere el intervalo indicado y vuelva a intentar."
+	default:
+		if status >= http.StatusInternalServerError {
+			body.Suggestions = []string{"Conserve el X-Request-ID de la respuesta para diagnóstico."}
+			body.Action = "Reintente más tarde o contacte a soporte con el X-Request-ID."
+		}
+	}
+	return body
+}
+
+func inferErrorField(message string) string {
+	message = strings.ToLower(message)
+	fields := []struct {
+		field string
+		terms []string
+	}{
+		{"Idempotency-Key", []string{"idempotency", "idempotencia"}},
+		{"X-API-Key", []string{"x-api-key", "api key"}},
+		{"point_of_sale_id", []string{"point_of_sale", "punto de venta"}},
+		{"customer.document_number", []string{"document_number", "número de documento", "documento del cliente"}},
+		{"customer.name", []string{"customer.name", "client_name", "nombre del cliente"}},
+		{"items[].sku", []string{"sku", "producto del ítem"}},
+		{"items[].quantity", []string{"quantity", "cantidad"}},
+		{"items[].price", []string{"price", "precio"}},
+		{"items[].discount", []string{"discount", "descuento"}},
+		{"invoice_type", []string{"invoice_type", "tipo de factura"}},
+		{"sector", []string{"documento sector", "sector"}},
+		{"nit", []string{"nit"}},
+	}
+	for _, candidate := range fields {
+		for _, term := range candidate.terms {
+			if strings.Contains(message, term) {
+				return candidate.field
+			}
+		}
+	}
+	return ""
+}
+
 // isConflict reconoce los errores centinela de dominio (conflictos de
 // unicidad y dependencias al eliminar) además de ConflictError tipado.
 func isConflict(err error) bool {
@@ -129,9 +217,9 @@ func isConflict(err error) bool {
 func RespondError(w http.ResponseWriter, err error) {
 	status, body := classifyError(err)
 	if status >= 500 {
-		slog.Error("request fallido", "status", status, "error", err)
+		slog.Error("request fallido", "status", status, "error_code", body.Code, "error_type", reflect.TypeOf(err))
 	} else {
-		slog.Warn("request rechazado", "status", status, "error", err)
+		slog.Warn("request rechazado", "status", status, "error_code", body.Code, "error_type", reflect.TypeOf(err))
 	}
 	writeErrorBody(w, status, body)
 }
@@ -148,9 +236,9 @@ func RespondErrorWithInvoiceID(w http.ResponseWriter, err error, invoiceID strin
 	status, body := classifyError(err)
 	body.InvoiceID = invoiceID
 	if status >= 500 {
-		slog.Error("request fallido", "status", status, "invoice_id", invoiceID, "error", err)
+		slog.Error("request fallido", "status", status, "invoice_id", invoiceID, "error_code", body.Code, "error_type", reflect.TypeOf(err))
 	} else {
-		slog.Warn("request rechazado", "status", status, "invoice_id", invoiceID, "error", err)
+		slog.Warn("request rechazado", "status", status, "invoice_id", invoiceID, "error_code", body.Code, "error_type", reflect.TypeOf(err))
 	}
 	writeErrorBody(w, status, body)
 }
@@ -168,7 +256,7 @@ func RespondNotFound(w http.ResponseWriter, message string) {
 
 // writeErrorBody serializa el envelope de error.
 func writeErrorBody(w http.ResponseWriter, status int, body errorBody) {
-	WriteJSON(w, status, errorEnvelope{Error: body})
+	WriteJSON(w, status, errorEnvelope{Error: enrichError(status, body)})
 }
 
 // WriteErrorBody escribe un envelope de error con código y mensaje explícitos.

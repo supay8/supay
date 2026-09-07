@@ -33,7 +33,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	}
 
 	if err := db.Exec(`TRUNCATE TABLE
-		invoice_items, invoice_events, invoices, sent_packages, contingency_events,
+		outbox, invoice_items, invoice_events, invoices, sent_packages, contingency_events,
 		cufd_history, cuis_history, catalog_items, catalog_versions,
 		catalog_sync_states, product_mappings, products, sin_products,
 		certificates, api_keys, points_of_sale, branches, customers,

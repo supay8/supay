@@ -95,6 +95,48 @@ func TestEmpaquetaArchivo(t *testing.T) {
 	}
 }
 
+func TestPrepararFacturaOfflineNoContactaSIAT(t *testing.T) {
+	svc := newTestService(t, "http://127.0.0.1:1")
+	req := SolicitudFactura{
+		CodigoAmbiente: AmbientePruebas, CodigoSistema: "SYS-123", Nit: "1020304050",
+		Modalidad: ModalidadComputarizada, NumeroFactura: 100,
+		CodigoSucursal: 0, CodigoPuntoVenta: 0,
+		Cuis: "CUIS-TEST-001", Cufd: "CUFD-TEST-001",
+		CodigoControl: "CONTROL-CODE-29-CHARACTERS-01",
+		FechaEmision:  time.Now(), Usuario: "SUPAY", Leyenda: "Ley N° 453",
+		RazonSocialEmisor: "EMPRESA TEST SRL", Municipio: "LA PAZ", Direccion: "AV. MOCK 123",
+		CodigoMetodoPago: 1, CodigoMoneda: 1, TipoCambio: 1, MontoTotal: 100,
+		CodigoDocumentoSector: SectorCompraVenta, CodigoTipoFactura: 1,
+		Cliente: ClienteFactura{
+			NombreRazonSocial: "CLIENTE TEST", CodigoTipoDocumentoIdentidad: 1,
+			NumeroDocumento: "1234567", Complemento: ptrStr(""), CodigoCliente: ptrStr("C-001"),
+		},
+		Items: []ItemFactura{{
+			ActividadEconomica: "473000", CodigoProductoSin: 12345,
+			CodigoProducto: "P-001", Descripcion: "Producto de prueba",
+			Cantidad: 1, UnidadMedida: 1, PrecioUnitario: 100, SubTotal: 100,
+		}},
+	}
+
+	result, err := svc.PrepararFacturaOffline(t.Context(), req)
+	if err != nil {
+		t.Fatalf("PrepararFacturaOffline: %v", err)
+	}
+	if result.Cuf == "" || result.Xml == "" || result.XmlHash == "" || result.Archivo == "" {
+		t.Fatalf("artefactos offline incompletos: %+v", result)
+	}
+	_, onlineCUF, _, err := buildFacturaSDK(req, goSiat.EmisionOnline)
+	if err != nil {
+		t.Fatalf("construir CUF online de control: %v", err)
+	}
+	if result.Cuf == onlineCUF {
+		t.Fatal("el CUF offline no debe usar el codigo de emision online")
+	}
+	if result.CodigoRecepcion != "" {
+		t.Fatalf("una factura offline no debe tener codigo de recepcion: %q", result.CodigoRecepcion)
+	}
+}
+
 func TestEmitirFacturaCompraVentaPayload(t *testing.T) {
 	var gotAPIKey string
 	var gotBody string
@@ -427,7 +469,7 @@ func assertFacturaXMLSinXsiNil(t *testing.T, archivo string) {
 
 	for _, campo := range []string{
 		"telefono", "complemento", "numeroTarjeta", "montoGiftCard",
-		"descuentoAdicional", "codigoExcepcion", "cafc", "montoDescuento",
+		"descuentoAdicional", "codigoExcepcion", "montoDescuento",
 	} {
 		if strings.Contains(xmlStr, "<"+campo+" xsi:nil=\"true\">") {
 			t.Errorf("el campo %q NO debe viajar con xsi:nil en el XML:\n%s", campo, xmlStr)
@@ -436,8 +478,9 @@ func assertFacturaXMLSinXsiNil(t *testing.T, archivo string) {
 
 	sinExcepciones := strings.ReplaceAll(xmlStr, "<numeroSerie xsi:nil=\"true\">", "")
 	sinExcepciones = strings.ReplaceAll(sinExcepciones, "<numeroImei xsi:nil=\"true\">", "")
+	sinExcepciones = strings.ReplaceAll(sinExcepciones, "<cafc xsi:nil=\"true\">", "")
 	if strings.Contains(sinExcepciones, "xsi:nil=\"true\"") {
-		t.Errorf("el XML contiene xsi:nil fuera de numeroSerie/numeroImei:\n%s", xmlStr)
+		t.Errorf("el XML contiene xsi:nil fuera de numeroSerie/numeroImei/cafc:\n%s", xmlStr)
 	}
 }
 

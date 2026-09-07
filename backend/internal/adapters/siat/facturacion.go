@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -127,6 +128,61 @@ type ResultadoEmision struct {
 	Archivo string `json:"archivo,omitempty"`
 }
 
+// PrepararFacturaOffline construye el documento con codigoEmision=2, lo firma
+// y lo comprime, pero no realiza ninguna llamada de red al SIAT. El documento
+// queda listo para su posterior envio dentro del paquete de contingencia.
+func (s *Service) PrepararFacturaOffline(_ context.Context, req SolicitudFactura) (*ResultadoEmision, error) {
+	if s.sdk == nil {
+		return nil, fmt.Errorf("siat contingencia: servicio SIAT no inicializado")
+	}
+	if err := s.applyIdentity(&req); err != nil {
+		return nil, err
+	}
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	perfil, err := PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
+	if err != nil {
+		return nil, fmt.Errorf("siat contingencia: %w", err)
+	}
+
+	tipoDoc := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
+	if !perfil.HasBuilder() {
+		return &ResultadoEmision{
+			Cuf: req.Cuf, XmlHash: strings.TrimSpace(req.HashArchivo),
+			Archivo: strings.TrimSpace(req.Archivo),
+		}, nil
+	}
+
+	factura, cuf, _, err := buildFacturaSDK(req, EmisionPaqueteOffline)
+	if err != nil {
+		return nil, err
+	}
+	xmlData, err := xml.Marshal(factura)
+	if err != nil {
+		return nil, fmt.Errorf("siat contingencia: no se pudo serializar la factura: %w", err)
+	}
+	xmlData = removeEmptyOptionalFacturaFields(xmlData)
+	xmlOffline := xmlData
+	if req.Modalidad == ModalidadElectronica {
+		xmlOffline, err = s.sdk.Config().SignXML(xmlData)
+		if err != nil {
+			return nil, fmt.Errorf("siat contingencia: no se pudo firmar el XML: %w", err)
+		}
+	}
+	archivo, hash, err := empaquetaArchivo(xmlOffline)
+	if err != nil {
+		return nil, fmt.Errorf("siat contingencia: %w", err)
+	}
+	slog.Info("siat documento offline construido",
+		"sector", perfil.Codigo, "layout", perfil.Layout,
+		"tipo_documento", tipoDoc, "numero_factura", req.NumeroFactura,
+		"xml_bytes", len(xmlOffline))
+	return &ResultadoEmision{
+		Cuf: cuf, Xml: string(xmlOffline), XmlHash: hash, Archivo: archivo,
+	}, nil
+}
+
 // SolicitudDocumento identifica un documento ya emitido ante el SIAT para las
 // operaciones de consulta de estado, anulación y reversión de anulación.
 type SolicitudDocumento struct {
@@ -162,17 +218,22 @@ type ResultadoDocumento struct {
 // recepcionDocumentoAjuste. El SDK serializa el XML, lo firma con XMLDSig cuando
 // la modalidad es electrónica, lo comprime en gzip y calcula el hash SHA-256.
 func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*ResultadoEmision, error) {
+	log.Println("Funcion de facturacion EmitirFactura")
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat emision: servicio SIAT no inicializado")
 	}
 	if err := s.applyIdentity(&req); err != nil {
+		log.Println("DEBUG EF1")
 		return nil, err
 	}
 	if err := req.validate(); err != nil {
+		log.Println("DEBUG EF2", err)
+
 		return nil, err
 	}
 	perfil, err := PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
 	if err != nil {
+		log.Println("DEBUG EF3", err)
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 	// CUF: debe usar el MISMO timestamp de la cabecera y el MISMO correlativo,
@@ -188,6 +249,7 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	if perfil.HasBuilder() {
 		factura, cuf, tipoDoc, err = buildFacturaSDK(req, goSiat.EmisionOnline)
 		if err != nil {
+			log.Println("error al construir la factura", err)
 			return nil, err
 		}
 		xmlData, marshalErr := xml.Marshal(factura)
@@ -204,6 +266,7 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		}
 		archivo, hash, err = empaquetaArchivo(xmlToSend)
 		if err != nil {
+			log.Println("DEBUG EF4", err)
 			return nil, fmt.Errorf("siat emision: %w", err)
 		}
 		xmlSent = xmlToSend
@@ -259,12 +322,14 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		resp, err = s.recepcionFacturaParaPerfil(ctx, perfil, req.Modalidad, rcp.Build())
 	}
 	if err != nil {
+		log.Println("DEBUG EF5", err)
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 	// Nota: RespuestaRecepcion no implementa common.Result, por lo que
 	// goSiat.Verify no aplica; la verificación es manual (Transaccion/CodigoEstado).
 	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
 	if err != nil {
+		log.Println("DEBUG EF6", err)
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 	return &ResultadoEmision{
@@ -344,11 +409,13 @@ func optionalStringPtr(value *string) *string {
 }
 
 func removeEmptyOptionalFacturaFields(data []byte) []byte {
-	// NOTA: "complemento" NO se elimina porque el XSD del SIAT requiere que
-	// el elemento complemento esté presente (aunque sea vacío) antes que
-	// codigoCliente para mantener la secuencia válida. Si se elimina, el
-	// SIAT rechaza con código 920: "One of '{complemento}' is expected".
-	for _, field := range []string{"telefono", "montoDescuentoCreditoDebito", "cafc"} {
+	// NOTA: "complemento", "telefono" y "cafc" NO se eliminan porque el XSD del SIAT
+	// los exige en secuencia exacta (telefono antes de numeroFactura, cafc antes
+	// de leyenda). Si se eliminan, el SIAT rechaza con código 920:
+	// "One of '{telefono}' is expected" / "One of '{cafc}' is expected".
+	// El SDK emite xsi:nil="true" cuando son nil y el SIAT lo acepta (nillable).
+	// Solo se eliminan campos que el SIAT permite ausentes al final.
+	for _, field := range []string{"montoDescuentoCreditoDebito"} {
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?></`+field+`>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`<`+field+`(?:\s[^>]*)?/>`).ReplaceAll(data, nil)
 		data = regexp.MustCompile(`(?s)<`+field+`(?:\s[^>]*)?>\s*</`+field+`>`).ReplaceAll(data, nil)

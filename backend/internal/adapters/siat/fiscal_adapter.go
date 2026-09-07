@@ -3,6 +3,7 @@ package siat
 import (
 	"context"
 	"encoding/json"
+	"log"
 
 	"github.com/brandsrx/supay/internal/ports"
 )
@@ -13,6 +14,17 @@ type FiscalAdapter struct {
 	svc *Service
 }
 
+// CodigoSistema expone el codigoSistema del servicio subyacente (para sincronización).
+func (a *FiscalAdapter) CodigoSistema() string {
+	if a == nil || a.svc == nil {
+		return ""
+	}
+	return a.svc.CodigoSistema()
+}
+
+// Svc expone el servicio subyacente (para casos que necesitan config).
+func (a *FiscalAdapter) Svc() *Service { return a.svc }
+
 // NewFiscalAdapter crea un adaptador de puerto alrededor de un *Service SIAT.
 func NewFiscalAdapter(svc *Service) *FiscalAdapter {
 	return &FiscalAdapter{svc: svc}
@@ -20,9 +32,20 @@ func NewFiscalAdapter(svc *Service) *FiscalAdapter {
 
 // Compile-time check: FiscalAdapter implementa ports.FiscalService.
 var _ ports.FiscalService = (*FiscalAdapter)(nil)
+var _ ports.OfflineFiscalService = (*FiscalAdapter)(nil)
 
 func (a *FiscalAdapter) Emit(ctx context.Context, doc ports.FiscalDocument) (ports.FiscalResult, error) {
 	res, err := a.svc.EmitirFactura(ctx, toSiatSolicitudFactura(doc))
+	if err != nil {
+		log.Println("DEBUG F1", err)
+
+		return ports.FiscalResult{}, err
+	}
+	return fromSiatResultadoEmision(res), nil
+}
+
+func (a *FiscalAdapter) PrepareOffline(ctx context.Context, doc ports.FiscalDocument) (ports.FiscalResult, error) {
+	res, err := a.svc.PrepararFacturaOffline(ctx, toSiatSolicitudFactura(doc))
 	if err != nil {
 		return ports.FiscalResult{}, err
 	}

@@ -422,6 +422,12 @@ type FiscalSyncResult struct {
 // FiscalService es el puerto que abstrae todas las operaciones fiscales
 // (SIAT real o sandbox). El dominio/application depende de esta interfaz,
 // nunca de implementaciones concretas ni del SDK go-siat.
+// OfflineFiscalService is an optional capability implemented by adapters that
+// can build and sign an offline invoice without contacting the SIAT.
+type OfflineFiscalService interface {
+	PrepareOffline(ctx context.Context, doc FiscalDocument) (FiscalResult, error)
+}
+
 type FiscalService interface {
 	Emit(ctx context.Context, doc FiscalDocument) (FiscalResult, error)
 	VerifyStatus(ctx context.Context, query FiscalDocumentQuery) (FiscalDocumentResult, error)

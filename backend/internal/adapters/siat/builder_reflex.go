@@ -186,6 +186,23 @@ func esPunteroNil(v any) bool {
 // comunes (omitiendo los que ese XSD no tiene), los datos_sector específicos y
 // devuelve la cabecera construida lista para WithCabecera.
 func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valores map[string]any) any {
+	// Fix 920: telefono y complemento deben estar presentes en la secuencia XSD.
+	// Si vienen nil (empresa sin teléfono, cliente sin complemento) el SDK
+	// emite xsi:nil que el SIAT rechaza al quitarlo con regex; en su lugar
+	// enviamos valores neutros para que serialice <telefono>0000000</telefono>
+	// y <complemento></complemento>.
+	if req.Telefono == nil {
+		def := "0000000"
+		req.Telefono = &def
+	}
+	if req.Cliente.Complemento == nil {
+		def := ""
+		req.Cliente.Complemento = &def
+	}
+	if req.Cliente.CodigoCliente == nil {
+		def := ""
+		req.Cliente.CodigoCliente = &def
+	}
 	cab := p.builders.cabecera()
 
 	comunes := []struct {
@@ -211,7 +228,6 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithMontoGiftCard", zeroFloat},
 		{"WithDescuentoAdicional", zeroFloat},
 		{"WithCodigoExcepcion", zeroInt},
-		{"WithCafc", req.Cafc},
 		{"WithCodigoMetodoPago", req.CodigoMetodoPago},
 		{"WithMontoTotal", req.MontoTotal},
 		{"WithMontoTotalSujetoIva", montoTotalSujetoIva(p, req)},

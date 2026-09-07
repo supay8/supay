@@ -24,6 +24,7 @@ func NewFiscalService() *FiscalService {
 }
 
 var _ ports.FiscalService = (*FiscalService)(nil)
+var _ ports.OfflineFiscalService = (*FiscalService)(nil)
 
 func (s *FiscalService) nextCode(prefix string) string {
 	n := atomic.AddInt64(&s.counter, 1)
@@ -40,6 +41,13 @@ func (s *FiscalService) Emit(ctx context.Context, doc ports.FiscalDocument) (por
 		Xml:             "<fake xmlns=\"sandbox\"/>",
 		XmlHash:         "FAKE-HASH",
 		Archivo:         "FAKE-ARCHIVO",
+	}, nil
+}
+
+func (s *FiscalService) PrepareOffline(context.Context, ports.FiscalDocument) (ports.FiscalResult, error) {
+	return ports.FiscalResult{
+		Cuf: s.nextCode("FAKE-CUF-OFFLINE"), Xml: "<fake-offline xmlns=\"sandbox\"/>",
+		XmlHash: "FAKE-OFFLINE-HASH", Archivo: "FAKE-OFFLINE-ARCHIVO",
 	}, nil
 }
 

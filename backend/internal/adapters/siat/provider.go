@@ -25,6 +25,7 @@ type CertStorageReader interface {
 type ProviderInfra struct {
 	BaseURL        string
 	CodigoAmbiente int
+	CodigoSistema  string
 	Timeout        time.Duration
 	TraceId        string
 	UserAgent      string
@@ -160,7 +161,10 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 		return nil, fmt.Errorf("siat provider: empresa no encontrada %s: %w", companyID, err)
 	}
 	if strings.TrimSpace(company.Nit) == "" {
-		return nil, fmt.Errorf("siat provider: empresa %s sin NIT o codigoSistema", companyID)
+		return nil, fmt.Errorf("siat provider: empresa %s sin NIT", companyID)
+	}
+	if strings.TrimSpace(p.infra.CodigoSistema) == "" {
+		return nil, fmt.Errorf("siat provider: SIAT_CODIGO_SISTEMA no configurado")
 	}
 
 	// Certificado activo (si existe) aporta token/p12 cifrados y overrides modalidad/ambiente
@@ -191,7 +195,7 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 	}
 
 	// Resolver P12: descifrar password y cargar bytes desde storage ref o cert
-	var p12Base64 string
+	var p12Bytes []byte
 	var p12Pass string
 	if cert != nil {
 		if strings.TrimSpace(cert.EncryptedP12Password) != "" {
@@ -214,29 +218,24 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 			if err != nil {
 				slog.Warn("siat provider: no se pudo cargar P12, se intenta sin cert", "company_id", companyID, "ref", ref, "error", err)
 			} else {
-				// Si el archivo está cifrado AES-GCM (base64 nonce+ciphertext), descifrarlo
+				encryptedRef := strings.HasSuffix(strings.ToLower(strings.TrimSpace(ref)), ".enc")
 				if p.crypto != nil {
-					if dec, derr := p.crypto.Decrypt(strings.TrimSpace(string(b))); derr == nil {
+					dec, derr := p.crypto.Decrypt(strings.TrimSpace(string(b)))
+					if derr == nil {
 						b = dec
-					} else {
-						// no estaba cifrado, usar tal cual (compatibilidad)
-						// si es base64 plano del P12, ya está listo
-						// si es binario, encode base64
-						if _, b64err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b))); b64err != nil {
-							// binario -> base64
-							b = []byte(base64.StdEncoding.EncodeToString(b))
-						} else {
-							b = []byte(strings.TrimSpace(string(b)))
-						}
+					} else if encryptedRef {
+						return nil, fmt.Errorf("siat provider: no se pudo descifrar P12: %w", derr)
 					}
+				} else if encryptedRef {
+					return nil, fmt.Errorf("siat provider: crypto no configurado para descifrar P12")
 				}
-				// El SDK espera base64 del .p12; asegurar base64
-				if _, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b))); err != nil {
-					b = []byte(base64.StdEncoding.EncodeToString(b))
-				} else {
-					b = []byte(strings.TrimSpace(string(b)))
+
+				// Los registros legacy pueden contener el P12 directamente en Base64.
+				// El SDK debe recibir los bytes DER, nunca el Base64 como string.
+				if decoded, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b))); derr == nil && len(decoded) > 0 {
+					b = decoded
 				}
-				p12Base64 = string(b)
+				p12Bytes = b
 			}
 		}
 	}
@@ -274,13 +273,13 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 	cfg := Config{
 		Token:          token,
 		Nit:            nitInt,
-		CodigoSistema:  company.CodigoSistema,
+		CodigoSistema:  p.infra.CodigoSistema,
 		CodigoAmbiente: codigoAmbiente,
 		BaseURL:        p.infra.BaseURL,
 		TraceId:        p.infra.TraceId,
 		UserAgent:      p.infra.UserAgent,
 		Timeout:        p.infra.Timeout,
-		CertP12:        p12Base64,
+		CertP12Bytes:   p12Bytes,
 		CertP12Pass:    p12Pass,
 	}
 	// Nota: modalidad no va en siat.Config global, se maneja por request en usecase

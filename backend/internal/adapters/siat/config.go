@@ -51,8 +51,12 @@ type Config struct {
 	// requieren solo para emitir facturas en modalidad electrónica.
 	CertPemCert string
 	CertPemKey  string
-	CertP12     string
-	CertP12Pass string
+	// CertP12 mantiene compatibilidad con configuraciones que proporcionan una
+	// ruta local o el contenido en Base64. CertP12Bytes es la forma preferida
+	// cuando el certificado ya fue cargado/descifrado por el provider.
+	CertP12      string
+	CertP12Bytes []byte
+	CertP12Pass  string
 }
 
 func (c Config) Validate() error {

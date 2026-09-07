@@ -41,7 +41,6 @@ func TestServiceSolicitarCUIS(t *testing.T) {
 
 	resp, err := svc.SolicitarCUIS(context.Background(), SolicitudCuis{
 		CodigoAmbiente:   AmbientePruebas,
-		CodigoSistema:    "SYS-123",
 		Nit:              "1020304050",
 		CodigoSucursal:   0,
 		CodigoModalidad:  ModalidadElectronica,

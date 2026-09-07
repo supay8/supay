@@ -221,7 +221,7 @@ func (s *CredentialService) requestCuis(ctx context.Context, company *domain.Com
 	}
 	req := ports.CredentialRequest{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    company.CodigoSistema,
+		CodigoSistema:    "",
 		Nit:              company.Nit,
 		CodigoSucursal:   pos.CodigoSucursal,
 		CodigoModalidad:  s.effectiveModalidadForCompany(company),
@@ -250,7 +250,7 @@ func (s *CredentialService) requestCufd(ctx context.Context, company *domain.Com
 	}
 	req := ports.CredentialRequest{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    company.CodigoSistema,
+		CodigoSistema:    "",
 		Nit:              company.Nit,
 		CodigoSucursal:   pos.CodigoSucursal,
 		CodigoModalidad:  s.effectiveModalidadForCompany(company),

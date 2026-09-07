@@ -1,887 +1,295 @@
-# Supay API Specification
+# Supay API — Flujo de Facturación
 
-> **Base URL:** `http://localhost:8081` (default, env `PORT`)
-> **Protocol:** HTTP / JSON (except certificate upload = `multipart/form-data`, PDF/XML download = binary)
-> **Auth:** `X-API-Key` header on every request except `GET /health`
-> **Stack:** Go + Chi + GORM + go-siat/v2, multi-tenant per `Company`, Bolivia SIAT (`UTC-4` La Paz)
+> **Base URL:** `http://localhost:8081` (env `PORT`)
+> **Prefijo estable:** `/v1` (todas las rutas de este doc). Responde `X-API-Version: v1` (`backend/internal/delivery/http/router.go:98`)
+> **Protocolo:** `HTTP / JSON`
 
-This document is the single source of truth for a web frontend agent. All routes, headers, query params, request bodies and responses are derived from the backend source (`backend/internal/delivery/http/router.go`, handlers, use cases and domain models).
+Este documento cubre el flujo mínimo para que un agente configure el punto de venta y emita facturas: **Sucursal → Punto de Venta → CUIS → CUFD → Sincronización de Catálogos → Facturación**. No incluye `Company`, `Customer`, `Product` o `Certificate` aislados — se asume `company_id` y `X-API-Key` ya existen.
 
 ---
 
-## 1. Global Conventions
+## 1. Convenciones Globales
 
-### 1.1 Headers
+### Headers
 
-| Header | Required | Description |
+| Header | Requerido | Descripción |
 |---|---|---|
-| `X-API-Key` | Yes (unless `lookup == nil` in tests) | Tenant API key `sup_<prefix>_<random>`. Resolved via `extractKeyPrefix` + `FindByPrefix` + `bcrypt` verify (`backend/internal/delivery/http/middleware.go:55`, `backend/internal/app/container.go:431` `SetVerifyAPIKey`). Missing/empty → `401 UNAUTHORIZED` `{"error":{"code":"UNAUTHORIZED","message":"no autorizado: falta el header X-API-Key"}}` (`middleware.go:27`). Invalid/inactive → `401` `{"error":{"code":"UNAUTHORIZED","message":"no autorizado: API key inválida o inactiva"}}` (`middleware.go:37`). On success injects `company_id` into `context` via `WithCompanyID` + legacy `siat.WithCompanyID` fallback (`middleware.go:44`). `TouchLastUsed` fire-and-forget. No `X-Company-Id` header accepted — tenant is derived solely from the key. |
-| `Idempotency-Key` | No (invoices only) | `POST /invoices` header, max 100 chars (`modules/invoice/handler.go:17`). Same `point_of_sale_id` + key returns existing invoice (replay, `200 OK`). Race returns `409` unique violation fallback. |
-| `Content-Type` | Yes | `application/json` except `POST /companies/{id}/certificates` → `multipart/form-data`. |
-| `Accept` | No | `application/json` except `GET /invoices/{id}/xml` → `application/xml`, `GET .../pdf` → `application/pdf` |
+| `X-API-Key` | Sí | `sup_<prefix>_<random>`. Falta → `401 {"error":{"code":"UNAUTHORIZED","message":"no autorizado: falta el header X-API-Key"}}` (`backend/internal/delivery/http/middleware.go:27`). Inválida/inactiva → `401` `API key inválida o inactiva`. Inyecta `company_id` al contexto; no existe `X-Company-Id`. |
+| `Idempotency-Key` | No | Solo `POST /v1/invoices` y `POST /v1/invoices/emit`. Máx 100 chars (`backend/internal/delivery/http/modules/invoice/handler.go:54`). Mismo `point_of_sale_id` + key → replay `200 OK`. Sin key → `201 Created`. |
+| `Content-Type` | Sí | `application/json` |
 
-CORS (`router.go:27`): `AllowedOrigins` `http://localhost:3000`, `http://127.0.0.1:3000`, `http://0.0.0.0:3000`, `http://localhost:5173`, `http://127.0.0.1:5173`; `AllowedMethods` `GET, POST, PUT, DELETE, OPTIONS`; `AllowedHeaders` `Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, X-API-Key`; `AllowCredentials: true`, `MaxAge: 300`.
+CORS (`backend/internal/delivery/http/router.go:68`): `AllowedOrigins` `localhost:3000`, `127.0.0.1:3000`, `0.0.0.0:3000`, `localhost:5173`, `127.0.0.1:5173`; `AllowedMethods` `GET, POST, PUT, DELETE, OPTIONS`; `AllowCredentials: true`; `MaxAge: 300`. Body máx `10 MB` (`router.go:15`), timeout global `60s`.
 
-- Max body size: `10 MB` (`router.go:13` `maxBodyBytes = 10 << 20`), enforced via `http.MaxBytesReader` (`middleware.go:97` `LimitBody`).
-- Global timeout: `60s` (`middleware.Timeout`).
-- Logging: `middleware.Logger` + `Recoverer`.
+### Envelope de Errores
 
-### 1.2 Error Envelope (single shape for all errors)
-
-All non-2xx responses return (`errors.go:47`):
+Todo `!2xx` retorna (`backend/internal/delivery/http/errors.go:47`):
 
 ```json
 {
   "error": {
     "code": "VALIDATION_ERROR | NOT_FOUND | CONFLICT | UNAUTHORIZED | SIAT_REJECTED | SIAT_UNAVAILABLE | INTERNAL",
-    "message": "human readable",
-    "invoice_id": "optional, only on emit/rejected flows",
-    "details": [{ "code": 123, "message": "SIAT observation" }]
+    "message": "texto humano",
+    "field": "items[0].sku (solo VALIDATION_ERROR si aplica)",
+    "details": [{ "code": 123, "message": "observación SIAT" }],
+    "invoice_id": "uuid (solo en flujos de emisión rechazada)"
   }
 }
 ```
 
-**Taxonomy** (`errors.go:20-28`):
-
-| Code | HTTP | When |
+| `code` | HTTP | Cuándo |
 |---|---|---|
-| `VALIDATION_ERROR` | `400` | Bad JSON, missing param, `BadRequestError` |
-| `NOT_FOUND` | `404` | `NotFoundError` or `gorm.ErrRecordNotFound` |
-| `CONFLICT` | `409` | `ConflictError` or `ErrCompanyNitConflict`, `ErrCustomerDocumentConflict`, `ErrBranchSucursalConflict`, etc. Missing CUFD, catalog readiness. |
-| `UNAUTHORIZED` | `401` | `X-API-Key` mismatch |
-| `SIAT_REJECTED` | `422` | `EmissionRejectedError` → `details[]` with SIAT `codigo`/`descripcion` |
-| `SIAT_UNAVAILABLE` | `503` / `502` | `ErrSiatNoDisponible`, network/retryable, `goSiat.SiatError` |
-| `INTERNAL` | `500` | Untyped error; message is generic `internal server error`, detail logged server-side only. |
+| `VALIDATION_ERROR` | `400` | JSON inválido, campo faltante, tipo incorrecto, campo desconocido (`DisallowUnknownFields`) |
+| `UNAUTHORIZED` | `401` | `X-API-Key` falta/inválida |
+| `NOT_FOUND` | `404` | Empresa/POS/sucursal/producto no encontrado |
+| `CONFLICT` | `409` | `codigo_sucursal` duplicado, POS inactivo, sin CUIS/CUFD, catálogos no listos |
+| `SIAT_REJECTED` | `422` | SIAT rechaza emisión |
+| `SIAT_UNAVAILABLE` | `502/503` | SIAT no disponible / `ErrSiatNoDisponible` |
+| `INTERNAL` | `500` | Error no tipado |
 
-### 1.3 List Envelope
+Programar contra `code`, no contra `message`.
 
-Paginated lists use (`errors.go:174`):
+### List Envelope
 
 ```json
-{
-  "items": [],
-  "total": 42,
-  "limit": 50,
-  "offset": 0
-}
+{ "items": [], "total": 42, "limit": 50, "offset": 0 }
 ```
-
-If `items` is `nil` → serialized as `[]`. `limit`/`offset` omitted when `0` (non-paginated lists like branches). Use `respondList`.
-
-### 1.4 Date / Time
-
-- Invoice `issue_date`: `time.Time` in `America/La_Paz` (`UTC-4`). Input accepts flexible formats (`usecase/invoice_usecase.go:168`): `RFC3339Nano`, `RFC3339`, `2006-01-02T15:04:05.000`, `2006-01-02T15:04:05`, `2006-01-02 15:04:05`, with `Asia?` → `siat.LaPaz`.
-- Only allowed when `ALLOW_CUSTOM_ISSUE_DATE=true` (default `true` in `PILOTO` env, `false` prod). Otherwise `400`.
-- `fechaHoraInicioEvento` / `fechaHoraFinEvento` → `YYYY-MM-DDTHH:mm:ss.SSS` (SIAT), parsed via `ParseFechaSiat`.
-
-### 1.5 Environment Variables (infra)
-
-| Var | Default | Notes |
-|---|---|---|
-| `PORT` | `8081` | HTTP listen |
-| `API_KEY` | (required) | Empty disables auth |
-| `SIAT_AMBIENTE` | `2` (piloto) | `1`=prod, `2`=piloto |
-| `SIAT_MODALIDAD` | `1` (electronica) | `1`=electronica, `2`=computarizada; overridden per company/certificate |
-| `SIAT_BASE_URL` | derived | `https://pilotosiatservicios.impuestos.gob.bo/v2` piloto |
-| `ENCRYPTION_KEY` | (required prod) | AES-GCM 32 bytes base64, for P12/token encryption |
-| `DEPLOYMENT_MODE` | `selfhosted` | `selfhosted`|`cloud` |
-| `STORAGE_DRIVER` | `local`/`r2` | PDF/Cert storage |
-| `ALLOW_CUSTOM_ISSUE_DATE` | piloto `true` | Dev offline simulation |
+`limit`/`offset` omitidos cuando `0` (listas no paginadas como branches/POS).
 
 ---
 
-## 2. Entity Schemas (domain models)
+## 2. Sucursal
 
-### Company
-```json
-{
-  "id": "uuid",
-  "nit": "1020304050",
-  "business_name": "Empresa SRL",
-  "codigo_sistema": "ABC123",
-  "ambiente": "PILOTO | PRODUCCION",
-  "modalidad": 1,
-  "municipio": "La Paz",
-  "direccion": "Calle 123",
-  "telefono": "2123456",
-  "codigo_actividad": "620100",
-  "pie_pagina": "Ley 453...",
-  "usuario_siat": "SUPAY",
-  "created_at": "2026-09-02T10:00:00-04:00",
-  "updated_at": "..."
-}
-```
+### `POST /v1/branches/`
 
-### Branch
-```json
-{
-  "id": "uuid",
-  "company_id": "uuid",
-  "codigo_sucursal": 0,
-  "name": "Casa Matriz",
-  "address": "Av. ...",
-  "active": true,
-  "created_at": "..."
-}
-```
-
-### PointOfSale
-```json
-{
-  "id": "uuid",
-  "company_id": "uuid",
-  "codigo_sucursal": 0,
-  "codigo_punto_venta": 1,
-  "description": "POS 1",
-  "cuis": "ABC...",
-  "cuis_created_at": "...",
-  "is_active": true,
-  "siat_code": 1,
-  "tipo_punto_venta": 1,
-  "siat_transaccion": true,
-  "created_at": "..."
-}
-```
-`codigo_punto_venta` auto-increment `MAX+1` per company+sucursal under advisory lock if `0`.
-
-### Customer (create-only, immutable after invoicing)
-```json
-{
-  "id": "uuid",
-  "company_id": "uuid",
-  "document_type": "CI | CEX | PAS | NIT | OD",
-  "document_number": "1234567",
-  "complement": "1A",
-  "email": "client@mail.com",
-  "name": "Juan Perez",
-  "codigo_cliente": "CI1234567",
-  "created_at": "..."
-}
-```
-Unique per `company_id + document_type + document_number`. After invoices exist → immutable (DB trigger).
-
-### Product
-```json
-{
-  "id": "uuid",
-  "company_id": "uuid",
-  "sku": "PROD-001",
-  "name": "Producto A",
-  "active": true,
-  "mappings": [{
-    "id": "uuid",
-    "codigo_producto_sin": 101010,
-    "codigo_actividad": "620100",
-    "codigo_documento_sector": 1,
-    "unidad_medida": 57,
-    "is_default": true,
-    "active": true
-  }],
-  "created_at": "...",
-  "updated_at": "..."
-}
-```
-Mappings must exist in synchronized SIAT catalogs and match `actividadesDocumentoSector`.
-
-### Certificate (P12)
-```json
-{
-  "id": "uuid",
-  "company_id": "uuid",
-  "name": "cert-abcd-20260902",
-  "type": "P12",
-  "status": "ACTIVE | EXPIRED | REVOKED | PENDING",
-  "not_before": "...",
-  "not_after": "...",
-  "p12_storage_ref": "certs/<company>/<id>.p12.enc",
-  "modalidad": 1,
-  "ambiente": "PILOTO",
-  "nit": "1020304050",
-  "created_at": "..."
-}
-```
-Encrypted at rest (AES-GCM). Never returns `EncryptedToken`/`EncryptedP12Password`.
-
-### Invoice (DTO, `invoice_dto.go`)
-```json
-{
-  "id": "uuid",
-  "company_id": "uuid",
-  "customer_id": "uuid",
-  "point_of_sale_id": "uuid",
-  "idempotency_key": "optional",
-  "cufd_id": "uuid",
-  "contingency_event_id": null,
-  "ajusta_factura_id": null,
-  "invoice_number": 1,
-  "status": "PENDING|SENDING|SENT|ACCEPTED|REJECTED|OBSERVED|OFFLINE|CANCELLED",
-  "cuf": "ABC...",
-  "subtotal": 100.00,
-  "discount": 0,
-  "total": 100.00,
-  "codigo_metodo_pago": 1,
-  "codigo_moneda": 1,
-  "tipo_cambio": 1,
-  "codigo_documento_sector": 1,
-  "codigo_tipo_factura": 1,
-  "layout": "",
-  "modalidad": 1,
-  "nombre_estudiante": null,
-  "periodo_facturado": null,
-  "sector_data": {},
-  "emission_type": "EN_LINEA",
-  "issue_date": "2026-09-02T10:00:00-04:00",
-  "siat_reception_code": null,
-  "siat_mensajes": null,
-  "customer": {
-    "id": "uuid",
-    "name": "Juan",
-    "document_type": "CI",
-    "document_number": "123",
-    "complement": null
-  },
-  "items": [{
-    "id": "uuid",
-    "product_id": "uuid",
-    "code": "PROD-001",
-    "description": "Item A",
-    "codigo_actividad": "620100",
-    "codigo_producto_sin": "101010",
-    "unit_code": 57,
-    "quantity": 2,
-    "unit_price": 50,
-    "discount": 0,
-    "subtotal": 100,
-    "sector_data": {}
-  }],
-  "created_at": "...",
-  "company": {},       // only if ?include=company
-  "point_of_sale": {}, // only if ?include=point_of_sale
-  "cufd_record": {},   // only if ?include=cufd
-  "xml": "...",        // only if ?include=xml
-  "xml_hash": "...",
-  "archivo": "base64...", // only if ?include=archivo
-  "hash_archivo": "sha256..."
-}
-```
-
----
-
-## 3. Endpoint Reference
-
-> All paths below are mounted under `router.go:45` group (API key + company injection). `GET /health` is outside group.
-
-### 3.1 Health
-
-**`GET /health`** — No auth
-- **Response `200`:**
-```json
-{"status":"ok","message":"Supay API running"}
-```
-
----
-
-### 3.2 Setup (Orchestrator)
-
-**`POST /setup`** — Auth required
+- **Handler:** `backend/internal/delivery/http/modules/branch/handler.go:20` → `backend/internal/usecase/branch_usecase.go:20` `CreateBranchRequest`
+- **Headers:** `X-API-Key`
 - **Body:**
 ```json
-{ "company_id": "uuid", "point_of_sale_id": "uuid" }
+{ "company_id": "uuid*", "codigo_sucursal": 0, "name": "Casa Matriz*", "address": "Av. ..." }
 ```
-Both required. Idempotent: reuses existing `CUIS`, refreshes catalogs, ensures `CUFD`.
-- **Response `200`:**
-```json
-{
-  "cuis": { "codigo": "...", "fechaVigencia": "...", "transaccion": true },
-  "cufd": { "id":"uuid", "cufd":"...", "codigoControl":"...", "validFrom":"...", "validTo":"..." },
-  "operations": [{ "operation":"actividades","transaccion":true,"codigos":12,"status":"SUCCESS","rows_saved":12 }],
-  "errors": [],
-  "readiness": { "company_id":"...","point_of_sale_id":"...","ready":true, "missing":[] }
-}
-```
-- **Errors:** `400` missing ids, `404` company/POS not found, `503` SIAT unavailable.
+`company_id`, `name` obligatorios; `codigo_sucursal >=0` (default `0`). Valida empresa existe, único `company_id + codigo_sucursal` → `409 ErrBranchSucursalConflict`.
+
+- **Response `201`:** `Branch` `{id, company_id, codigo_sucursal, name, address, active:true, created_at}`
+
+### `GET /v1/branches/?company_id=uuid`
+
+- **Handler:** `branch/handler.go:34`
+- **Query:** `company_id` (opcional, lista todo si vacío)
+- **Response `200`:** `{"items":[Branch], "total":n}` (no paginado, `limit`/`offset` siempre `0`)
+
+### `GET /v1/branches/{id}` → `200 Branch` / `404`
+### `PUT /v1/branches/{id}` — Body `{"codigo_sucursal?":int, "name?":string, "address?":string, "active?":bool}` (`branch_usecase.go:27`) → `200 Branch`
+### `DELETE /v1/branches/{id}` → `204` / `404`
 
 ---
 
-### 3.3 Companies
+## 3. Punto de Venta
 
-#### `POST /companies/`
-- **Body `RegisterCompanyRequest` (`company_usecase.go:18`):**
+### `POST /v1/point-of-sales/`
+
+- **Handler:** `backend/internal/delivery/http/modules/pos/handler.go:21` → `backend/internal/usecase/point_of_sale_usecase.go:20` `RegisterPointOfSaleRequest`
+- **Headers:** `X-API-Key`
+- **Body:**
 ```json
-{
-  "nit": "1020304050",
-  "business_name": "Empresa SRL",
-  "codigo_sistema": "ABC123",
-  "ambiente": "PILOTO",
-  "usuario_siat": "SUPAY",
-  "municipio": "La Paz",
-  "direccion": "Calle 123",
-  "telefono": "2123456",
-  "codigo_actividad": "620100",
-  "pie_pagina": "Ley 453..."
-}
+{ "company_id": "uuid*", "codigo_sucursal": 0, "description": "Caja 1*", "cuis": null, "is_active": true }
 ```
-`nit` + `business_name` required. `ambiente` defaults `PILOTO`, `usuario_siat` defaults `SUPAY`. Validates `PILOTO|PRODUCCION`.
-- **Response `201`:** `Company` object
-- **Errors:** `400` missing, `409` `ya existe una empresa registrada con este nit`, `500` on create
+`company_id`, `description` obligatorios. `codigo_sucursal` referencia sucursal (default `0`). `cuis` opcional. `codigo_punto_venta` auto `MAX+1` por `company+sucursal` bajo advisory lock si no se envía.
 
-#### `GET /companies/?nit=...`
-- **Query:** `nit` required
-- **Response `200`:** `Company`
-- **Errors:** `400` missing `nit`, `404` not found
+- **Response `201`:** `PointOfSale` `{id, company_id, codigo_sucursal, codigo_punto_venta, description, cuis, cuis_created_at, is_active, siat_code, tipo_punto_venta, siat_transaccion, created_at}`
 
-#### `PATCH /companies/{id}`
-- **Body `UpdateCompanyRequest` (all optional pointers):** same fields as create
-- **Response `200`:** updated `Company`
-- **Errors:** `400` invalid ambiente, `404` not found, `409` nit conflict
-
-#### `DELETE /companies/{id}` (also `?id=` query compat)
-- **Response `204`** no body
-- **Errors:** `404` not found, `409` has dependencies (FK: POS, customers, invoices)
-
-#### Certificates (nested under company)
-
-**`POST /companies/{id}/certificates`** — `multipart/form-data` ONLY
-- **Fields:**
-  - `p12_file` (file, required, `.p12` or `.pfx`, ≤5 MB)
-  - `token` or `token_delegado` (text, required) — SIAT delegated token, encrypted with `ENCRYPTION_KEY`
-  - `p12_password` (text, optional)
-  - `name` (text, optional, auto `cert-<shortId>-YYYYMMDD`)
-  - `type` (text, default `P12`)
-  - `modalidad` (text int `1`/`2`, optional)
-  - `ambiente` (text `PILOTO`/`PRODUCCION`, optional)
-- **Headers:** `Content-Type: multipart/form-data; boundary=...` + `X-API-Key`
-- **Response `201`:**
-```json
-{"data": { "id":"uuid","company_id":"...","name":"...","type":"P12","status":"ACTIVE", ... }}
-```
-- **Errors:** `400` missing file/token, invalid extension, `409` missing `ENCRYPTION_KEY`, `500` encrypt/storage fail
-
-**`GET /companies/{id}/certificates`** → `200 {"data": [Certificate]}`
-
-**`GET /companies/{id}/certificates/active`** → `200 {"data": Certificate}` or `404`
-
-**`DELETE /companies/{id}/certificates/{certId}`** → `204`; also deletes storage object.
+### `GET /v1/point-of-sales/?company_id=uuid` → `200 {"items":[PointOfSale]}`
+### `GET /v1/point-of-sales/{id}` → `200 PointOfSale` / `404`
+### `PATCH /v1/point-of-sales/{id}` — Body `{"codigo_sucursal?":int, "description?":string, "cuis?":string, "is_active?":bool}` (`point_of_sale_usecase.go:28`) → `200`
+### `DELETE /v1/point-of-sales/{id}` → `204` / `404`
 
 ---
 
-### 3.4 Branches
+## 4. CUIS — Código Único de Inicio de Sistema
 
-#### `POST /branches/`
-```json
-{ "company_id": "uuid", "codigo_sucursal": 0, "name": "Casa Matriz", "address": "Av..." }
-```
-`company_id` + `name` required, `codigo_sucursal >=0`. Validates company exists, unique `company+sucursal`.
-- **Response `201`:** `Branch`
+### `POST /v1/siat/cuis/{companyId}/{pointOfSaleId}`
 
-#### `GET /branches/?company_id=uuid` → `200 {"items":[...],"total":n}` (non-paginated list)
-
-#### `GET /branches/{id}` → `200 Branch` / `404`
-
-#### `PUT /branches/{id}`
-```json
-{ "codigo_sucursal": 1, "name": "New", "address": "...", "active": true }
-```
-All optional.
-- **Response `200`:** Branch
-
-#### `DELETE /branches/{id}` → `204` / `404`
-
----
-
-### 3.5 Points of Sale
-
-#### `POST /point-of-sales/`
-```json
-{
-  "company_id": "uuid",
-  "codigo_sucursal": 0,
-  "description": "Caja 1",
-  "cuis": "optional",
-  "is_active": true
-}
-```
-`company_id`, `description` required. `codigo_punto_venta` auto `MAX+1` if not set.
-- **Response `201`:** `PointOfSale`
-
-#### `GET /point-of-sales/?company_id=uuid` → `200 {"items":[...]}`
-#### `GET /point-of-sales/{id}` → `200 PointOfSale`
-#### `PATCH /point-of-sales/{id}` — body `UpdatePointOfSaleRequest` (`codigo_sucursal`, `description`, `cuis`, `is_active` optional) → `200`
-#### `DELETE /point-of-sales/{id}` → `204`
-
----
-
-### 3.6 Customers
-
-#### `POST /customers/`
-```json
-{
-  "company_id": "uuid",
-  "document_type": "CI",
-  "document_number": "1234567",
-  "complement": "1A",
-  "name": "Juan Perez"
-}
-```
-`company_id`, `document_type`, `document_number`, `name` required. `document_type in [CI,CEX,PAS,NIT,OD]`. Trims/uppercases.
-- **Response `201`:** `Customer`
-- **Errors:** `400` missing/invalid type, `404` company, `409` duplicate document
-
-#### `GET /customers/?company_id=uuid` → `200 {"items":[...]}`
-#### `GET /customers/{id}` → `200 Customer`
-
-> Customers are resolved in invoice creation either by `customer_id` or inline `client_*` fields. If `client_document_number`/`client_name` not provided via `customer_id`, a new customer is auto-created/looked up via `GetByCompanyAndFiscalIdentity`.
-
----
-
-### 3.7 Products
-
-#### `POST /products/`
-```json
-{
-  "company_id": "uuid",
-  "sku": "PROD-001",
-  "name": "Producto A",
-  "mappings": [{
-    "codigo_producto_sin": 101010,
-    "codigo_actividad": "620100",
-    "codigo_documento_sector": 1,
-    "unidad_medida": 57,
-    "is_default": true
-  }]
-}
-```
-`company_id`, `sku`, `name` required. Each mapping validated against SIAT synchronized catalogs (`sin_products`, `actividades`, `unidadMedida`, `actividadesDocumentoSector` compatibility). `codigo_producto_sin` etc >0.
-- **Response `201`:** `Product` with `mappings`
-
-#### `GET /products/?company_id=uuid` → `200 {"items":[...]}`
-- **Errors:** `400` missing `company_id`
-
-#### `POST /products/{id}/mappings?company_id=uuid`
-```json
-{
-  "codigo_producto_sin": 101010,
-  "codigo_actividad": "620100",
-  "codigo_documento_sector": 1,
-  "unidad_medida": 57,
-  "is_default": false
-}
-```
-Upserts mapping. Same validations as create.
-- **Response `204`** no body
-- **Errors:** `400` missing `company_id`, validation, sector incompatibility
-
----
-
-### 3.8 Invoices
-
-#### `POST /invoices/` — Create draft (optionally emit immediately)
-
-**Headers:** `X-API-Key` (tenant, required), optional `Idempotency-Key: <100 chars>` (see `1.1`), `Content-Type: application/json`. No `X-Company-Id` — `company_id` is derived from `X-API-Key` via `TenantMiddleware` (`middleware.go:44`); `company_id` in body is optional and validated against the key tenant.
-
-**Query:** `?include=xml,company,point_of_sale,cufd,archivo,all` (comma-separated, `all` enables all)
-
-**Body `CreateInvoiceRequest` (`invoice_usecase.go:192`):**
-```json
-{
-  "company_id": "uuid",
-  "point_of_sale_id": "uuid",
-  "customer_id": "uuid",
-  "customer": { "document_type": "CI", "document_number": "123", "name": "Juan", "complement": "1A" },
-  "receiver": { "document_type": 1, "document_number": "123", "complement": "1A", "name": "Juan", "email": "a@b.com" },
-  "client_document_type": "CI",
-  "client_document_number": "1234567",
-  "client_name": "Juan Perez",
-  "client_email": "juan@mail.com",
-  "client_complement": "1A",
-  "invoice_type": "sale | education | credit_note | debit_note",
-  "codigo_metodo_pago": 1,
-  "codigo_moneda": 1,
-  "tipo_cambio": 1,
-  "codigo_documento_sector": 1,
-  "layout": "nota_credito_debito | nota_fiscal_credito_debito",
-  "modalidad": 1,
-  "codigo_tipo_factura": 1,
-  "nombre_estudiante": "Juan",
-  "periodo_facturado": "2026-08",
-  "datos_sector": {},
-  "referencia_factura_id": "uuid",
-  "issue_date": "2026-09-02T10:00:00-04:00",
-  "emit": false,
-  "archivo": "base64...",
-  "hash_archivo": "sha256...",
-  "cuf": "optional sector 33",
-  "items": [
-    {
-      "product_id": "uuid",
-      "sku": "PROD-001",
-      "code": "PROD-001",
-      "description": "Item A",
-      "codigo_actividad": "620100",
-      "codigo_producto_sin": "101010",
-      "unit_code": 57,
-      "quantity": 2,
-      "unit_price": 50,
-      "discount": 0,
-      "datos_sector": {}
-    }
-  ]
-}
-```
-
-**Field rules:**
-- `point_of_sale_id` required; if `company_id` empty → derived from POS. Validates POS belongs to company and `is_active`.
-- Customer: priority `customer_id` > `client_document_*` inline > `customer` legacy > `receiver` legacy (int type → string). Uses `resolveCustomer` to find-or-create. `client_document_number` + `client_name` required if no `customer_id`.
-- `items` non-empty; each `quantity>0`, `unitPrice>=0`, `discount>=0`, `subtotal = quantity*unitPrice - discount` rounded 2 decimals.
-- Product mapping: if `product_id`/`sku` present, resolves via `productRepo` and freezes `codigo_actividad`, `codigo_producto_sin`, `unit_code`. Validates sector matches invoice `codigo_documento_sector`.
-- `codigo_documento_sector`: if `0` → resolved via `invoice_type` + product mappings + `actividadesDocumentoSector` (fallback to company `codigo_actividad`). Fails if missing.
-- `modalidad` defaults to company / config `SiatModalidad`; validated via `PerfilSector.ValidarModalidad`.
-- `datos_sector` (header-level) + `items[].datos_sector` (detail-level) validated fail-fast against `SectorProfile.Campos` / `CamposDetalle` (type `string|int|float|fecha|json`, required flags, unknown keys rejected). See `GET /invoices/sectores` for schema.
-- Ajuste sectors (`24,29,47,48`): `referencia_factura_id` required → must have `cuf` and `invoice_number`.
-- If sector without builder (`33`): `archivo`, `hash_archivo`, `cuf` required.
-- `issue_date` only when `ALLOW_CUSTOM_ISSUE_DATE=true`, else `400`.
-- CUFD: auto-resolved lazy via `CredentialService.EnsureCufd` if configured; else requires active CUFD in DB.
-- Catalog readiness: checks `syncState` (`actividades`, `productosServicios`, `actividadesDocumentoSector`, `unidadMedida`, `tipoMoneda`, `tipoMetodoPago`, `leyendasFactura` <24h) → `409` if missing, asks to `POST /siat/sincronizar`.
-
-**Response:**
-- `201 Created` (or `200 OK` if `Idempotency-Key` replay with existing)
-- Body: `invoiceDTO` (see schema). If `emit:true` and status was `PENDING` → internally calls `Emit` (see next) and returns emitted invoice; on SIAT rejection → `422` with `invoice_id`.
-
-**Errors:** `400` validation, `404` company/POS/customer, `409` inactive POS, missing CUFD/catalog, `422` SIAT rejected, `503` SIAT unavailable.
-
-#### `GET /invoices/?point_of_sale_id=uuid&status=PENDING&from=2026-09-01T00:00:00-04:00&to=2026-09-02T23:59:59-04:00&limit=50&offset=0`
-- `point_of_sale_id` required.
-- `status` optional enum `PENDING|SENDING|...|CANCELLED` (`invoice.go:9`).
-- `from`/`to` RFC3339, `from <= to`.
-- `limit` default `50`, max `200`; `offset >=0`.
-- **Response `200`:**
-```json
-{ "items": [Invoice], "total": 10, "limit": 50, "offset": 0 }
-```
-Lightweight items (no `xml`/`archivo`).
-
-#### `GET /invoices/sectores?company_id=uuid`
-- Catalog metadata for dynamic forms. No auth? Auth via group, so yes.
-- **Response `200`:** `SectorDTO[]`
-```json
-[
-  {
-    "codigo": 1,
-    "nombre": "Compra y Venta",
-    "tipo_documento": 1,
-    "operacion": "recepcion_factura",
-    "fachada": "compra_venta",
-    "layout": "",
-    "modalidades": [1,2],
-    "soportado": true,
-    "tiene_builder": true,
-    "requiere_archivo": false,
-    "con_detalle": true,
-    "detalle_unico": false,
-    "monto_sujeto_iva_cero": false,
-    "es_ajuste": false,
-    "habilitado": true,
-    "campos_datos_sector": [{ "json":"periodo_facturado","requerido":true,"tipo":"string","etiqueta":"Período facturado","ejemplo":"2026-08" }],
-    "campos_datos_sector_detalle": []
-  }
-]
-```
-If `company_id` omitted → `habilitado` omitted. Else computed from `siat_actividad_doc_sector`.
-
-#### `GET /invoices/{id}?include=...` → `200 InvoiceDTO`
-#### `GET /invoices/{id}/xml` → `200 application/xml` with `Content-Disposition: attachment; filename="factura-{id}.xml"` — `409` if no xml yet.
-
-#### `GET /invoices/{id}/pdf` (also `GET /siat/invoice/{invoiceId}/pdf`) — generates via `pdf.Service`
-- **Response `200`:** `application/pdf` `attachment; filename="factura-{id}.pdf"`
-- **Errors:** `404` not found, `500` generation error, `503` service not initialized
-
-#### `POST /invoices/{id}/emit` → emits pending invoice to SIAT
-- **Response `200`:** `InvoiceDTO` with `ACCEPTED`/`OBSERVED`/`REJECTED` etc.
-- **Idempotency:** `ClaimForEmission` atomic `PENDING→SENDING`; stale `SENDING` reaper (5min interval, 10min stale) reverts to `PENDING`.
-- **Errors:** `404`, `409` not pending, `422` `SIAT_REJECTED`, `503`.
-
-#### `GET /invoices/{id}/siat-status` — verify SIAT reception code
-- **Response `200`:** `InvoiceDTO` updated
-
-#### `POST /invoices/{id}/annul`
-```json
-{ "codigo_motivo": 1 }
-```
-`codigo_motivo` SIAT annulment reason code.
-- **Response `200`:** `InvoiceDTO` with `CANCELLED`
-- Uses `ClaimStatus` atomic transition.
-
-#### `POST /invoices/{id}/annul/revert` → `200 InvoiceDTO` (revert annulment)
-
----
-
-### 3.9 SIAT Operations (all `POST`)
-
-All under `/siat/...` need `companyId` + `pointOfSaleId` path params, validated via `LoadCompanyAndPointOfSale`. Require active `CUIS`/`CUFD` (error `409 CONFLICT` if missing). Resolve service per company via `SiatClientProvider` (multi-tenant cert).
-
-#### `POST /siat/cuis/{companyId}/{pointOfSaleId}` → force new CUIS
+- **Handler:** `backend/internal/delivery/http/modules/siat/handler.go:59` `solicitarCUIS` → `backend/internal/usecase/siat_usecase.go:324` `SolicitarCUIS`
+- **Headers:** `X-API-Key`
+- **Path params:** `companyId*`, `pointOfSaleId*` validados vía `LoadCompanyAndPointOfSale` (`siat_usecase.go:268`) → `400` si vacíos, `404` si no existen, `409` si POS no pertenece a empresa.
+- **Body:** vacío
 - **Response `200`:**
 ```json
 { "success": true, "cuis": "ABC...", "fecha_vigencia": "2026-09-03 10:00:00" }
 ```
+Fuerza renovación CUIS. Requiere servicio SIAT configurado, si no → `503 ErrSiatNoDisponible`.
 
-#### `POST /siat/cufd/{companyId}/{pointOfSaleId}` → force new CUFD
+---
+
+## 5. CUFD — Código Único de Facturación Diaria
+
+### `POST /v1/siat/cufd/{companyId}/{pointOfSaleId}`
+
+- **Handler:** `siat/handler.go:72` `solicitarCUFD` → `siat_usecase.go:345` `SolicitarCUFD`
+- **Headers:** `X-API-Key`
+- **Path params:** mismos que CUIS
+- **Body:** vacío
 - **Response `200`:**
 ```json
-{ "success": true, "data": { "cufd":"...", "fecha_vigencia":"2026-09-03 10:00:00", "codigo_control":"..." } }
+{ "success": true, "data": { "cufd": "...", "fecha_vigencia": "2026-09-03 10:00:00", "codigo_control": "..." } }
 ```
+Requiere CUIS activo previo → `409` si no. Formato `fecha_vigencia` `YYYY-MM-DD HH:mm:ss` (`siat/handler.go:82`).
 
-#### `POST /siat/sincronizar/{companyId}/{pointOfSaleId}?operation=actividades`
-- `operation` optional: if present → single catalog; else all `SincronizacionOperations` (actividades, productosServicios, actividadesDocumentoSector, unidadMedida, etc.)
+---
+
+## 6. Sincronización de Catálogos
+
+### `POST /v1/siat/sincronizar/{companyId}/{pointOfSaleId}?operation=`
+
+- **Handler:** `siat/handler.go:237` `sincronizar` → `siat_usecase.go:1273` `Sincronizar`
+- **Headers:** `X-API-Key`
+- **Path params:** `companyId*`, `pointOfSaleId*`
+- **Query `operation` opcional:** si presente → solo esa operación; si vacío → todas (`ports.FiscalSyncOperations`: `actividades`, `productosServicios`, `actividadesDocumentoSector`, `unidadMedida`, `tipoMoneda`, `tipoMetodoPago`, `leyendasFactura`, etc.). Valor desconocido → `400`.
+- **Body:** vacío
+- **Requiere:** CUIS activo → `409` si no.
+- **Response:**
+  - **Single `?operation=X`:**
+    ```json
+    { "company": {}, "point_of_sale": {}, "operations": [{ "operation":"actividades", "transaccion":true, "codigos":5, "status":"SUCCESS|FAILED|EMPTY", "rows_saved":5, "fechaHora":"2026-09-03T10:00:00Z" }], "errors": [] }
+    ```
+    Si falla → `403 Forbidden` (`siat/handler.go:250` `!resumen.Success && err != nil`) con `FAILED` en sync state.
+  - **All (sin `operation`):** Siempre `200` incluso con errores parciales; `status` por op `SUCCESS|FAILED|EMPTY`, `errors:[{operation,error}]` poblado (`siat_usecase.go:1318`).
+  - `SUCCESS` si `transaccion:true` y `rows_saved>0` (o no-crítico); `EMPTY` si crítico (`actividades`, `productosServicios`, `actividadesDocumentoSector`, `unidadMedida`, `tipoMoneda`, `tipoMetodoPago`, `leyendasFactura`) y `rows_saved==0` (`siat_usecase.go:1381`).
+
+### `POST /v1/setup` — Orquestador idempotente
+
+- **Handler:** `siat/handler.go:217` `setup` → `siat_usecase.go:376` `Setup`
+- **Headers:** `X-API-Key`
+- **Body:**
+```json
+{ "company_id": "uuid*", "point_of_sale_id": "uuid*" }
+```
+Ambos obligatorios → `400` si falta. Idempotente: reutiliza CUIS vigente, ejecuta sincronización completa, asegura CUFD vigente.
+
 - **Response `200`:**
 ```json
 {
-  "company": {...},
-  "point_of_sale": {...},
-  "operations": [{ "operation":"actividades","transaccion":true,"codigos":5,"status":"SUCCESS","rows_saved":5 }],
-  "errors": []
+  "cuis": { "codigo":"...", "fechaVigencia":"..." },
+  "cufd": { "id":"uuid", "cufd":"...", "codigoControl":"...", "validFrom":"...", "validTo":"..." },
+  "operations": [{ "operation":"actividades", "transaccion":true, "codigos":12, "status":"SUCCESS", "rows_saved":12 }],
+  "errors": [],
+  "readiness": { "ready":true, "missing":[] }
 }
 ```
-- On single-op failure → `403 Forbidden` (`siat/handler.go:250` `!resumen.Success && err != nil` → `Max retries exceeded` / SIAT unavailable), with `FAILED` sync state. On all ops → `200` even with partial errors; `status` per op `SUCCESS|FAILED|EMPTY` (partial `errors[]` populated, HTTP still `200`).
+`cuis` omitido si ya existía. `cufd` siempre resuelto vía `EnsureCufd` lazy. `readiness` desde `CatalogReadiness`.
 
-#### `POST /siat/evento-significativo/{companyId}/{pointOfSaleId}`
-```json
-{
-  "codigo_motivo_evento": 1,
-  "descripcion": "Corte del servicio de internet",
-  "cufd_evento": "optional_override",
-  "fecha_hora_inicio_evento": "2026-09-02T10:00:00.000",
-  "fecha_hora_fin_evento": "2026-09-02T12:00:00.000"
-}
-```
-`codigo_motivo_evento` defaults `1` (internet). `descripcion` defaults `"Corte..."`. If both dates empty → auto `now-10m → now+1h50m` (holgada window, clamped to CUFD validity). If one empty → `400`.
-- **Response `200`:**
-```json
-{ "success": true, "codigo_recepcion": "12345" }
-```
-Persists `ContingencyEvent` with `siat_event_code`.
+### `GET` Lectura de catálogos (requieren `X-API-Key`)
 
-#### `POST /siat/firma/{companyId}/{pointOfSaleId}`
-```json
-{ "xml": "<factura ...>...</factura>" }
-```
-- **Response `200`:** `{ "company":..., "point_of_sale":..., "response": { "xmlFirmado":"...", ... } }`
-
-#### `POST /siat/paquete/{companyId}/{pointOfSaleId}`
-Dual input shape (custom `UnmarshalJSON`):
-```json
-{
-  "codigoEvento": 12345,
-  "descripcion": "Paquete contingencia",
-  "codigoEmision": 2,
-  "archivo": "optional_base64",
-  "hashArchivo": "optional_sha256",
-  "facturas": ["invoiceId1", "invoiceId2"]
-}
-```
-or
-```json
-{
-  "codigo_evento": 12345,
-  "codigo_emision": 2,
-  "facturas": [ { "codigoAmbiente":1, "nit":"...", "items":[...] } ]
-}
-```
-- `facturas` can be `[]string` IDs (contingency flow) or `[]SolicitudFactura` objects or single string. Max `500` per package (`siat.MaxFacturasPorPaquete`).
-- If IDs → loads from DB, builds `SolicitudFactura` via `solicitudDesdeInvoice` (resolves leyenda, cliente, CUF, totals).
-- `codigoEvento` if `0` → auto resolves latest persisted `ContingencyEvent` `siat_event_code`; if still `0` → `400`.
-- Dates auto-aligned to event window in memory (clamped to CUFD).
-- **Response `200`:** `{ "company":..., "point_of_sale":..., "response": { "codigoRecepcion":"...", "transaccion":true, ... } }`
-- Persists `SentPackage` (`type=PAQUETE`).
-
-#### `POST /siat/paquete/{companyId}/{pointOfSaleId}/validar`
-```json
-{ "codigo_recepcion": "123", "codigo_emision": 2, "codigo_documento_sector": 1, "codigo_tipo_factura": 1 }
-```
-- Docs `PaqueteValidacionInput` has synonyms `codigoRecepcion|codigo_recepcion` etc via custom unmarshal.
-- **Response `200`:** same `PaqueteResultado`
-
-#### `POST /siat/masiva/{companyId}/{pointOfSaleId}`
-```json
-{
-  "codigoEmision": 3,
-  "facturas": ["invoiceId1", "invoiceId2"]
-}
-```
-Same dual shape as paquete but `codigoEmision` typically `3` (masiva). Max `500`.
-- **Response `200`:** `SentPackage` type `MASIVA`
-
-#### `POST /siat/masiva/{companyId}/{pointOfSaleId}/validar` — same as paquete validar
-
-#### `POST /siat/compras/{companyId}/{pointOfSaleId}`
-```json
-{
-  "descripcion": "Compras periodo",
-  "tipoCompra": 1,
-  "archivo": "base64 tar.gz",
-  "hashArchivo": "sha256",
-  "cantidadFacturas": 10,
-  "gestion": 2026,
-  "periodo": 8,
-  "fechaEnvio": "2026-09-02T10:00:00-04:00"
-}
-```
-`archivo` + `hashArchivo` required. `codigo_punto_venta=0` in compras service.
-- **Response `200`:** `{ "company":..., "point_of_sale":..., "response": {...} }`
-
-#### `POST /siat/documento-ajuste/{companyId}/{pointOfSaleId}` — deprecated, logs warn, same as paquete for notas
-```json
-{ "codigoEmision":1, ... }
-```
+| Método | Path | Descripción |
+|---|---|---|
+| `GET` | `/v1/companies/{id}/catalogs/readiness?point_of_sale_id=` | `CatalogReadiness` `{ready:bool, missing:[], states:[{operation,status,syncedAt}]}`. Requiere `<24h` para críticos (`siat/handler.go:278`). Handler `catalog/handler.go:32` |
+| `GET` | `/v1/companies/{id}/catalogs/actividades-economicas?tipo_actividad=` | Actividades SIAT |
+| `GET` | `/v1/companies/{id}/catalogs/documentos-sector?codigo_actividad=` | Documentos-sector por actividad |
+| `GET` | `/v1/companies/{id}/catalogs/leyendas-factura?codigo_actividad=` | Leyendas |
+| `GET` | `/v1/companies/{id}/catalogs/productos-sin?codigo_actividad=&q=&limit=50&offset=0` | Productos SIN; `q` alias `query`; `codigo_actividad` parseado vía `ParseCodigoActividadInt64` (`catalog/handler.go:81`) |
+| `GET` | `/v1/companies/{id}/catalogs/emision-bootstrap?codigo_actividad=` | Bootstrap combinado para emisión |
+| `GET` | `/v1/companies/{id}/catalogs/{catalogSlug}` | Paramétrico (`tipos-moneda`, `metodos-pago`, etc.) vía `ListParametricCatalog` (`catalog/handler.go:112`) |
+| `GET` | `/v1/catalogs/perfiles-documento-sector` | Metadata estática 52 sectores (`siat.PerfilesSector()`) → `{items:[{codigo_documento_sector,nombre,tipo_factura_documento,layout,soportado,campos_extra:[{clave,tipo,requerido,etiqueta,ejemplo}]}], total:52}` (`catalog/handler.go:122`) |
+| `GET` | `/v1/catalogs/perfiles-documento-sector/{codigo}` | Un perfil o `404` |
 
 ---
 
-### 3.10 Catalogs
+## 7. Facturación
 
-#### `GET /companies/{id}/catalogs/readiness` → Catalog readiness per POS
-```json
-{ "ready": true, "missing": [], "states": [{ "operation":"actividades","status":"SUCCESS","syncedAt":"..." }] }
-```
-Requires `syncStateRepo` <24h for critical catalogs.
+### Contrato mínimo (6 campos)
 
-#### `GET /companies/{id}/catalogs/actividades-economicas?tipo_actividad=...`
-#### `GET /companies/{id}/catalogs/documentos-sector?codigo_actividad=...`
-#### `GET /companies/{id}/catalogs/leyendas-factura?codigo_actividad=...`
-#### `GET /companies/{id}/catalogs/productos-sin?codigo_actividad=123&q=search&limit=50&offset=0`
-- `q` alias `query`, `codigo_actividad` parsed via `ParseCodigoActividadInt64`
-#### `GET /companies/{id}/catalogs/emision-bootstrap?codigo_actividad=...` → combined bootstrap data
-#### `GET /companies/{id}/catalogs/{catalogSlug}` → parametric (e.g., `tipos-moneda`, `metodos-pago`) via `ListParametricCatalog`
-#### `GET /companies/{id}/actividades-economicas` → legacy alias
+`POST /v1/invoices`, `POST /v1/invoices/preview`, `POST /v1/invoices/emit` comparten mismo payload (`backend/internal/usecase/invoice_simplifier.go:18` `MinimalInvoiceRequest`):
 
-#### `GET /catalogs/perfiles-documento-sector` → all `SectorProfile` metadata (non-company, static)
 ```json
 {
-  "items": [{
-    "codigo_documento_sector": 1,
-    "nombre": "Compra y Venta",
-    "tipo_factura_documento": 1,
-    "layout": "",
-    "soportado": true,
-    "tiene_builder": true,
-    "requiere_archivo": false,
-    "con_detalle": true,
-    "detalle_unico": false,
-    "monto_sujeto_iva_cero": false,
-    "es_ajuste": false,
-    "campos_datos_sector": [{ "json":"periodo_facturado","requerido":false,"tipo":"string","etiqueta":"Período facturado","ejemplo":"2026-08" }],
-    "campos_datos_sector_detalle": []
-  }],
-  "total": 52
+  "point_of_sale_id": "pos_123*",
+  "customer": { "id": "uuid" } | { "document_type":"ci", "document_number":"1234567*", "name":"Ada Lovelace*", "email":"ada@example.com", "complement":"1A" },
+  "items": [{ "sku":"PLAN-PRO*", "quantity":1, "price":150, "discount":0, "data":{} }],
+  "invoice_type": "sale",
+  "sector": "auto",
+  "data": {}
 }
 ```
-Shape mirrors `GET /invoices/sectores` (`SectorDTO`: `codigo`, `nombre`, `tipo_documento`, `operacion`, `fachada`, `modalidades[]`, `soportado`, `tiene_builder`, `requiere_archivo`, `con_detalle`, `detalle_unico`, `monto_sujeto_iva_cero`, `es_ajuste`, `habilitado`, `campos_datos_sector[]`, `campos_datos_sector_detalle[]`; types `string|int|float|fecha|json`). Use as truth for dynamic forms.
 
-#### `GET /catalogs/perfiles-documento-sector/{codigo}` → single profile or `404`
-#### Legacy `GET /catalogs/*` (siat_handler legacy compatibility):
-- `GET /catalogs/activites-document-sectors?company_id=&query=&limit=&offset=` (typo kept)
-- `GET /catalogs/products?company_id=&query=&limit=&offset=`
-- `GET /catalogs/readiness?company_id=&point_of_sale_id=`
-- `GET /catalogs/{companyId}` → all catalogs grouped
-- `GET /catalogs/{companyId}/{tipo}` → single catalog type (e.g., `productosServicios`)
+Solo `point_of_sale_id`, `customer`, `items` obligatorios. `invoice_type` default `sale` (`sale|venta|compraventa` → `sale`, `education|educación` → `education` `invoice_simplifier.go:324`). `sector` default `auto` (`auto|sale|education` o código numérico `1`, `11` etc. `invoice_simplifier.go:336`). `data` cabecera + `items[].data` detalle validados contra `PerfilSector` (`invoice_simplifier.go:196`).
+
+Aliases normalizados (acentos/guiones/espacios ignorados `invoice_simplifier.go:354`): `ci|cédula|cex|extranjero|pasaporte|pas|nit|otro|od`, también `1..5`. `customer`: `id` → reutiliza; si no, `document_type` default `CI`, `document_number` obligatorio, si cliente no existe `name` obligatorio (`invoice_simplifier.go:274`). Cada `sku` debe existir en catálogo, `quantity>0`, `price>=0`, `discount>=0 && <=quantity*price` (`invoice_simplifier.go:156`). Catálogo readiness exigido (`ensureCatalogReadiness` `invoice_simplifier.go:123`) → `409` si falta, `CUIS/CUFD` resuelto lazy vía `CredentialService.EnsureCufd`.
+
+Reglas estrictas: `DisallowUnknownFields` (`invoice/handler.go:41`) → campo no declarado `400 VALIDATION_ERROR`; solo un objeto JSON → `400` si no (`handler.go:45`).
+
+### `POST /v1/invoices/preview` — Validar sin crear
+
+- **Handler:** `backend/internal/delivery/http/modules/invoice/handler.go:86` `previewV1` → `invoice_simplifier.go:363` `PreviewSimplified`
+- **Headers:** `X-API-Key`
+- **Body:** 6 campos
+- **Response `200`:** `InvoicePreview` `{point_of_sale_id, customer:{id?,document_type,document_number,name}, items:[{product_id,sku,description,quantity,unit_price,discount,subtotal,codigo_actividad,codigo_producto_sin,unidad_medida,codigo_documento_sector}], invoice_type, codigo_documento_sector, codigo_metodo_pago:1, codigo_moneda:1, tipo_cambio:1, subtotal, total}`
+- **Errores:** `400` validación, `404` POS/producto, `409` POS inactivo/catálogo
+
+### `POST /v1/invoices` — Crear borrador
+
+- **Handler:** `handler.go:62` `createV1` → `invoice_simplifier.go:371` `CreateSimplified`
+- **Headers:** `X-API-Key`, opcional `Idempotency-Key`
+- **Body:** 6 campos
+- **Response:** `201 Created` sin key, `200 OK` replay con key; `Location: /v1/invoices/{id}` (`handler.go:82`); Body `Invoice` DTO (ver §8)
+- **Errores:** `400`, `404`, `409`
+
+### `POST /v1/invoices/emit` — Crear y emitir en un paso
+
+- **Handler:** `handler.go:100` `emitV1` → `invoice_simplifier.go:380` `EmitSimplified` (crea y si `PENDING` → `Emit`)
+- **Headers:** `X-API-Key`, opcional `Idempotency-Key`
+- **Body:** 6 campos
+- **Response:** `200 OK` + `Location` con el resultado síncrono (`ACCEPTED|OBSERVED|OFFLINE`); Body `Invoice` DTO. Un timeout o caída de red genera la factura offline y la vincula a un evento de contingencia local, que el registro posterior ante SIAT completa con su código de recepción.
+- **Errores:** `422 SIAT_REJECTED` con `details` SIAT, `503` SIAT no disponible
+
+### `POST /v1/invoices/{id}/emit` — Emitir borrador existente
+
+- **Handler:** `handler.go:247` `emit`
+- **Headers:** `X-API-Key`
+- **Response `200 OK`** con `Invoice` DTO emitido o `OFFLINE`; `409` si no `PENDING`
+
+### `GET /v1/invoices/{id}?include=` — Polling
+
+- **Handler:** `handler.go:169` `getByID`
+- **Query `include`:** `xml,company,point_of_sale,cufd,archivo,all` (coma-separado)
+- **Response `200`:** `Invoice` DTO; `404` si no existe
+
+### `GET /v1/invoices/{id}/xml` — XML firmado
+
+- **Handler:** `handler.go:317` `downloadXML`
+- **Headers:** `X-API-Key`
+- **Response `200`:** `application/xml` `attachment; filename="factura-{id}.xml"`; `409` si sin XML
+
+### `GET /v1/invoices/{id}/pdf` (alias `GET /v1/siat/invoice/{invoiceId}/pdf`)
+
+- **Handler:** `siat/handler.go:334` `downloadPDF` → `pdf.Service`
+- **Headers:** `X-API-Key`
+- **Response `200`:** `application/pdf` `attachment; filename="factura-{id}.pdf"`; `404`, `503` si servicio no inicializado
 
 ---
 
-### 3.11 Frontend Agent Implementation Guide
+## 8. Invoice DTO (respuesta)
 
-**Recommended creation flow in UI:**
-
-1. **Create Company** → form with `nit*`, `business_name*`, `codigo_sistema`, `ambiente`, `municipio`, `direccion`, `codigo_actividad` (select from `GET /companies/{id}/catalogs/actividades-economicas` after initial save)
-2. **Upload Certificate** → after company created, `multipart` to `POST /companies/{id}/certificates`
-3. **Create Branch** → `POST /branches/` with `codigo_sucursal=0`
-4. **Create POS** → `POST /point-of-sales/` with `codigo_sucursal=0`, `description`
-5. **Setup** → single button `POST /setup` (idempotent) — show `readiness` progress
-6. **Sync if needed** → `POST /siat/sincronizar/{companyId}/{posId}` on failure
-7. **Create Customers** → `POST /customers/` or inline in invoice
-8. **Products + Mappings** → need synchronized catalogs first; use `GET /companies/{id}/catalogs/productos-sin` search; then `POST /products/` with validated mapping
-9. **Create Invoice** → fetch `GET /invoices/sectores?company_id=` to build dynamic `datos_sector` (header) + `datos_sector` per `items[]` (detail) forms. Each `CampoSector` has `tipo` (`string|int|float|fecha|json`), `requerido`, `etiqueta`, `ejemplo`; detalle fields via `campos_datos_sector_detalle` when `con_detalle=true`. Validate client-side before submit. Use `Idempotency-Key` header for retry safety.
-10. **Emit** → `POST /invoices/{id}/emit` or `emit:true`; poll `GET /invoices/{id}` or `.../siat-status`
-11. **Download** → `GET /invoices/{id}/xml` (inline view) vs `GET /invoices/{id}/pdf` (generate)
-12. **Contingency UI** → event form → `POST /siat/evento-significativo` → show `codigo_recepcion` → paquete/masiva with invoice IDs multi-select (limit 500), visualize `SentPackage` status.
-
-**State handling:**
-- Use `X-API-Key` from env/config, never store in localStorage plain? App handles it.
-- Keep `company_id` + `point_of_sale_id` in app state; pass via body `company_id` and query `point_of_sale_id` for invoices.
-- Handle `422 SIAT_REJECTED` → show `error.details[]` per SIAT code.
-- Handle `409` readiness → prompt `Sincronizar` CTA.
-
-**Pagination:** All lists expect `limit`/`offset` parsing; default to `50`. Use `total` for pagination controls.
-
-**Error UX:** Map `code` to i18n keys, not `message` (message may change). Show `invoice_id` when present.
-
----
-
-## 4. Quick cURL Examples
-
-```bash
-# health
-curl http://localhost:8081/health
-
-# create company
-curl -X POST http://localhost:8081/companies/ \
-  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-  -d '{"nit":"1020304050","business_name":"Demo SRL","codigo_actividad":"620100"}'
-
-# upload cert
-curl -X POST http://localhost:8081/companies/$COMPANY_ID/certificates \
-  -H "X-API-Key: $API_KEY" -F p12_file=@firma.p12 -F token=$SIAT_TOKEN -F p12_password=secret
-
-# setup
-curl -X POST http://localhost:8081/setup \
-  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-  -d '{"company_id":"'$COMPANY_ID'","point_of_sale_id":"'$POS_ID'"}'
-
-# list sectores for form
-curl http://localhost:8081/invoices/sectores?company_id=$COMPANY_ID -H "X-API-Key: $API_KEY"
-
-# create invoice (compra venta) — tenant resolved solely via X-API-Key, no X-Company-Id needed
-curl -X POST "http://localhost:8081/invoices/?include=xml" \
-  -H "X-API-Key: $API_KEY" -H "Idempotency-Key: order-123" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "point_of_sale_id":"'$POS_ID'",
-    "client_document_type":"CI","client_document_number":"1234567","client_name":"Juan Perez",
-    "codigo_documento_sector":1,
-    "items":[{"code":"PROD-001","description":"Servicio","quantity":1,"unit_price":100}]
-  }'
-
-# emit
-curl -X POST http://localhost:8081/invoices/$INVOICE_ID/emit -H "X-API-Key: $API_KEY"
-
-# download xml
-curl http://localhost:8081/invoices/$INVOICE_ID/xml -H "X-API-Key: $API_KEY" -o factura.xml
-
-# download pdf
-curl http://localhost:8081/invoices/$INVOICE_ID/pdf -H "X-API-Key: $API_KEY" -o factura.pdf
+```json
+{
+  "id": "uuid",
+  "company_id": "uuid",
+  "customer_id": "uuid",
+  "point_of_sale_id": "uuid",
+  "invoice_number": 1,
+  "status": "PENDING|SENDING|SENT|ACCEPTED|REJECTED|OBSERVED|OFFLINE|CANCELLED",
+  "cuf": "ABC...",
+  "subtotal": 100, "total": 100,
+  "codigo_documento_sector": 1, "codigo_metodo_pago": 1, "codigo_moneda": 1, "tipo_cambio": 1,
+  "modalidad": 1, "emission_type": "EN_LINEA",
+  "issue_date": "2026-09-02T10:00:00-04:00",
+  "siat_reception_code": null, "siat_mensajes": null,
+  "customer": { "id":"uuid", "name":"Juan", "document_type":"CI", "document_number":"123", "complement":null },
+  "items": [{ "id":"uuid", "product_id":"uuid", "code":"PROD-001", "description":"Item A", "codigo_actividad":"620100", "codigo_producto_sin":"101010", "unit_code":57, "quantity":2, "unit_price":50, "discount":0, "subtotal":100, "sector_data":{} }],
+  "created_at": "..."
+}
 ```
 
----
-
-## 5. Sector Reference (abbreviated)
-
-52 sectors, 6 facades. Key supported (`soportado=true`): `1` CompraVenta, `8` TasaCero, `11` Educativo, `24` NotaCreditoDebito (2 layouts), `29` NotaConciliacion, `46` EducativoZF, `47` NotaDescuentos, `48` NotaICE. Experimental `51-55` and `33` (no builder) require `archivo`/`hash`/`cuf`.
-
-Per-sector `datos_sector` fields: use `GET /invoices/sectores` as truth. Examples:
-- `2` Alquiler: `periodo_facturado` (string, required)
-- `11/46` Educativo: `nombre_estudiante` (string, required), `periodo_facturado` (required)
-- `24/47/48` Notas: `numero_autorizacion_cuf`, `fecha_emision_factura`, `monto_total_original`, `monto_total_devuelto`, `monto_efectivo_credito_debito` (all required)
-- Bulk `facturas` max `500` per `paquete`/`masiva`.
-
-Full catalog: `backend/internal/siat/sectores_catalogo.go:17`.
+Campos `xml`, `company`, `point_of_sale`, `cufd_record`, `archivo`, `hash_archivo` solo con `?include=`.
 
 ---
 
-## 6. Notes for Agent
-
-- No OpenAPI generated yet; this spec is authoritative. Derive TypeScript types from domain schemas above.
-- Always trim string inputs (`TrimSpace`) client-side.
-- POS `is_active` must be `true` to create invoices.
-- Customer email optional but persisted as `codigo_cliente = UPPER(type)+number`.
-- Product `sku` is user-facing code; `code` in invoice item defaults to `product.SKU` if empty.
-- `archivo`/`hash_archivo` only for sectores without builder; otherwise auto-generated via go-siat XML + `SignXML` + `CompressAndHash`.
-
-*Last verified against:* `router.go:20`, `middleware.go:23`, `modules/invoice/handler.go:41`, `modules/siat/handler.go:59`, `modules/catalog/handler.go:32`, `errors.go:20`, `usecase/invoice_usecase.go:192`, `sectores_catalogo.go:17`, `domain/*.go`, `config.go:57` on 2026-09-04. No Go code changed — docs only.
+*Verificado contra:* `backend/internal/delivery/http/router.go:97`, `backend/internal/delivery/http/modules/branch/handler.go:20`, `backend/internal/delivery/http/modules/pos/handler.go:21`, `backend/internal/delivery/http/modules/siat/handler.go:59`, `backend/internal/delivery/http/modules/catalog/handler.go:32`, `backend/internal/delivery/http/modules/invoice/handler.go:38`, `backend/internal/usecase/branch_usecase.go:20`, `backend/internal/usecase/point_of_sale_usecase.go:20`, `backend/internal/usecase/invoice_simplifier.go:18`, `backend/internal/usecase/siat_usecase.go:268` el 2026-09-05.

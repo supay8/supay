@@ -113,12 +113,8 @@ func (h *handler) emitV1(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondError(w, err)
 		return
 	}
-	status := http.StatusAccepted
-	if inv.Status != domain.InvoicePending && inv.Status != domain.InvoiceSending {
-		status = http.StatusOK
-	}
 	w.Header().Set("Location", "/v1/invoices/"+inv.ID)
-	deliveryHttp.WriteJSON(w, status, toInvoiceDTO(inv, parseIncludes(r.URL.Query().Get("include"))))
+	deliveryHttp.WriteJSON(w, http.StatusOK, toInvoiceDTO(inv, parseIncludes(r.URL.Query().Get("include"))))
 }
 
 type handler struct {
@@ -158,7 +154,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			deliveryHttp.RespondErrorWithInvoiceID(w, err, inv.ID)
 			return
 		}
-		status = http.StatusAccepted
+		status = http.StatusOK
 		w.Header().Set("Location", "/invoices/"+inv.ID)
 	}
 
@@ -257,7 +253,7 @@ func (h *handler) emit(w http.ResponseWriter, r *http.Request) {
 	}
 	includes := parseIncludes(r.URL.Query().Get("include"))
 	w.Header().Set("Location", "/invoices/"+inv.ID)
-	deliveryHttp.WriteJSON(w, http.StatusAccepted, toInvoiceDTO(inv, includes))
+	deliveryHttp.WriteJSON(w, http.StatusOK, toInvoiceDTO(inv, includes))
 }
 
 func (h *handler) siatStatus(w http.ResponseWriter, r *http.Request) {

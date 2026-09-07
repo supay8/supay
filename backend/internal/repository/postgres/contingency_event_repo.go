@@ -41,11 +41,35 @@ func (r *PostgresContingencyEventRepository) Create(e *domain.ContingencyEvent) 
 	return nil
 }
 
+func (r *PostgresContingencyEventRepository) Update(e *domain.ContingencyEvent) error {
+	if e == nil || e.ID == "" {
+		return gorm.ErrRecordNotFound
+	}
+	result := r.db.Model(&models.ContingencyEvent{}).
+		Where("id = ? AND point_of_sale_id = ?", e.ID, e.PointOfSaleID).
+		Updates(map[string]any{
+			"reason":          models.ContingencyReason(e.Reason),
+			"description":     e.Description,
+			"start_date":      e.StartDate,
+			"end_date":        e.EndDate,
+			"siat_event_code": e.SiatEventCode,
+			"is_synced":       e.IsSynced,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 // GetLatestByPointOfSale devuelve el evento significativo más reciente (por
-// fecha de inicio) ya sincronizado con el SIAT para el punto de venta.
+// fecha de inicio) para el punto de venta, incluyendo uno local aún no
+// sincronizado que esté agrupando facturas offline.
 func (r *PostgresContingencyEventRepository) GetLatestByPointOfSale(pointOfSaleID string) (*domain.ContingencyEvent, error) {
 	var m models.ContingencyEvent
-	if err := r.db.Where("point_of_sale_id = ? AND is_synced = true AND siat_event_code IS NOT NULL", pointOfSaleID).
+	if err := r.db.Where("point_of_sale_id = ?", pointOfSaleID).
 		Order("start_date DESC, created_at DESC").First(&m).Error; err != nil {
 		return nil, err
 	}

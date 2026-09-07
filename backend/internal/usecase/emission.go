@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"log/slog"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +26,12 @@ type EmissionRejectedError struct {
 	CodigoRecepcion string
 	Mensajes        []ports.FiscalMessage
 }
+
+// EmissionInProgressError maps concurrent emission attempts to HTTP 409.
+type EmissionInProgressError struct{}
+
+func (e *EmissionInProgressError) Error() string { return "la factura ya está en proceso de emisión" }
+func (e *EmissionInProgressError) Unwrap() error { return domain.NewConflictError(e.Error()) }
 
 func invoiceTransitionEvent(inv *domain.Invoice, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, details map[string]any) *domain.InvoiceEvent {
 	payload := map[string]any{
@@ -54,12 +63,19 @@ func (e *EmissionRejectedError) Error() string {
 	return "la factura fue rechazada por el SIAT: " + strings.Join(parts, "; ")
 }
 
-// Emit emite al SIAT una factura en estado PENDING usando el SDK go-siat.
+// Emit runs the complete emission inside the request. A normal POS sale must
+// receive the SIAT result (or its offline contingency document) immediately;
+// it must not wait for an internal retry queue.
+func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice, error) {
+	return uc.ProcessEmission(ctx, id)
+}
+
+// ProcessEmission emite al SIAT una factura en estado PENDING usando el SDK go-siat.
 // El flujo cubre los prerrequisitos (CUIS/CUFD vigentes, sucursal/PV, cliente e
 // ítems mapeados a catálogos SIN), la construcción con builders del SDK, la
 // firma digital automática (modalidad electrónica) y la persistencia del
 // resultado (CUF, XML, hash, código de recepción y estado).
-func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice, error) {
+func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*domain.Invoice, error) {
 	inv, err := uc.invoiceRepo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -68,32 +84,44 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		return nil, err
 	}
 	if inv.Status != domain.InvoicePending {
+		log.Println("DEBUG 1")
+
 		if inv.Status == domain.InvoiceSending {
-			return nil, domain.NewConflictError("la factura ya está en proceso de emisión")
+			log.Println("DEBUG 2")
+
+			return nil, &EmissionInProgressError{}
 		}
 		return nil, domain.NewConflictError("solo se pueden emitir facturas en estado PENDING")
 	}
-	// La factura permanece PENDING mientras espera credenciales. Esto evita
-	// ocupar el estado SENDING (y, en fase 9, un worker de la cola) con una
-	// factura que todavía no tiene CUIS/CUFD utilizable.
+
+	// La factura permanece PENDING mientras obtiene credenciales para no ocupar
+	// SENDING con un documento que todavia no tiene CUIS/CUFD utilizable.
 	if err := uc.prepareCredentialsForEmission(ctx, inv); err != nil {
+		log.Println("DEBUG 3")
+
 		return nil, err
 	}
 
 	// Claim atómico PENDING->SENDING: evita emisiones duplicadas concurrentes.
 	claimed, err := uc.invoiceRepo.ClaimForEmission(id)
 	if err != nil {
+		log.Println("DEBUG 4")
+
 		return nil, err
 	}
 	if !claimed {
-		return nil, domain.NewConflictError("la factura ya está en proceso de emisión")
+		log.Println("DEBUG 5")
+
+		return nil, &EmissionInProgressError{}
 	}
 
-	// Un fallo de transporte o de prerrequisitos revierte a PENDING (reintentable);
-	// un rechazo del SIAT queda persistido como REJECTED.
+	// Los errores que no son de conectividad revierten a PENDING. Un timeout o
+	// una caida de red se resuelve mediante la contingencia oficial mas abajo.
 	rollback := func() {
 		event := invoiceTransitionEvent(inv, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, map[string]any{"source": "Emit"})
 		if _, err := uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, nil, event); err != nil {
+			log.Println("DEBUG 6")
+
 			slog.Error("emisión: no se pudo revertir la factura a PENDING",
 				"invoice_id", inv.ID, "error", err)
 		}
@@ -102,20 +130,39 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 
 	req, err := uc.buildSolicitudFactura(ctx, inv)
 	if err != nil {
+		log.Println("DEBUG 7")
+
 		rollback()
 		return nil, err
 	}
 	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
 	if err != nil {
+		log.Println("DEBUG 8")
+
 		rollback()
 		return nil, err
 	}
 	result, err := svc.Emit(ctx, *req)
 	if err != nil {
+		log.Println("DEBUG 9")
+
+		if isSIATConnectivityError(err) {
+			log.Println("DEBUG 10")
+
+			offline, contingencyErr := uc.processOfflineContingency(ctx, inv, svc, *req)
+			if contingencyErr == nil {
+				return offline, nil
+			}
+			log.Println("DEBUG 13")
+
+			slog.Error("emisión: no se pudo activar contingencia offline",
+				"invoice_id", inv.ID, "siat_error", err, "contingency_error", contingencyErr)
+		}
 		rollback()
+		log.Println("DEBUG 12")
 		return nil, fmt.Errorf("error de emisión: %w", err)
 	}
-
+	log.Println("14")
 	if strings.TrimSpace(result.Cuf) != "" {
 		inv.Cuf = &result.Cuf
 	}
@@ -153,6 +200,8 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 	}
 
 	if err := uc.persistResultadoConReintentos(inv, result, transitionReason); err != nil {
+		log.Println("DEBUG 11")
+
 		return nil, err
 	}
 	if !result.Transaccion {
@@ -163,15 +212,130 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 		}
 	}
 
-	// Hook PDF: persiste en disco (local) o R2 (cloud) según STORAGE_DRIVER.
-	// Con STORAGE_DRIVER=none es no-op. No bloquea la respuesta (async + WithoutCancel).
+	// El PDF forma parte del resultado sincrono que consume el POS.
 	if uc.pdfService != nil && result.Transaccion {
-		invID := inv.ID
-		// Detach del ctx del request: la generación puede tardar ~100ms.
-		go uc.pdfService.GenerateAndPersist(context.WithoutCancel(ctx), invID)
+		uc.pdfService.GenerateAndPersist(ctx, inv.ID)
 	}
 
 	return inv, nil
+}
+
+func isSIATConnectivityError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var networkErr net.Error
+	if errors.As(err, &networkErr) {
+		return true
+	}
+	// Algunos clientes SOAP pierden el tipo concreto al envolver el error de
+	// transporte. Se limita el fallback a mensajes inequívocos de conectividad.
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection refused", "connection reset", "network is unreachable",
+		"no such host", "i/o timeout", "tls handshake timeout",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (uc *InvoiceUsecase) processOfflineContingency(
+	ctx context.Context,
+	inv *domain.Invoice,
+	svc ports.FiscalService,
+	req ports.FiscalDocument,
+) (*domain.Invoice, error) {
+	preparer, ok := svc.(ports.OfflineFiscalService)
+	if !ok {
+		return nil, errors.New("el adaptador SIAT no soporta generación offline")
+	}
+	if uc.contingencyRepo == nil {
+		return nil, errors.New("repositorio de contingencias no configurado")
+	}
+
+	// El contexto HTTP puede haber vencido precisamente por el timeout del
+	// SIAT. La construccion, firma y persistencia offline son operaciones locales.
+	offlineCtx := context.WithoutCancel(ctx)
+	result, err := preparer.PrepareOffline(offlineCtx, req)
+	if err != nil {
+		return nil, fmt.Errorf("generar factura offline: %w", err)
+	}
+
+	event, err := uc.openConnectivityContingency(inv)
+	if err != nil {
+		return nil, fmt.Errorf("registrar contingencia local: %w", err)
+	}
+
+	if strings.TrimSpace(result.Cuf) != "" {
+		inv.Cuf = &result.Cuf
+	}
+	if result.Xml != "" {
+		inv.Xml = &result.Xml
+	}
+	if result.XmlHash != "" {
+		inv.XmlHash = &result.XmlHash
+	}
+	inv.Archivo = result.Archivo
+	inv.HashArchivo = result.XmlHash
+	inv.ContingencyEventId = &event.ID
+	inv.EmissionType = "OFFLINE"
+	inv.Status = domain.InvoiceOffline
+
+	fields := map[string]any{
+		"cuf": inv.Cuf, "xml": inv.Xml, "xml_hash": inv.XmlHash,
+		"archivo": inv.Archivo, "hash_archivo": inv.HashArchivo,
+		"cufd_id": inv.CufdId, "contingency_event_id": event.ID,
+		"emission_type": inv.EmissionType,
+	}
+	transitionEvent := invoiceTransitionEvent(inv, domain.InvoiceSending, domain.InvoiceOffline, domain.TransitionContingency, map[string]any{
+		"source": "Emit", "contingency_event_id": event.ID, "trigger": "SIAT_CONNECTIVITY_FAILURE",
+	})
+	claimed, err := uc.invoiceRepo.TransitionStatus(
+		inv.ID, domain.InvoiceSending, domain.InvoiceOffline,
+		domain.TransitionContingency, fields, transitionEvent,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, domain.NewConflictError("la factura cambió de estado mientras se activaba la contingencia")
+	}
+	if uc.pdfService != nil {
+		uc.pdfService.GenerateAndPersist(offlineCtx, inv.ID)
+	}
+	return inv, nil
+}
+
+func (uc *InvoiceUsecase) openConnectivityContingency(inv *domain.Invoice) (*domain.ContingencyEvent, error) {
+	latest, err := uc.contingencyRepo.GetLatestByPointOfSale(inv.PointOfSaleId)
+	if err == nil && latest != nil && !latest.IsSynced && latest.EndDate == nil {
+		return latest, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	description := "Caída de red detectada durante la emisión; pendiente de registro ante el SIAT"
+	start := inv.IssueDate
+	if start.IsZero() {
+		start = time.Now().In(siat.LaPaz)
+	}
+	event := &domain.ContingencyEvent{
+		PointOfSaleID: inv.PointOfSaleId,
+		Reason:        "FALLA_CONEXION_INTERNET",
+		Description:   &description,
+		StartDate:     start,
+		IsSynced:      false,
+	}
+	if err := uc.contingencyRepo.Create(event); err != nil {
+		return nil, err
+	}
+	return event, nil
 }
 
 func (uc *InvoiceUsecase) prepareCredentialsForEmission(ctx context.Context, inv *domain.Invoice) error {
@@ -476,7 +640,7 @@ func (uc *InvoiceUsecase) buildSolicitudDocumento(inv *domain.Invoice) (*ports.F
 
 	return &ports.FiscalDocumentQuery{
 		CodigoAmbiente:        inv.Company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:         inv.Company.CodigoSistema,
+		CodigoSistema:         "",
 		Nit:                   inv.Company.Nit,
 		Modalidad:             modalidad,
 		Layout:                inv.Layout,
@@ -635,11 +799,11 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		return nil, err
 	}
 
-	telefono := company.Telefono
-	var telefonoPtr *string
-	if strings.TrimSpace(telefono) != "" {
-		telefonoPtr = &telefono
+	telefono := strings.TrimSpace(company.Telefono)
+	if telefono == "" {
+		telefono = "0000000"
 	}
+	telefonoPtr := &telefono
 
 	habilitadas := uc.actividadesHabilitadas(&company)
 	items := make([]ports.FiscalItem, 0, len(inv.Items))
@@ -772,7 +936,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 
 	return &ports.FiscalDocument{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:         company.CodigoSistema,
+		CodigoSistema:         "",
 		Nit:                   company.Nit,
 		Modalidad:             modalidad,
 		NumeroFactura:         int64(inv.InvoiceNumber),

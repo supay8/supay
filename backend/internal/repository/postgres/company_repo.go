@@ -39,7 +39,7 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 		return err
 	}
 	config := models.TenantConfig{
-		TenantID: tenant.ID, CodigoSistema: c.CodigoSistema,
+		TenantID: tenant.ID,
 		Ambiente: models.SiatEnvironment(c.Ambiente), CodigoModalidad: modalidad, Settings: settings,
 	}
 

@@ -317,7 +317,7 @@ func TestCreateIdempotencyHeader(t *testing.T) {
 
 func TestCreateEmitTrue(t *testing.T) {
 	emitted := sampleInvoice()
-	emitted.Status = domain.InvoicePending
+	emitted.Status = domain.InvoiceAccepted
 	var emitCalled bool
 	svc := &mockInvoiceService{
 		createFunc: func(_ context.Context, _ usecase.CreateInvoiceRequest) (*domain.Invoice, error) {
@@ -342,8 +342,8 @@ func TestCreateEmitTrue(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status=%d, se esperaba 202", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, se esperaba 200", rec.Code)
 	}
 	if !emitCalled {
 		t.Fatal("Emit no fue invocado")
@@ -352,7 +352,7 @@ func TestCreateEmitTrue(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
 		t.Fatalf("JSON inválido: %v", err)
 	}
-	if dto.Status != domain.InvoicePending {
+	if dto.Status != domain.InvoiceAccepted {
 		t.Errorf("status=%s", dto.Status)
 	}
 	if location := rec.Header().Get("Location"); location != "/invoices/inv-1" {
@@ -396,19 +396,19 @@ func TestEmitRechazoIncluyeInvoiceID(t *testing.T) {
 	}
 }
 
-func TestEmitAceptaTrabajoAsincrono(t *testing.T) {
-	pending := sampleInvoice()
-	pending.Status = domain.InvoicePending
+func TestEmitDevuelveResultadoSincrono(t *testing.T) {
+	emitted := sampleInvoice()
+	emitted.Status = domain.InvoiceAccepted
 	h := newHandler(&mockInvoiceService{emitFunc: func(context.Context, string) (*domain.Invoice, error) {
-		return pending, nil
+		return emitted, nil
 	}})
 	r := chi.NewRouter()
 	r.Post("/invoices/{id}/emit", h.emit)
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/invoices/inv-1/emit", nil))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status=%d, se esperaba 202", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, se esperaba 200", rec.Code)
 	}
 	if location := rec.Header().Get("Location"); location != "/invoices/inv-1" {
 		t.Fatalf("Location=%q", location)
@@ -460,7 +460,7 @@ func TestCreateEmitIdempotencyReplay(t *testing.T) {
 	r.Post("/invoices", h.create)
 
 	body := `{"point_of_sale_id":"pos-1","customer_id":"cust-1","emit":true,"items":[{"code":"P001","description":"Producto","quantity":1,"unit_price":100}]}`
-	expectedStatuses := []int{http.StatusAccepted, http.StatusOK}
+	expectedStatuses := []int{http.StatusOK, http.StatusOK}
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body))
 		req.Header.Set("Idempotency-Key", "orden-emit-1")
@@ -590,12 +590,12 @@ func TestRegisterV1RoutesExponePreviewSinSlashFinal(t *testing.T) {
 	}
 }
 
-func TestV1EmitCreaYEncolaCon202(t *testing.T) {
+func TestV1EmitDevuelveResultadoSincrono(t *testing.T) {
 	var capturedKey string
 	svc := &mockInvoiceService{emitSimpleFunc: func(_ context.Context, _ usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {
 		capturedKey = key
 		inv := sampleInvoice()
-		inv.Status = domain.InvoicePending
+		inv.Status = domain.InvoiceAccepted
 		return inv, nil
 	}}
 	h := newHandler(svc)
@@ -608,7 +608,7 @@ func TestV1EmitCreaYEncolaCon202(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusAccepted {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if capturedKey != "sale-42" {

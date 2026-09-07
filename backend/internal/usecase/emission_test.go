@@ -25,6 +25,10 @@ type fakeInvoiceRepo struct {
 	conflictingIdemKey string // simula violación del índice único al crear con esta key
 }
 
+type fakePDFGenerator struct{ calls int }
+
+func (f *fakePDFGenerator) GenerateAndPersist(context.Context, string) { f.calls++ }
+
 func (f *fakeInvoiceRepo) GetByIDs(ids []string) ([]*domain.Invoice, error) {
 	var result []*domain.Invoice
 	for _, id := range ids {
@@ -154,6 +158,22 @@ func (f *fakeInvoiceRepo) ClaimStatus(id string, from, to domain.InvoiceStatus, 
 			if c, ok := v.(string); ok && c != "" {
 				inv.SiatReceptionCode = &c
 			}
+		case "cuf":
+			inv.Cuf, _ = v.(*string)
+		case "xml":
+			inv.Xml, _ = v.(*string)
+		case "xml_hash":
+			inv.XmlHash, _ = v.(*string)
+		case "archivo":
+			inv.Archivo, _ = v.(string)
+		case "hash_archivo":
+			inv.HashArchivo, _ = v.(string)
+		case "contingency_event_id":
+			if id, ok := v.(string); ok {
+				inv.ContingencyEventId = &id
+			}
+		case "emission_type":
+			inv.EmissionType, _ = v.(string)
 		}
 	}
 	return true, nil
@@ -265,17 +285,77 @@ func (f *fakePointOfSaleRepo) Update(*domain.PointOfSale) error { return nil }
 func (f *fakePointOfSaleRepo) Delete(string) error              { return nil }
 
 type fakeEmissionService struct {
-	result    *ports.FiscalResult
-	docResult *ports.FiscalDocumentResult
-	err       error
-	captured  *ports.FiscalDocumentQuery
+	result        *ports.FiscalResult
+	offlineResult *ports.FiscalResult
+	docResult     *ports.FiscalDocumentResult
+	eventResult   ports.FiscalEventResult
+	eventCaptured *ports.FiscalEvent
+	err           error
+	offlineErr    error
+	emitCalls     int
+	offlineCalls  int
+	captured      *ports.FiscalDocumentQuery
 }
 
 func (f *fakeEmissionService) Emit(context.Context, ports.FiscalDocument) (ports.FiscalResult, error) {
+	f.emitCalls++
 	if f.result == nil {
 		return ports.FiscalResult{}, f.err
 	}
 	return *f.result, f.err
+}
+
+func (f *fakeEmissionService) PrepareOffline(context.Context, ports.FiscalDocument) (ports.FiscalResult, error) {
+	f.offlineCalls++
+	if f.offlineResult == nil {
+		if f.offlineErr != nil {
+			return ports.FiscalResult{}, f.offlineErr
+		}
+		return ports.FiscalResult{}, errors.New("offline no configurado")
+	}
+	return *f.offlineResult, f.offlineErr
+}
+
+type fakeContingencyRepo struct {
+	latest  *domain.ContingencyEvent
+	created []*domain.ContingencyEvent
+	updates int
+	err     error
+}
+
+func (f *fakeContingencyRepo) Create(event *domain.ContingencyEvent) error {
+	if f.err != nil {
+		return f.err
+	}
+	if event.ID == "" {
+		event.ID = "event-1"
+	}
+	f.created = append(f.created, event)
+	f.latest = event
+	return nil
+}
+
+func (f *fakeContingencyRepo) Update(event *domain.ContingencyEvent) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.latest = event
+	f.updates++
+	return nil
+}
+
+func (f *fakeContingencyRepo) GetLatestByPointOfSale(string) (*domain.ContingencyEvent, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.latest == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return f.latest, nil
+}
+
+func (f *fakeContingencyRepo) GetBySiatCode(string) (*domain.ContingencyEvent, error) {
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (f *fakeEmissionService) VerifyStatus(context.Context, ports.FiscalDocumentQuery) (ports.FiscalDocumentResult, error) {
@@ -309,8 +389,9 @@ func (f *fakeEmissionService) RequestCUFD(context.Context, ports.CredentialReque
 	return ports.CufdResult{}, nil
 }
 
-func (f *fakeEmissionService) RegisterSignificantEvent(context.Context, ports.FiscalEvent) (ports.FiscalEventResult, error) {
-	return ports.FiscalEventResult{}, nil
+func (f *fakeEmissionService) RegisterSignificantEvent(_ context.Context, event ports.FiscalEvent) (ports.FiscalEventResult, error) {
+	f.eventCaptured = &event
+	return f.eventResult, nil
 }
 
 func (f *fakeEmissionService) SendPackage(context.Context, ports.FiscalPackage) (ports.FiscalPackageResult, error) {
@@ -686,6 +767,101 @@ func TestEmitAccepted(t *testing.T) {
 	}
 	if repo.claimCalls != 1 || repo.updateCalls != 1 {
 		t.Errorf("claimCalls=%d updateCalls=%d, se esperaba 1/1", repo.claimCalls, repo.updateCalls)
+	}
+}
+
+func TestEmitSiempreProcesaSincrono(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	_ = repo.Create(testInvoice())
+	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true, CodigoEstado: 908}}
+	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
+
+	got, err := uc.Emit(context.Background(), "inv-1")
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got.Status != domain.InvoiceAccepted || repo.claimCalls != 1 || svc.emitCalls != 1 {
+		t.Fatalf("status=%s claimCalls=%d siatCalls=%d", got.Status, repo.claimCalls, svc.emitCalls)
+	}
+}
+
+func TestEmitTimeoutActivaContingenciaOffline(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	_ = repo.Create(testInvoice())
+	svc := &fakeEmissionService{
+		err: context.DeadlineExceeded,
+		offlineResult: &ports.FiscalResult{
+			Cuf: "CUF-OFFLINE", Xml: "<offline/>", XmlHash: "hash-offline", Archivo: "gzip-offline",
+		},
+	}
+	contingencies := &fakeContingencyRepo{}
+	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
+	uc.SetContingencyRepository(contingencies)
+
+	got, err := uc.Emit(context.Background(), "inv-1")
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got.Status != domain.InvoiceOffline || got.EmissionType != "OFFLINE" {
+		t.Fatalf("status=%s emissionType=%s", got.Status, got.EmissionType)
+	}
+	if got.ContingencyEventId == nil || *got.ContingencyEventId != "event-1" {
+		t.Fatalf("contingencyEventId=%v", got.ContingencyEventId)
+	}
+	if got.Cuf == nil || *got.Cuf != "CUF-OFFLINE" || got.Xml == nil || got.Archivo == "" {
+		t.Fatalf("artefactos offline incompletos: %+v", got)
+	}
+	if svc.emitCalls != 1 || svc.offlineCalls != 1 || len(contingencies.created) != 1 {
+		t.Fatalf("emit=%d offline=%d eventos=%d", svc.emitCalls, svc.offlineCalls, len(contingencies.created))
+	}
+}
+
+func TestRegistrarEventoCompletaLaContingenciaAbiertaPorEmit(t *testing.T) {
+	inv := testInvoice()
+	pending := &domain.ContingencyEvent{
+		ID: "event-1", PointOfSaleID: inv.PointOfSaleId,
+		Reason: "FALLA_CONEXION_INTERNET", StartDate: inv.IssueDate.Add(-time.Minute),
+	}
+	contingencies := &fakeContingencyRepo{latest: pending}
+	svc := &fakeEmissionService{eventResult: ports.FiscalEventResult{
+		Transaccion: true, CodigoRecepcion: "987654",
+	}}
+	uc := &SiatUsecase{
+		companyRepo:     &fakeCompanyRepo{company: inv.Company},
+		pointOfSaleRepo: &fakePointOfSaleRepo{pos: inv.PointOfSale},
+		cufdRepo:        &fakeCufdRepo{vigente: &inv.CufdRecord},
+		contingencyRepo: contingencies,
+		siatService:     svc,
+		modalidad:       siat.ModalidadElectronica,
+	}
+
+	if _, err := uc.RegistrarEventoSignificativo(context.Background(), inv.CompanyId, inv.PointOfSaleId, EventoSignificativoInput{}); err != nil {
+		t.Fatalf("RegistrarEventoSignificativo: %v", err)
+	}
+	if contingencies.updates != 1 || len(contingencies.created) != 0 {
+		t.Fatalf("updates=%d creates=%d", contingencies.updates, len(contingencies.created))
+	}
+	if !pending.IsSynced || pending.SiatEventCode == nil || *pending.SiatEventCode != "987654" || pending.EndDate == nil {
+		t.Fatalf("evento no completado: %+v", pending)
+	}
+	if svc.eventCaptured == nil || !svc.eventCaptured.FechaHoraInicioEvento.Equal(pending.StartDate) {
+		t.Fatalf("inicio enviado al SIAT no conserva el evento local: %+v", svc.eventCaptured)
+	}
+}
+
+func TestProcessEmissionGeneraPDFDentroDelWorker(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	_ = repo.Create(testInvoice())
+	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true, CodigoEstado: 908}}
+	pdf := &fakePDFGenerator{}
+	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
+	uc.pdfService = pdf
+
+	if _, err := uc.ProcessEmission(context.Background(), "inv-1"); err != nil {
+		t.Fatalf("ProcessEmission: %v", err)
+	}
+	if pdf.calls != 1 {
+		t.Fatalf("PDF calls=%d, se esperaba ejecución síncrona dentro del worker", pdf.calls)
 	}
 }
 

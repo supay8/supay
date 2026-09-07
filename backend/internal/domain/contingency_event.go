@@ -20,6 +20,7 @@ type ContingencyEvent struct {
 
 type ContingencyEventRepository interface {
 	Create(e *ContingencyEvent) error
+	Update(e *ContingencyEvent) error
 	GetLatestByPointOfSale(pointOfSaleID string) (*ContingencyEvent, error)
 	GetBySiatCode(siatCode string) (*ContingencyEvent, error)
 }

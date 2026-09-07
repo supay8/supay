@@ -13,6 +13,7 @@ func TestInvoiceStateMachineAllowsExpectedTransitions(t *testing.T) {
 	}{
 		{"start emission", InvoicePending, InvoiceSending, TransitionEmissionStart},
 		{"transport recovery", InvoiceSending, InvoicePending, TransitionTransportFailure},
+		{"offline contingency", InvoiceSending, InvoiceOffline, TransitionContingency},
 		{"stale recovery", InvoiceSending, InvoicePending, TransitionStaleRecovery},
 		{"accepted", InvoiceSending, InvoiceAccepted, TransitionSIATAccepted},
 		{"observed", InvoiceSending, InvoiceObserved, TransitionSIATObserved},

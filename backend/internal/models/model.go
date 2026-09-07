@@ -94,7 +94,7 @@ func (Company) TableName() string { return "tenants" }
 type TenantConfig struct {
 	TenantID           string          `gorm:"column:tenant_id;type:uuid;primaryKey"`
 	Ambiente           SiatEnvironment `gorm:"type:varchar(20);not null;default:'PILOTO'"`
-	CodigoSistema      string          `gorm:"type:varchar(100);not null"`
+	CodigoSistema      string          `gorm:"type:varchar(100);default:''"`
 	CodigoModalidad    int             `gorm:"not null;default:1"`
 	TokenSiat          *string         `gorm:"type:text"`
 	APIToken           *string         `gorm:"column:api_token;type:text"`

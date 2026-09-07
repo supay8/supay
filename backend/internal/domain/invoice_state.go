@@ -10,6 +10,7 @@ const (
 	TransitionSIATObserved       InvoiceTransitionReason = "SIAT_OBSERVED"
 	TransitionSIATRejected       InvoiceTransitionReason = "SIAT_REJECTED"
 	TransitionTransportFailure   InvoiceTransitionReason = "TRANSPORT_FAILURE"
+	TransitionContingency        InvoiceTransitionReason = "CONTINGENCY"
 	TransitionStaleRecovery      InvoiceTransitionReason = "STALE_RECOVERY"
 	TransitionCancellation       InvoiceTransitionReason = "CANCELLATION"
 	TransitionCancellationRevert InvoiceTransitionReason = "CANCELLATION_REVERT"
@@ -45,6 +46,8 @@ func transitionAllowed(from, to InvoiceStatus, reason InvoiceTransitionReason) b
 		return reason == TransitionEmissionStart
 	case from == InvoiceSending && to == InvoicePending:
 		return reason == TransitionTransportFailure || reason == TransitionStaleRecovery
+	case from == InvoiceSending && to == InvoiceOffline:
+		return reason == TransitionContingency
 	case from == InvoiceSending && to == InvoiceAccepted:
 		return reason == TransitionSIATAccepted || reason == TransitionSIATReconciliation
 	case from == InvoiceSending && to == InvoiceObserved:

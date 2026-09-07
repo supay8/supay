@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/ports"
 )
 
@@ -232,7 +232,7 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 	}
 	return ports.FiscalDocument{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:         company.CodigoSistema,
+		CodigoSistema:         "",
 		Nit:                   company.Nit,
 		Modalidad:             inv.Modalidad,
 		NumeroFactura:         int64(inv.InvoiceNumber),
@@ -362,7 +362,7 @@ func (uc *SiatUsecase) SolicitarCUFD(ctx context.Context, companyID, posID strin
 type SetupResultado struct {
 	// Cuis es la respuesta del SIAT solo cuando se solicitó uno nuevo;
 	// nil cuando el punto de venta ya tenía CUIS.
-	Cuis       *ports.CuisResult      `json:"cuis,omitempty"`
+	Cuis       *ports.CuisResult        `json:"cuis,omitempty"`
 	Cufd       *domain.Cufd             `json:"cufd"`
 	Operations []SincronizacionOpResult `json:"operations"`
 	Errors     []SincronizacionOpError  `json:"errors,omitempty"`
@@ -458,6 +458,12 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 	if cufdEvento == "" {
 		cufdEvento = cufd.Cufd
 	}
+	var pendingLocalEvent *domain.ContingencyEvent
+	if uc.contingencyRepo != nil {
+		if latest, latestErr := uc.contingencyRepo.GetLatestByPointOfSale(pointOfSale.ID); latestErr == nil && latest != nil && !latest.IsSynced && latest.EndDate == nil {
+			pendingLocalEvent = latest
+		}
+	}
 
 	var inicio, fin time.Time
 	var errInicio, errFin error
@@ -465,7 +471,15 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 	finStr := strings.TrimSpace(body.FechaHoraFinEvento)
 	ambasVacias := inicioStr == "" && finStr == ""
 	algunaVacia := inicioStr == "" || finStr == ""
-	if ambasVacias {
+	if ambasVacias && pendingLocalEvent != nil {
+		// Completa el evento abierto automáticamente cuando falló POST /emit.
+		// El inicio debe abarcar las facturas offline ya vinculadas al evento.
+		inicio = pendingLocalEvent.StartDate
+		fin = time.Now().In(siat.LaPaz)
+		if !fin.After(inicio) {
+			fin = inicio.Add(time.Second)
+		}
+	} else if ambasVacias {
 		// Caso holgada intencional: cliente no envió fechas -> generar now-10m → now+1h50m
 		errInicio = fmt.Errorf("vacía")
 		errFin = fmt.Errorf("vacía")
@@ -516,7 +530,7 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 
 	req := ports.FiscalEvent{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:         company.CodigoSistema,
+		CodigoSistema:         "",
 		Nit:                   company.Nit,
 		CodigoSucursal:        pointOfSale.CodigoSucursal,
 		CodigoPuntoVenta:      resolveCodigoPuntoVenta(pointOfSale),
@@ -537,19 +551,24 @@ func (uc *SiatUsecase) RegistrarEventoSignificativo(ctx context.Context, company
 		return nil, err
 	}
 
-	// Se persiste el evento registrado (con su codigoRecepcion del SIAT) para
-	// que el envío de paquetes pueda resolver automáticamente el codigoEvento.
+	// Se persiste el codigoRecepcion en el mismo evento local que agrupa las
+	// facturas offline. Si no habia uno abierto, se crea el evento normalmente.
 	if uc.contingencyRepo != nil && result.Transaccion && result.CodigoRecepcion != "" {
-		ev := &domain.ContingencyEvent{
-			PointOfSaleID: pointOfSale.ID,
-			Reason:        motivoEventoAReason(codigoMotivo),
-			Description:   &descripcion,
-			StartDate:     inicio,
-			EndDate:       &fin,
-			SiatEventCode: &result.CodigoRecepcion,
-			IsSynced:      true,
+		ev := pendingLocalEvent
+		if ev == nil {
+			ev = &domain.ContingencyEvent{PointOfSaleID: pointOfSale.ID}
 		}
-		if err := uc.contingencyRepo.Create(ev); err != nil {
+		ev.Reason = motivoEventoAReason(codigoMotivo)
+		ev.Description = &descripcion
+		ev.StartDate = inicio
+		ev.EndDate = &fin
+		ev.SiatEventCode = &result.CodigoRecepcion
+		ev.IsSynced = true
+		persist := uc.contingencyRepo.Create
+		if pendingLocalEvent != nil {
+			persist = uc.contingencyRepo.Update
+		}
+		if err := persist(ev); err != nil {
 			// El evento SIAT ya se registró exitosamente; la persistencia local es
 			// complementaria. Un error aquí implica que la resolución automática de
 			// codigoEvento no funcionará para envíos posteriores de paquetes.
@@ -573,13 +592,13 @@ func motivoEventoAReason(motivo int) string {
 // --- Paquetes / lotes / compras / firma ---
 
 type PaqueteInput struct {
-	CodigoEvento  int                     `json:"codigoEvento"`
-	Descripcion   string                  `json:"descripcion"`
-	CodigoEmision int                     `json:"codigoEmision"`
-	Archivo       string                  `json:"archivo,omitempty"`
-	HashArchivo   string                  `json:"hashArchivo,omitempty"`
+	CodigoEvento  int                    `json:"codigoEvento"`
+	Descripcion   string                 `json:"descripcion"`
+	CodigoEmision int                    `json:"codigoEmision"`
+	Archivo       string                 `json:"archivo,omitempty"`
+	HashArchivo   string                 `json:"hashArchivo,omitempty"`
 	Facturas      []ports.FiscalDocument `json:"-"`
-	FacturaIDs    []string                `json:"-"`
+	FacturaIDs    []string               `json:"-"`
 }
 
 // UnmarshalJSON permite que `facturas` sea tanto []SolicitudFactura (objetos)
@@ -647,11 +666,11 @@ func (p *PaqueteInput) UnmarshalJSON(data []byte) error {
 }
 
 type MasivaInput struct {
-	CodigoEmision int                     `json:"codigoEmision"`
-	Archivo       string                  `json:"archivo,omitempty"`
-	HashArchivo   string                  `json:"hashArchivo,omitempty"`
+	CodigoEmision int                    `json:"codigoEmision"`
+	Archivo       string                 `json:"archivo,omitempty"`
+	HashArchivo   string                 `json:"hashArchivo,omitempty"`
 	Facturas      []ports.FiscalDocument `json:"-"`
-	FacturaIDs    []string                `json:"-"`
+	FacturaIDs    []string               `json:"-"`
 }
 
 func (m *MasivaInput) UnmarshalJSON(data []byte) error {
@@ -911,7 +930,7 @@ func (uc *SiatUsecase) buildSolicitudPaquete(companyID, posID string, body Paque
 
 	req := &ports.FiscalPackage{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:         company.CodigoSistema,
+		CodigoSistema:         "",
 		Nit:                   company.Nit,
 		Modalidad:             modalidad,
 		CodigoSucursal:        pointOfSale.CodigoSucursal,
@@ -1063,7 +1082,7 @@ func (uc *SiatUsecase) buildSolicitudMasiva(companyID, posID string, body Masiva
 
 	req := &ports.FiscalBulk{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:         company.CodigoSistema,
+		CodigoSistema:         "",
 		Nit:                   company.Nit,
 		Modalidad:             modalidad,
 		CodigoSucursal:        pointOfSale.CodigoSucursal,
@@ -1167,7 +1186,7 @@ func (uc *SiatUsecase) EnviarCompras(ctx context.Context, companyID, posID strin
 		Descripcion:      body.Descripcion,
 		TipoCompra:       body.TipoCompra,
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    company.CodigoSistema,
+		CodigoSistema:    "",
 		Nit:              company.Nit,
 		CodigoSucursal:   pointOfSale.CodigoSucursal,
 		CodigoPuntoVenta: 0,
@@ -1282,20 +1301,25 @@ func (uc *SiatUsecase) Sincronizar(ctx context.Context, companyID, posID, opRaw 
 		return nil, domain.NewConflictError("El punto de venta no tiene CUIS activo")
 	}
 
+	svc, err := uc.resolveService(ctx, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	// CodigoSistema viene del config global (infra), no del company.
+	// Si queda vacío la sincronización falla Validate con "codigoSistema es obligatorio".
+	codigoSistema := ""
+	if fa, ok := svc.(*siat.FiscalAdapter); ok {
+		codigoSistema = fa.CodigoSistema()
+	}
 	// El código de punto de venta que usa el CUIS debe ser el mismo en todas
 	// las operaciones (preferir el código registrado ante SIAT).
 	req := ports.FiscalSyncRequest{
 		CodigoAmbiente:   company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:    company.CodigoSistema,
+		CodigoSistema:    codigoSistema,
 		Nit:              company.Nit,
 		CodigoSucursal:   pointOfSale.CodigoSucursal,
 		CodigoPuntoVenta: pointOfSale.CodigoPuntoVenta,
 		Cuis:             *pointOfSale.Cuis,
-	}
-
-	svc, err := uc.resolveService(ctx, company.ID)
-	if err != nil {
-		return nil, err
 	}
 	out := &SincronizacionResultado{Company: company, PointOfSale: pointOfSale}
 
@@ -1805,20 +1829,20 @@ func (uc *SiatUsecase) ResolveDocumentoSector(company *domain.Company) (int, err
 // --- Documentos de ajuste (NC/ND) ---
 
 type DocumentoAjusteInput struct {
-	NumeroFactura         int64               `json:"numeroFactura"`
-	CufFacturaOriginal    string              `json:"cufFacturaOriginal"`
-	CodigoDocumentoSector int                 `json:"codigoDocumentoSector"`
-	Layout                string              `json:"layout,omitempty"`
-	CodigoTipoFactura     int                 `json:"codigoTipoFactura"`
-	TipoNota              int                 `json:"tipoNota"`
-	Motivo                string              `json:"motivo"`
-	CodigoMetodoPago      int                 `json:"codigoMetodoPago"`
-	CodigoMoneda          int                 `json:"codigoMoneda"`
-	TipoCambio            float64             `json:"tipoCambio"`
-	MontoTotal            float64             `json:"montoTotal"`
-	Leyenda               string              `json:"leyenda"`
+	NumeroFactura         int64                `json:"numeroFactura"`
+	CufFacturaOriginal    string               `json:"cufFacturaOriginal"`
+	CodigoDocumentoSector int                  `json:"codigoDocumentoSector"`
+	Layout                string               `json:"layout,omitempty"`
+	CodigoTipoFactura     int                  `json:"codigoTipoFactura"`
+	TipoNota              int                  `json:"tipoNota"`
+	Motivo                string               `json:"motivo"`
+	CodigoMetodoPago      int                  `json:"codigoMetodoPago"`
+	CodigoMoneda          int                  `json:"codigoMoneda"`
+	TipoCambio            float64              `json:"tipoCambio"`
+	MontoTotal            float64              `json:"montoTotal"`
+	Leyenda               string               `json:"leyenda"`
 	Cliente               ports.FiscalCustomer `json:"cliente"`
-	Items                 []ports.FiscalItem  `json:"items"`
+	Items                 []ports.FiscalItem   `json:"items"`
 }
 
 type DocumentoAjusteResultado struct {
@@ -1861,7 +1885,7 @@ func (uc *SiatUsecase) EmitirDocumentoAjuste(ctx context.Context, companyID, pos
 
 	req := ports.FiscalAdjustment{
 		CodigoAmbiente:        company.Ambiente.CodigoAmbiente(),
-		CodigoSistema:         company.CodigoSistema,
+		CodigoSistema:         "",
 		Nit:                   company.Nit,
 		Modalidad:             uc.effectiveModalidadForCompany(company),
 		NumeroFactura:         body.NumeroFactura,

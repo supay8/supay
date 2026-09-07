@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
@@ -31,9 +31,16 @@ type InvoiceUsecase struct {
 	siatService          ports.FiscalService
 	siatProvider         siat.SiatClientProvider
 	credentials          CredentialProvider
+	contingencyRepo      domain.ContingencyEventRepository
 	modalidad            int
 	pdfService           PdfGenerator
 	allowCustomIssueDate bool
+}
+
+// SetContingencyRepository enables the official offline contingency fallback
+// without expanding the constructor used by embedded consumers and tests.
+func (uc *InvoiceUsecase) SetContingencyRepository(repo domain.ContingencyEventRepository) {
+	uc.contingencyRepo = repo
 }
 
 func (uc *InvoiceUsecase) resolveEmissionService(ctx context.Context, companyID string) (ports.FiscalService, error) {

@@ -5,10 +5,9 @@ import { randomIntBetween, randomItem } from 'https://jslib.k6.io/k6-utils/1.2.0
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 
 const BASE_URL = 'http://localhost:8081';
-const API_KEY = 'efc4c5d72e7c272881ffdaef03328a7ef2fbad363f4de23af10d741ca2f1fffb';
-const COMPANY_ID = __ENV.COMPANY_ID || '1da4cdec-32c5-4f32-bfb6-ebc3a6ef1b7f';
-const POS_IDS = ["88a078de-ab11-4985-b8fa-ab321b0254af","a3d89d57-03bb-4b86-9771-879eee79e415"]
-const CUSTOMER_IDS = (__ENV.CUSTOMER_IDS || 'aaa0299d-033d-45a9-9782-833197a71e83').split(',');
+const API_KEY = 'sup_live_f48b5059_d9452c6523e147d4af36dd4d16a12e47';
+const COMPANY_ID = __ENV.COMPANY_ID || 'de84156e-59ca-4381-94f7-2c7a34053320';
+const POS_IDS = ["5226da47-74da-4b27-a26d-892c62fa6d26","4cdd19a8-ee70-4c90-8962-76f16b088508"]
 
 const headers = {
   'Content-Type': 'application/json',
@@ -36,6 +35,46 @@ const PRODUCT_CATALOG = [
   { code: 'PROD-004', description: 'Licencia de plataforma virtual (mensual)', codigo_actividad: '8549100', codigo_producto_sin: '1004385', unit_code: 1, unit_price: 400 },
   { code: 'PROD-005', description: 'Soporte técnico especializado', codigo_actividad: '8549100', codigo_producto_sin: '1004387', unit_code: 1, unit_price: 300 },
 ];
+
+const CUSTOMERS = [
+  {
+    client_document_type: "CI",
+    client_document_number: "9971522",
+    client_name: "BRandon",
+    client_email: "ramitpr53@gmail.com"
+  },
+  {
+    client_document_type: "CI",
+    client_document_number: "4829103",
+    client_name: "Valeria Gomez",
+    client_email: "valeria.gomez@gmail.com"
+  },
+  {
+    client_document_type: "NIT",
+    client_document_number: "1028394019",
+    client_name: "Inversiones Tech S.R.L.",
+    client_email: "contacto@techstore.bo"
+  },
+  {
+    client_document_type: "CI",
+    client_document_number: "6371829",
+    client_name: "Alejandro Mamani",
+    client_email: "alex.mamani@outlook.com"
+  },
+  {
+    client_document_type: "CI",
+    client_document_number: "7182934",
+    client_name: "Camila Quispe",
+    client_email: "camila.quispe@gmail.com"
+  },
+  {
+    client_document_type: "NIT",
+    client_document_number: "3948572018",
+    client_name: "Comercializadora Andina S.A.",
+    client_email: "facturacion@andina.bo"
+  }
+];
+
 
 const PAYMENT_METHODS = [1, 2, 3];
 const CURRENCIES = [1, 2];
@@ -66,7 +105,7 @@ function createAndEmitCreditNote(vu, iter) {
   const createPayload = JSON.stringify({
     company_id: COMPANY_ID,
     point_of_sale_id: POS_IDS[randomIndex],
-    customer_id: randomItem(CUSTOMER_IDS),
+    ...CUSTOMERS[randomIndex],
     codigo_documento_sector: 1,
     codigo_tipo_factura: 1,
     modalidad: 1,
@@ -120,6 +159,55 @@ function createAndEmitCreditNote(vu, iter) {
       console.error(`[${tag}] Error emitiendo la factura al SIAT:`, emitRes.status, emitRes.body);
     }
   });
+  group('Anular factura al SIAT', function () {
+    const payload = JSON.stringify({
+      codigo_motivo:1
+    })
+    const annulRes = http.post(`${BASE_URL}/invoices/${invoiceId}/annul`, payload, {
+      headers,
+      
+    });
+    emitDuration.add(annulRes.timings.duration);
+
+    const annulOk = annulRes.status === 200;
+    const accepted = annulOk && annulRes.json('status') === 'ACCEPTED';
+    siatAcceptedRate.add(accepted);
+
+    check(annulRes, {
+      [`[${tag}] emitida con status 200`]: () => annulOk,
+      [`[${tag}] aceptada por SIAT`]: () => accepted,
+    });
+
+    if (!annulOk) {
+      emitErrors.add(1);
+      console.error(`[${tag}] Error emitiendo la factura al SIAT:`, annulRes.status, annulRes.body);
+    }
+  });
+
+  group('Revertir factura al SIAT', function () {
+    const payload = JSON.stringify({
+      codigo_motivo:1
+    })
+    const revertRes = http.post(`${BASE_URL}/invoices/${invoiceId}/annul/revert`, null, {
+      headers,
+      
+    });
+    emitDuration.add(revertRes.timings.duration);
+
+    const reverOk = revertRes.status === 200;
+    const accepted = reverOk && revertRes.json('status') === 'ACCEPTED';
+    siatAcceptedRate.add(accepted);
+
+    check(revertRes, {
+      [`[${tag}] emitida con status 200`]: () => reverOk,
+      [`[${tag}] aceptada por SIAT`]: () => accepted,
+    });
+
+    if (!reverOk) {
+      emitErrors.add(1);
+      console.error(`[${tag}] Error emitiendo la factura al SIAT:`, revertRes.status, revertRes.body);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -129,9 +217,10 @@ const SCENARIO = __ENV.K6_SCENARIO || 'load';
 
 const scenarios = {
   smoke: {
-    executor: 'constant-vus',
-    vus: 2,
-    duration: '30s',
+    executor: 'per-vu-iterations',
+    vus: 1,
+    iterations: 5,
+    maxDuration: '1m',
   },
   load: {
     executor: 'ramping-vus',

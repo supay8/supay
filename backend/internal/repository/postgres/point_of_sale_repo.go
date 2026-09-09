@@ -73,6 +73,9 @@ func (r *PostgresPointOfSaleRepository) Create(pos *domain.PointOfSale) error {
 }
 
 func (r *PostgresPointOfSaleRepository) GetByID(id string) (*domain.PointOfSale, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, domain.NewBadRequestError("point_of_sale_id debe ser un UUID válido")
+	}
 	var dbModel models.PointOfSale
 	if err := r.db.Where("id = ?", id).First(&dbModel).Error; err != nil {
 		return nil, err

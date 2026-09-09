@@ -175,6 +175,11 @@ func inferErrorField(message string) string {
 		{"point_of_sale_id", []string{"point_of_sale", "punto de venta"}},
 		{"customer.document_number", []string{"document_number", "número de documento", "documento del cliente"}},
 		{"customer.name", []string{"customer.name", "client_name", "nombre del cliente"}},
+		{"reference_invoice_id", []string{"reference_invoice_id", "referencia_factura_id", "factura referenciada", "factura original"}},
+		{"layout", []string{"layout"}},
+		{"payment", []string{"payment"}},
+		{"items[].data", []string{"datos_sector_detalle"}},
+		{"data", []string{"datos_sector", "data."}},
 		{"items[].sku", []string{"sku", "producto del ítem"}},
 		{"items[].quantity", []string{"quantity", "cantidad"}},
 		{"items[].price", []string{"price", "precio"}},
@@ -217,9 +222,9 @@ func isConflict(err error) bool {
 func RespondError(w http.ResponseWriter, err error) {
 	status, body := classifyError(err)
 	if status >= 500 {
-		slog.Error("request fallido", "status", status, "error_code", body.Code, "error_type", reflect.TypeOf(err))
+		slog.Error("request fallido", "status", status, "error_code", body.Code, "error_type", reflect.TypeOf(err), "error", err)
 	} else {
-		slog.Warn("request rechazado", "status", status, "error_code", body.Code, "error_type", reflect.TypeOf(err))
+		slog.Warn("request rechazado", "status", status, "error_code", body.Code, "error_type", reflect.TypeOf(err), "error", err)
 	}
 	writeErrorBody(w, status, body)
 }

@@ -590,6 +590,21 @@ func TestRegisterV1RoutesExponePreviewSinSlashFinal(t *testing.T) {
 	}
 }
 
+func TestV1DecodesAdjustmentOptionsAndRejectsPaymentTypos(t *testing.T) {
+	body := `{"point_of_sale_id":"pos-1","customer":{"id":"cust-1"},"items":[{"sku":"SKU-1","quantity":1,"price":100,"data":{"marca_ice":1}}],"sector":"24","layout":"nota_credito_debito","reference_invoice_id":"original-1","payment":{"method_code":1,"currency_code":2,"exchange_rate":6.96}}`
+	req, err := decodeMinimalInvoice(httptest.NewRequest(http.MethodPost, "/v1/invoices", strings.NewReader(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ReferenceInvoiceID == nil || *req.ReferenceInvoiceID != "original-1" || req.Layout != "nota_credito_debito" || req.Payment == nil || req.Payment.ExchangeRate != 6.96 {
+		t.Fatalf("lost options: %+v", req)
+	}
+	typo := strings.Replace(body, "exchange_rate", "exhange_rate", 1)
+	if _, err := decodeMinimalInvoice(httptest.NewRequest(http.MethodPost, "/v1/invoices", strings.NewReader(typo))); err == nil {
+		t.Fatal("unknown payment field accepted")
+	}
+}
+
 func TestV1EmitDevuelveResultadoSincrono(t *testing.T) {
 	var capturedKey string
 	svc := &mockInvoiceService{emitSimpleFunc: func(_ context.Context, _ usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {

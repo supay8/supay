@@ -30,7 +30,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 }
 
 // RegisterV1Routes exposes the stable v1 contract. Reads and lifecycle routes
-// remain compatible, while invoice creation uses the six-field public payload.
+// remain compatible, while invoice creation uses the simplified public payload.
 func (m *Module) RegisterV1Routes(r chi.Router) {
 	r.Post("/", m.h.createV1)
 	r.Post("/preview", m.h.previewV1)

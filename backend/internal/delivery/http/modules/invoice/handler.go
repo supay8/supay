@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,16 +63,21 @@ func idempotencyKey(r *http.Request) (string, error) {
 func (h *handler) createV1(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeMinimalInvoice(r)
 	if err != nil {
+		log.Println(err)
+
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
 		return
 	}
 	key, err := idempotencyKey(r)
 	if err != nil {
+		log.Println(err)
 		deliveryHttp.RespondValidation(w, err.Error())
 		return
 	}
 	inv, err := h.uc.CreateSimplified(r.Context(), req, key)
 	if err != nil {
+		log.Println(err)
+
 		deliveryHttp.RespondError(w, err)
 		return
 	}
@@ -372,6 +378,8 @@ func (h *handler) sectores(w http.ResponseWriter, r *http.Request) {
 			Modalidades:        append([]int(nil), p.Modalidades...),
 			Soportado:          p.Soportado,
 			TieneBuilder:       p.HasBuilder(),
+			EmisionIndividual:  p.Codigo != 30,
+			EmisionMasiva:      !p.EsAjuste(),
 			RequiereArchivo:    !p.HasBuilder(),
 			ConDetalle:         p.ConDetalle,
 			DetalleUnico:       p.DetalleUnico,

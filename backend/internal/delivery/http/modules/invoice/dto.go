@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 )
 
 // invoiceCustomerDTO es la representación mínima del cliente en una factura.
@@ -221,6 +221,8 @@ type sectorDTO struct {
 	Modalidades        []int  `json:"modalidades,omitempty"`
 	Soportado          bool   `json:"soportado"`
 	TieneBuilder       bool   `json:"tiene_builder"`
+	EmisionIndividual  bool   `json:"emision_individual"`
+	EmisionMasiva      bool   `json:"emision_masiva"`
 	RequiereArchivo    bool   `json:"requiere_archivo"`
 	ConDetalle         bool   `json:"con_detalle"`
 	DetalleUnico       bool   `json:"detalle_unico"`

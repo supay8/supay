@@ -194,6 +194,7 @@ func parseFlexibleTime(s string) (time.Time, error) {
 }
 
 type CreateInvoiceRequest struct {
+	Total *float64 `json:"total,omitempty"`
 	// CompanyId es opcional: si se omite se deriva del point_of_sale_id.
 	CompanyId     string `json:"company_id,omitempty"`
 	PointOfSaleId string `json:"point_of_sale_id"`
@@ -363,7 +364,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		return nil, err
 	}
 
-	if len(req.Items) == 0 {
+	if len(req.Items) == 0 && req.CodigoDocumentoSector != 30 {
 		return nil, domain.NewBadRequestError("la factura debe tener al menos un ítem")
 	}
 
@@ -508,15 +509,16 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		modalidad = siat.ModalidadElectronica
 	}
 	if err := perfil.ValidarModalidad(modalidad); err != nil {
-		return nil, err
+		return nil, domain.NewBadRequestError(err.Error())
 	}
-	// Deduplicación legacy para sectores con DetallePar (47/48): si el cliente
-	// envió el par manual para bypassear minOccurs=2, colapsar a ítems lógicos
-	// antes de persistir (builder_reflex generará el par automáticamente).
-	if perfil.DetallePar {
-		if dedup := deduplicarItemsPar(req.Items); len(dedup) < len(req.Items) {
-			req.Items = dedup
-		}
+	if req.Total != nil && (perfil.ConDetalle || len(req.Items) > 0 || *req.Total < 0) {
+		return nil, domain.NewBadRequestError("total solo se admite sin items en sectores sin detalle y debe ser no negativo")
+	}
+	if !perfil.ConDetalle && len(req.Items) == 0 && req.Total == nil {
+		return nil, domain.NewBadRequestError("total es obligatorio para documentos sin detalle")
+	}
+	if perfil.DetalleUnico && len(req.Items) != 1 {
+		return nil, domain.NewBadRequestError(fmt.Sprintf("el sector %d requiere exactamente un ítem", sector))
 	}
 	if !perfil.HasBuilder() && (strings.TrimSpace(req.Archivo) == "" || strings.TrimSpace(req.HashArchivo) == "" || strings.TrimSpace(req.Cuf) == "") {
 		return nil, domain.NewBadRequestError(fmt.Sprintf("el sector %d requiere archivo, hash_archivo y cuf", sector))
@@ -527,7 +529,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		PeriodoFacturado: cadenaOpcional(req.PeriodoFacturado),
 	})
 	if err != nil {
-		return nil, err
+		return nil, domain.NewBadRequestError(err.Error())
 	}
 	sectorDataJSON, err := json.Marshal(valoresSector)
 	if err != nil {
@@ -552,6 +554,9 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		}
 		if ref.CompanyId != req.CompanyId {
 			return nil, domain.NewBadRequestError("la factura referenciada pertenece a otra empresa")
+		}
+		if ref.CustomerId != "" && ref.CustomerId != customer.ID {
+			return nil, domain.NewBadRequestError("customer debe coincidir con el cliente de la factura referenciada")
 		}
 		if ref.Cuf == nil || *ref.Cuf == "" {
 			return nil, domain.NewConflictError("la factura referenciada aún no tiene cuf; emítala antes de ajustarla")
@@ -610,6 +615,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 
 	var subtotal float64
 	for index, it := range req.Items {
+		it.Quantity, it.UnitPrice, it.Discount = siat.NormalizarImportesItem(sector, it.Quantity, it.UnitPrice, it.Discount)
 		code := strings.TrimSpace(it.Code)
 		if code == "" {
 			code = productCodes[index]
@@ -683,6 +689,14 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	}
 	inv.Subtotal = round2(subtotal)
 	inv.Total = inv.Subtotal
+	if req.Total != nil {
+		inv.Subtotal = round2(*req.Total)
+		inv.Total = inv.Subtotal
+	}
+	inv.Total, err = siat.TotalDocumento(inv.Subtotal, inv.SectorData)
+	if err != nil {
+		return nil, domain.NewBadRequestError(err.Error())
+	}
 
 	if err := uc.invoiceRepo.Create(inv); err != nil {
 		// Race de idempotencia: otro request creó primero la factura con la
@@ -741,6 +755,9 @@ func (uc *InvoiceUsecase) GetByID(id string) (*domain.Invoice, error) {
 // congelados dentro del borrador. Los campos legacy siguen pasando por el
 // flujo anterior cuando el ítem no identifica un producto interno.
 func (uc *InvoiceUsecase) resolveProductMappings(req CreateInvoiceRequest) (map[int]domain.ProductMapping, map[int]*domain.Product, map[int]*string, map[int]string, error) {
+	if esSectorAjuste(req.CodigoDocumentoSector) && req.ReferenciaFacturaId != nil && strings.TrimSpace(*req.ReferenciaFacturaId) != "" {
+		return uc.resolveAdjustmentMappings(req)
+	}
 	resolved := make(map[int]domain.ProductMapping)
 	resolvedProducts := make(map[int]*domain.Product)
 	productIDs := make(map[int]*string)
@@ -776,7 +793,7 @@ func (uc *InvoiceUsecase) resolveProductMappings(req CreateInvoiceRequest) (map[
 			mappings = append(mappings, mapping)
 		}
 		if len(mappings) == 0 {
-			return nil, nil, nil, nil, domain.NewConflictError(fmt.Sprintf("el producto del ítem %d no tiene un mapeo fiscal vigente", index+1))
+			return nil, nil, nil, nil, domain.NewConflictError(fmt.Sprintf("el producto del ítem %d (%s) no tiene un mapeo fiscal vigente compatible con el sector %d; revise los mapeos del producto", index+1, product.SKU, req.CodigoDocumentoSector))
 		}
 		if len(mappings) > 1 {
 			defaults := make([]domain.ProductMapping, 0, len(mappings))

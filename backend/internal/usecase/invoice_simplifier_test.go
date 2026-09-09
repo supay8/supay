@@ -2,15 +2,20 @@ package usecase
 
 import (
 	"context"
-	"reflect"
+	"encoding/json"
 	"testing"
 
 	"github.com/brandsrx/supay/internal/adapters/siat"
 )
 
-func TestMinimalInvoiceRequestTieneSeisCamposPublicos(t *testing.T) {
-	if got := reflect.TypeOf(MinimalInvoiceRequest{}).NumField(); got != 6 {
-		t.Fatalf("MinimalInvoiceRequest tiene %d campos; se esperaban 6", got)
+func TestMinimalInvoiceRequestConservaPayloadExistente(t *testing.T) {
+	var req MinimalInvoiceRequest
+	if err := json.Unmarshal([]byte(`{"point_of_sale_id":"pos-1","customer":{"id":"cust-1"},"items":[{"sku":"SKU-001","quantity":1,"price":100}],"invoice_type":"sale","sector":"auto","data":{}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	uc, _, _, _ := createTestUsecaseBuilder()
+	if _, err := uc.PreviewSimplified(t.Context(), req); err != nil {
+		t.Fatal(err)
 	}
 }
 

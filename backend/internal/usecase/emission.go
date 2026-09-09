@@ -83,6 +83,9 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 		}
 		return nil, err
 	}
+	if inv.CodigoDocumentoSector == 30 {
+		return nil, domain.NewBadRequestError("el sector 30 requiere emisión masiva; use /v1/siat/masiva/{companyId}/{pointOfSaleId}")
+	}
 	if inv.Status != domain.InvoicePending {
 		log.Println("DEBUG 1")
 
@@ -868,6 +871,13 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		montoCorregido += it.SubTotal
 	}
 	montoCorregido = round2(montoCorregido)
+	if inv.CodigoDocumentoSector == 30 && len(items) == 0 {
+		montoCorregido = inv.Subtotal
+	}
+	montoCorregido, err = siat.TotalDocumento(montoCorregido, inv.SectorData)
+	if err != nil {
+		return nil, domain.NewBadRequestError(err.Error())
+	}
 	if round2(inv.Total) != montoCorregido {
 		slog.Warn("emission: montoTotal auto-corregido",
 			"invoice_id", inv.ID, "monto_previo", inv.Total, "monto_corregido", montoCorregido)
@@ -889,6 +899,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		return nil, domain.NewBadRequestError(fmt.Sprintf("factura %s: %v", inv.ID, err))
 	}
 	var numeroFacturaOriginal int64
+	var originalItems []ports.FiscalItem
 	if perfil.EsAjuste() {
 		if strings.TrimSpace(valueOrEmpty(inv.AjustaFacturaId)) == "" {
 			return nil, domain.NewConflictError("el documento de ajuste no tiene factura original asociada")
@@ -909,6 +920,28 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 			return nil, domain.NewConflictError("la factura original del ajuste no tiene un número válido")
 		}
 		numeroFacturaOriginal = int64(original.InvoiceNumber)
+		if perfil.DetallePar || perfil.Codigo == 29 || perfil.Codigo == siat.SectorNotaCreditoDebito {
+			for _, item := range original.Items {
+				if item.CodigoProductoSin == nil || item.CodigoActividad == nil || item.UnitCode == nil {
+					return nil, domain.NewConflictError("la factura original no tiene datos fiscales completos en sus ítems")
+				}
+				code, err := strconv.ParseInt(*item.CodigoProductoSin, 10, 64)
+				if err != nil || code <= 0 {
+					return nil, domain.NewConflictError("código SIN inválido en factura original")
+				}
+				data, err := datosDetalleOriginal(perfil, item.SectorData)
+				if err != nil {
+					return nil, err
+				}
+				discount := item.Discount
+				originalItems = append(originalItems, ports.FiscalItem{
+					ActividadEconomica: *item.CodigoActividad, CodigoProductoSin: code,
+					CodigoProducto: item.Code, Descripcion: item.Description,
+					Cantidad: item.Quantity, PrecioUnitario: item.UnitPrice, UnidadMedida: *item.UnitCode,
+					MontoDescuento: &discount, SubTotal: item.Subtotal, DatosSector: data,
+				})
+			}
+		}
 	}
 	tipoFactura := perfil.TipoDocumentoResuelto(inv.CodigoTipoFactura)
 
@@ -968,6 +1001,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		Cuf:                   valueOrEmpty(inv.Cuf),
 		Cliente:               cliente,
 		Items:                 items,
+		OriginalItems:         originalItems,
 	}, nil
 }
 

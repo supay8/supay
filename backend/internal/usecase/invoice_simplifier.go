@@ -13,15 +13,25 @@ import (
 	"gorm.io/gorm"
 )
 
-// MinimalInvoiceRequest is the stable public v1 contract. It intentionally has
-// only six top-level fields; SIAT codes are resolved from the tenant catalogs.
+// MinimalInvoiceRequest is the public v1 contract. Additional options are
+// optional so existing six-field clients remain compatible.
 type MinimalInvoiceRequest struct {
-	PointOfSaleID string                 `json:"point_of_sale_id"`
-	Customer      MinimalInvoiceCustomer `json:"customer"`
-	Items         []MinimalInvoiceItem   `json:"items"`
-	InvoiceType   string                 `json:"invoice_type,omitempty"`
-	Sector        string                 `json:"sector,omitempty"`
-	Data          json.RawMessage        `json:"data,omitempty"`
+	PointOfSaleID      string                 `json:"point_of_sale_id"`
+	Customer           MinimalInvoiceCustomer `json:"customer"`
+	Items              []MinimalInvoiceItem   `json:"items"`
+	InvoiceType        string                 `json:"invoice_type,omitempty"`
+	Sector             string                 `json:"sector,omitempty"`
+	Data               json.RawMessage        `json:"data,omitempty"`
+	Layout             string                 `json:"layout,omitempty"`
+	ReferenceInvoiceID *string                `json:"reference_invoice_id,omitempty"`
+	Payment            *MinimalInvoicePayment `json:"payment,omitempty"`
+	Total              *float64               `json:"total,omitempty"`
+}
+
+type MinimalInvoicePayment struct {
+	MethodCode   int     `json:"method_code"`
+	CurrencyCode int     `json:"currency_code"`
+	ExchangeRate float64 `json:"exchange_rate"`
 }
 
 type MinimalInvoiceCustomer struct {
@@ -54,6 +64,9 @@ type InvoicePreview struct {
 	TipoCambio            float64                `json:"tipo_cambio"`
 	Subtotal              float64                `json:"subtotal"`
 	Total                 float64                `json:"total"`
+	Layout                string                 `json:"layout,omitempty"`
+	ReferenceInvoiceID    *string                `json:"reference_invoice_id,omitempty"`
+	Data                  json.RawMessage        `json:"data,omitempty"`
 }
 
 type InvoicePreviewCustomer struct {
@@ -142,13 +155,28 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		CodigoMoneda:          1,
 		TipoCambio:            1,
 		DatosSector:           input.Data,
+		Layout:                strings.TrimSpace(input.Layout),
+		ReferenciaFacturaId:   input.ReferenceInvoiceID,
+		Modalidad:             s.uc.effectiveModalidadForCompany(company),
+		Total:                 input.Total,
+	}
+	if input.Payment != nil {
+		if input.Payment.MethodCode <= 0 || input.Payment.CurrencyCode <= 0 || input.Payment.ExchangeRate <= 0 {
+			return nil, domain.NewBadRequestError("payment requiere method_code, currency_code y exchange_rate mayores a cero")
+		}
+		request.CodigoMetodoPago = input.Payment.MethodCode
+		request.CodigoMoneda = input.Payment.CurrencyCode
+		request.TipoCambio = input.Payment.ExchangeRate
+	}
+	if sector == 0 && (invoiceType == "credit_note" || invoiceType == "debit_note") {
+		request.CodigoDocumentoSector = siat.SectorNotaCreditoDebito
 	}
 
 	customer, err := s.resolveCustomer(company.ID, input.Customer, &request)
 	if err != nil {
 		return nil, err
 	}
-	if len(input.Items) == 0 {
+	if len(input.Items) == 0 && input.ReferenceInvoiceID == nil && input.Total == nil {
 		return nil, domain.NewBadRequestError("items debe contener al menos un producto")
 	}
 	request.Items = make([]CreateInvoiceItemRequest, 0, len(input.Items))
@@ -171,6 +199,28 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		})
 	}
 
+	if request.CodigoDocumentoSector > 0 {
+		p, err := siat.PerfilSectorLayout(request.CodigoDocumentoSector, request.Layout)
+		if err != nil {
+			return nil, domain.NewBadRequestError(err.Error())
+		}
+		if !p.HasBuilder() {
+			return nil, domain.NewBadRequestError("sector 33 no tiene constructor en go-siat; use /invoices con archivo, hash_archivo y cuf")
+		}
+		if err := p.ValidarModalidad(request.Modalidad); err != nil {
+			return nil, domain.NewBadRequestError(err.Error())
+		}
+		if p.EsAjuste() && (request.ReferenciaFacturaId == nil || strings.TrimSpace(*request.ReferenciaFacturaId) == "") {
+			return nil, domain.NewBadRequestError("reference_invoice_id es obligatorio para documentos de ajuste")
+		}
+	}
+	reference, err := s.uc.autofillDocumentoAjusteDescuento(&request, company.ID)
+	if err != nil {
+		return nil, err
+	}
+	if reference != nil && reference.CustomerId != "" && reference.CustomerId != request.CustomerId {
+		return nil, domain.NewBadRequestError("customer debe coincidir con el cliente de la factura referenciada")
+	}
 	mappings, products, _, _, err := s.uc.resolveProductMappings(request)
 	if err != nil {
 		return nil, err
@@ -191,9 +241,38 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		return nil, domain.NewBadRequestError(fmt.Sprintf("documento-sector %d no soportado: %v", request.CodigoDocumentoSector, err))
 	}
 	if err := profile.ValidarModalidad(s.uc.effectiveModalidadForCompany(company)); err != nil {
-		return nil, err
+		return nil, domain.NewBadRequestError(err.Error())
 	}
-	if _, err := profile.PrepararDatosSector(siat.SolicitudFactura{DatosSector: request.DatosSector}); err != nil {
+	if !profile.HasBuilder() {
+		return nil, domain.NewBadRequestError("sector 33 no tiene constructor en go-siat; use /invoices con archivo, hash_archivo y cuf")
+	}
+	if profile.DetalleUnico && len(request.Items) != 1 {
+		return nil, domain.NewBadRequestError(fmt.Sprintf("el sector %d requiere exactamente un ítem", profile.Codigo))
+	}
+	if len(request.Items) == 0 && profile.ConDetalle {
+		return nil, domain.NewBadRequestError("items debe contener al menos un producto")
+	}
+	if input.Total != nil && (profile.ConDetalle || len(request.Items) > 0 || *input.Total < 0) {
+		return nil, domain.NewBadRequestError("total solo se admite sin items en sectores sin detalle y debe ser no negativo")
+	}
+	if !profile.ConDetalle && len(request.Items) == 0 && input.Total == nil {
+		return nil, domain.NewBadRequestError("total es obligatorio para documentos sin detalle")
+	}
+	if profile.EsAjuste() && (request.ReferenciaFacturaId == nil || strings.TrimSpace(*request.ReferenciaFacturaId) == "") {
+		return nil, domain.NewBadRequestError("reference_invoice_id es obligatorio para documentos de ajuste")
+	}
+	if !profile.EsAjuste() && request.ReferenciaFacturaId != nil {
+		return nil, domain.NewBadRequestError("reference_invoice_id solo corresponde a documentos de ajuste")
+	}
+	if !profile.EsAjuste() && (request.InvoiceType == "credit_note" || request.InvoiceType == "debit_note") {
+		return nil, domain.NewBadRequestError("invoice_type de nota requiere un sector de documento de ajuste")
+	}
+	values, err := profile.PrepararDatosSector(siat.SolicitudFactura{DatosSector: request.DatosSector})
+	if err != nil {
+		return nil, domain.NewBadRequestError(err.Error())
+	}
+	request.DatosSector, err = json.Marshal(values)
+	if err != nil {
 		return nil, err
 	}
 
@@ -206,8 +285,16 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		CodigoMoneda:          request.CodigoMoneda,
 		TipoCambio:            request.TipoCambio,
 		Items:                 make([]InvoicePreviewItem, 0, len(request.Items)),
+		Layout:                request.Layout,
+		ReferenceInvoiceID:    request.ReferenciaFacturaId,
+		Data:                  request.DatosSector,
 	}
 	for index := range request.Items {
+		item := &request.Items[index]
+		item.Quantity, item.UnitPrice, item.Discount = siat.NormalizarImportesItem(profile.Codigo, item.Quantity, item.UnitPrice, item.Discount)
+		if item.Quantity <= 0 {
+			return nil, domain.NewBadRequestError("quantity debe ser mayor a cero con la precisión del sector")
+		}
 		mapping, ok := mappings[index]
 		if !ok {
 			return nil, domain.NewConflictError(fmt.Sprintf("el producto del ítem %d no tiene mapeo fiscal", index+1))
@@ -247,6 +334,14 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 	}
 	preview.Subtotal = round2(preview.Subtotal)
 	preview.Total = preview.Subtotal
+	if input.Total != nil {
+		preview.Subtotal = round2(*input.Total)
+		preview.Total = preview.Subtotal
+	}
+	preview.Total, err = siat.TotalDocumento(preview.Subtotal, request.DatosSector)
+	if err != nil {
+		return nil, domain.NewBadRequestError(err.Error())
+	}
 
 	return &SimplifiedInvoice{Request: request, Preview: preview}, nil
 }
@@ -328,6 +423,10 @@ func normalizeInvoiceType(value string) (string, error) {
 		return "sale", nil
 	case "education", "educacion", "educativo":
 		return "education", nil
+	case "credit_note", "nota_credito":
+		return "credit_note", nil
+	case "debit_note", "nota_debito":
+		return "debit_note", nil
 	default:
 		return "", domain.NewBadRequestError(fmt.Sprintf("invoice_type %q no soportado por el contrato mínimo", value))
 	}
@@ -378,6 +477,13 @@ func (uc *InvoiceUsecase) CreateSimplified(ctx context.Context, request MinimalI
 }
 
 func (uc *InvoiceUsecase) EmitSimplified(ctx context.Context, request MinimalInvoiceRequest, idempotencyKey string) (*domain.Invoice, error) {
+	sector, err := resolveSectorAlias(request.Sector)
+	if err != nil {
+		return nil, err
+	}
+	if sector == 30 {
+		return nil, domain.NewBadRequestError("el sector 30 requiere emisión masiva; use /v1/siat/masiva/{companyId}/{pointOfSaleId}")
+	}
 	invoice, err := uc.CreateSimplified(ctx, request, idempotencyKey)
 	if err != nil {
 		return nil, err

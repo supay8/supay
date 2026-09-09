@@ -27,12 +27,12 @@ type sdkSectorCase struct {
 // explicitly represented by our registry.
 func sdkCatalogCases(t *testing.T) []sdkSectorCase {
 	t.Helper()
-	cmd := exec.Command("go", "env", "GOMODCACHE")
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/ron86i/go-siat/v2")
 	modCacheBytes, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("go env GOMODCACHE: %v", err)
+		t.Fatalf("localizar módulo go-siat: %v", err)
 	}
-	path := filepath.Join(strings.TrimSpace(string(modCacheBytes)), "github.com/ron86i/go-siat/v2@v2.1.1", "pkg", "models", "invoices", "sectores_catalogo_test.go")
+	path := filepath.Join(strings.TrimSpace(string(modCacheBytes)), "pkg", "models", "invoices", "sectores_catalogo_test.go")
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("leer catálogo fuente del SDK %s: %v", path, err)
@@ -114,9 +114,7 @@ func countBuilderProfiles(profiles map[int][]*SectorProfile) int {
 func assertSDKRoots(t *testing.T, profile *SectorProfile, sdkCase sdkSectorCase) {
 	t.Helper()
 	if !profile.Soportado {
-		// La paridad de raíces XML se verifica solo para sectores habilitados
-		// para emisión; los no soportados se rechazan antes de construir.
-		return
+		t.Fatalf("constructor del SDK sin soporte local: %s", sdkCase)
 	}
 	for _, mode := range []struct {
 		code int
@@ -142,6 +140,7 @@ func assertSDKRoots(t *testing.T, profile *SectorProfile, sdkCase sdkSectorCase)
 				NombreRazonSocial: "CLIENTE TEST", CodigoTipoDocumentoIdentidad: 1, NumeroDocumento: "1234567", CodigoCliente: ptrStr("C-001"),
 			}, Items: []ItemFactura{{ActividadEconomica: "473000", CodigoProductoSin: 12345, CodigoProducto: "P-001", Descripcion: "Item", Cantidad: 1, UnidadMedida: 1, PrecioUnitario: 100, SubTotal: 100}},
 		}
+		req.Items[0].DatosSector = datosDetalleDeEjemplo(profile)
 		built, _, _, err := buildFacturaSDK(req, goSiat.EmisionOnline)
 		if err != nil {
 			t.Fatalf("sector %d modalidad %d: construir: %v", profile.Codigo, mode.code, err)

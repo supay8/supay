@@ -156,6 +156,10 @@ func jsonRaw(s string) []byte { return []byte(s) }
 // explícitamente un sector registrado pero no marcado como Soportado, antes de
 // construir o enviar el documento al SIAT.
 func TestSectorNoSoportadoRechazaEmision(t *testing.T) {
+	profile, _ := PerfilSector(19)
+	supported := profile.Soportado
+	profile.Soportado = false
+	t.Cleanup(func() { profile.Soportado = supported })
 	req := SolicitudFactura{
 		CodigoAmbiente:        AmbientePruebas,
 		CodigoSistema:         "SYS-TEST",

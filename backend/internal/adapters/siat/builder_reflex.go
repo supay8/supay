@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strconv"
 	"time"
+
+	"github.com/ron86i/go-siat/v2/pkg/models/invoices"
 )
 
 // Este archivo implementa el aplicador genérico de builders del SDK go-siat.
@@ -63,6 +65,13 @@ func llamarMetodo(builder any, metodo string, tolerante bool, args ...any) {
 func convertirArg(param reflect.Type, valor any) (reflect.Value, bool) {
 	if valor == nil {
 		return reflect.Value{}, false
+	}
+	if raw, ok := valor.(json.RawMessage); ok {
+		decoded := reflect.New(param)
+		if err := json.Unmarshal(raw, decoded.Interface()); err != nil {
+			return reflect.Value{}, false
+		}
+		return decoded.Elem(), true
 	}
 	v := reflect.ValueOf(valor)
 	if v.Type() == param {
@@ -215,6 +224,7 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithTelefono", req.Telefono},
 		{"WithCuf", cuf},
 		{"WithCufd", req.Cufd},
+		{"WithCafc", req.Cafc},
 		{"WithCodigoSucursal", req.CodigoSucursal},
 		{"WithDireccion", req.Direccion},
 		{"WithCodigoPuntoVenta", req.CodigoPuntoVenta},
@@ -233,7 +243,7 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		{"WithMontoTotalSujetoIva", montoTotalSujetoIva(p, req)},
 		{"WithCodigoMoneda", req.CodigoMoneda},
 		{"WithTipoCambio", req.TipoCambio},
-		{"WithMontoTotalMoneda", req.MontoTotal},
+		{"WithMontoTotalMoneda", montoTotalMoneda(req)},
 		{"WithLeyenda", req.Leyenda},
 		{"WithUsuario", req.Usuario},
 		{"WithCodigoDocumentoSector", p.Codigo},
@@ -275,6 +285,11 @@ func construirCabecera(p *SectorProfile, req SolicitudFactura, cuf string, valor
 		if !presente || esPunteroNil(valor) {
 			continue
 		}
+		if campo.Metodo == "WithNumeroNotaCreditoDebito" || campo.Metodo == "WithNumeroNotaConciliacion" {
+			if number, ok := aEntero(valor); !ok || number != req.NumeroFactura {
+				panic("el número de nota lo asigna Supay y debe coincidir con el correlativo del CUF")
+			}
+		}
 		llamarMetodo(cab, campo.Metodo, false, valor)
 	}
 
@@ -285,19 +300,18 @@ func montoTotalSujetoIva(p *SectorProfile, req SolicitudFactura) float64 {
 	if p.MontoSujetoIvaCero {
 		return 0
 	}
-	// Cálculo dinámico estricto: suma de subtotales = monto sujeto a IVA.
-	// Evita valores quemados (100.00) que generan rechazo 1013/1018.
-	_, sujeto := CalcularTotales(req.Items, false)
-	if round2(req.MontoTotal) != sujeto {
-		// No bloqueamos (auto-corrección en capas superiores), pero dejamos
-		// traza para auditoría de desalineaciones en cabecera.
-		// El caller (NormalizarTotales) ya habrá corregido req.MontoTotal;
-		// este Warn captura casos donde se llamó directo sin normalizar.
-		// Import log/slog solo si se usa; aquí evitamos import circular y
-		// confiamos en el Warn de NormalizarTotales. Si persiste desfase,
-		// sujeto es la verdad fiscal.
+	// The total already includes the header discount. Specialized bases can
+	// override this default through the sector's MontoTotalSujetoIva setter.
+	values := parseSectorObject(req.DatosSector)
+	gift, _ := toFloat(values["monto_gift_card"])
+	return round2(req.MontoTotal - gift)
+}
+
+func montoTotalMoneda(req SolicitudFactura) float64 {
+	if req.TipoCambio <= 0 {
+		return req.MontoTotal
 	}
-	return sujeto
+	return round2(req.MontoTotal / req.TipoCambio)
 }
 
 // construirDetalles construye las líneas de detalle del sector. Para sectores
@@ -319,17 +333,17 @@ func construirDetalles(p *SectorProfile, root any, items []ItemFactura) {
 		nro := 1
 		for i := range items {
 			d1 := construirDetalleConCodigo(p, items[i], nro, 1)
-			llamarMetodo(root, "AddDetalle", true, d1)
+			llamarMetodo(root, "AddDetalle", false, d1)
 			nro++
 			d2 := construirDetalleConCodigo(p, items[i], nro, 2)
-			llamarMetodo(root, "AddDetalle", true, d2)
+			llamarMetodo(root, "AddDetalle", false, d2)
 			nro++
 		}
 		return
 	}
 	for i := range items {
 		detalle := construirDetalle(p, items[i], i+1)
-		llamarMetodo(root, "AddDetalle", true, detalle)
+		llamarMetodo(root, "AddDetalle", false, detalle)
 	}
 }
 
@@ -403,7 +417,37 @@ func construirFactura(p *SectorProfile, req SolicitudFactura, cuf string, valore
 	root := p.builders.factura(req.Modalidad)
 	cabecera := construirCabecera(p, req, cuf, valores)
 	llamarMetodo(root, "WithCabecera", false, cabecera)
-	construirDetalles(p, root, req.Items)
+	switch {
+	case p.Codigo == 29:
+		originals := req.OriginalItems
+		if len(originals) == 0 {
+			originals = req.Items
+		}
+		originalProfile := *p
+		originalProfile.CamposDetalle = nil
+		originalProfile.builders.detalle = func() any { return invoices.NewNotaDetalleOriginalBuilder() }
+		for i, item := range originals {
+			item.DatosSector = nil
+			llamarMetodo(root, "AddDetalleOriginal", false, construirDetalle(&originalProfile, item, i+1))
+		}
+		for i, item := range req.Items {
+			llamarMetodo(root, "AddDetalleConciliacion", false, construirDetalle(p, item, i+1))
+		}
+	case (p.DetallePar || p.Codigo == SectorNotaCreditoDebito) && len(req.OriginalItems) > 0:
+		// Original sale and returned lines can have different amounts/counts.
+		// Preserve both groups instead of copying the returned amount twice.
+		nro := 1
+		for _, item := range req.OriginalItems {
+			llamarMetodo(root, "AddDetalle", false, construirDetalleConCodigo(p, item, nro, 1))
+			nro++
+		}
+		for _, item := range req.Items {
+			llamarMetodo(root, "AddDetalle", false, construirDetalleConCodigo(p, item, nro, 2))
+			nro++
+		}
+	default:
+		construirDetalles(p, root, req.Items)
+	}
 	return llamarBuild(root)
 }
 

@@ -1,8 +1,11 @@
 package siat
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -106,6 +109,7 @@ type CampoSector struct {
 	// Etiqueta está vacía.
 	Etiqueta string `json:"etiqueta,omitempty"`
 	Ejemplo  string `json:"ejemplo,omitempty"`
+	sdkType  reflect.Type
 }
 
 // SectorProfile describe cómo emitir un documento-sector del SIAT: metadatos
@@ -129,12 +133,8 @@ type SectorProfile struct {
 	// suma por código de transacción. Con DetallePar=true, WithNroItem es
 	// secuencial 1,2,3,4... y el par se genera automáticamente.
 	DetallePar bool `json:"detalle_par,omitempty"`
-	// Soportado marca los perfiles con casos aceptados por el SIAT (homologados).
-	// Reemplaza al antiguo flag Experimental, que solo significaba "acepta
-	// datos_sector vacío" y no protegía nada. Un perfil no Soportado produce un
-	// error explícito en buildFacturaSDK que nombra los campos del SDK que Supay
-	// nunca setea (camposNoCubiertos), evitando emitir un documento fiscal
-	// incompleto que el SIAT rechazaría.
+	// Soportado indica cobertura técnica del constructor y sus campos. No
+	// significa homologación ni habilitación tributaria de una empresa.
 	Soportado bool `json:"soportado"`
 	// MontoSujetoIvaCero marca los sectores donde montoTotalSujetoIva se envía
 	// en 0 (tasa cero); en el resto viaja igual al monto total.
@@ -237,8 +237,8 @@ var registroSectores map[int]*SectorProfile
 func init() {
 	sectorRegistry = &SectorRegistry{entries: make(map[SectorKey]*SectorProfile, len(catalogoSectores))}
 	registroSectores = make(map[int]*SectorProfile, len(catalogoSectores))
-	marcarSoportados()
 	for _, p := range catalogoSectores {
+		completarEsquemaSDK(p)
 		key := SectorKey{Codigo: p.Codigo, Layout: p.Layout}
 		if _, duplicado := sectorRegistry.entries[key]; duplicado {
 			panic(fmt.Sprintf("siat sectores: código %d layout %q registrado dos veces", p.Codigo, p.Layout))
@@ -356,7 +356,7 @@ func (p *SectorProfile) PrepararDatosSector(req SolicitudFactura) (map[string]an
 	// El XSD de las notas exige que el nodo descuento preceda al monto
 	// efectivo, incluso cuando no existe descuento. El SDK omite el nodo si
 	// recibe nil, por lo que normalizamos el valor ausente a cero.
-	if p.EsAjuste() {
+	if p.EsAjuste() && p.Codigo != 29 {
 		if _, ok := doc.Values["monto_descuento_credito_debito"]; !ok {
 			doc.Values["monto_descuento_credito_debito"] = float64(0)
 		}
@@ -394,7 +394,9 @@ func (p *SectorProfile) ValidarDatosDetalle(datos json.RawMessage) (map[string]a
 func validarCamposSectoriales(codigo int, nombre, contexto string, campos []CampoSector, datos json.RawMessage) (map[string]any, error) {
 	brutos := map[string]any{}
 	if len(datos) > 0 && string(datos) != "null" {
-		if err := json.Unmarshal(datos, &brutos); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(datos))
+		decoder.UseNumber()
+		if err := decoder.Decode(&brutos); err != nil {
 			return nil, fmt.Errorf("siat sectores %d: %s no es un objeto JSON válido: %w", codigo, contexto, err)
 		}
 	}
@@ -418,6 +420,11 @@ func validarCamposSectoriales(codigo int, nombre, contexto string, campos []Camp
 			continue
 		}
 		valores[campo.JSON] = valor
+		if campo.sdkType != nil {
+			if _, ok := convertirArg(campo.sdkType, valor); !ok {
+				return nil, fmt.Errorf("siat sectores %d: %s.%s no corresponde al tipo %s del SDK", codigo, contexto, campo.JSON, campo.sdkType)
+			}
+		}
 	}
 	if len(faltantes) > 0 {
 		sort.Strings(faltantes)
@@ -452,17 +459,28 @@ func normalizarValorCampo(codigo int, campo CampoSector, crudo any, presente boo
 		}
 		return s, nil
 	case "int":
+		if n, ok := crudo.(json.Number); ok {
+			if value, err := n.Int64(); err == nil {
+				return value, nil
+			}
+		}
 		f, ok := toFloat(crudo)
-		if !ok {
+		if !ok || math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f || f >= math.Exp2(63) || f < -math.Exp2(63) {
 			return nil, fmt.Errorf("siat sectores %d: %s debe ser numérico entero", codigo, campo.JSON)
 		}
 		return int64(f), nil
 	case "float":
 		f, ok := toFloat(crudo)
-		if !ok {
+		if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
 			return nil, fmt.Errorf("siat sectores %d: %s debe ser numérico", codigo, campo.JSON)
 		}
 		return f, nil
+	case "bool":
+		v, ok := crudo.(bool)
+		if !ok {
+			return nil, fmt.Errorf("siat sectores %d: %s debe ser booleano", codigo, campo.JSON)
+		}
+		return v, nil
 	case "fecha":
 		s, ok := crudo.(string)
 		if !ok {
@@ -504,30 +522,4 @@ func toFloat(v any) (float64, bool) {
 		}
 	}
 	return 0, false
-}
-
-// sectoresSoportadosInicial lista los códigos de documento-sector con casos
-// aceptados por el SIAT (homologados). El sector 24 aparece dos veces (ambos
-// layouts). El sector 16 (Hotel) se marcará Soportado al cerrar el Paso 4.
-var sectoresSoportadosInicial = map[int]bool{
-	SectorCompraVenta:       true, // 1
-	SectorTasaCero:          true, // 8
-	SectorEducativo:         true, // 11
-	SectorNotaCreditoDebito: true, // 24 (ambos layouts)
-	29:                      true,
-	46:                      true,
-	47:                      true,
-	48:                      true,
-}
-
-// marcarSoportados recorre el catálogo y marca Soportado=true a los perfiles
-// cuyo código está en sectoresSoportadosInicial. Los demás quedan false: la
-// guarda de buildFacturaSDK los rechazará con un error explícito nombrando los
-// campos del SDK que Supay no setea (camposNoCubiertos).
-func marcarSoportados() {
-	for _, p := range catalogoSectores {
-		if sectoresSoportadosInicial[p.Codigo] {
-			p.Soportado = true
-		}
-	}
 }

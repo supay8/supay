@@ -16,7 +16,7 @@ func (genericSectorAdapter) Prepare(p *SectorProfile, req SolicitudFactura) (Sec
 	if err != nil {
 		return SectorDocument{}, err
 	}
-	if p.EsAjuste() {
+	if p.EsAjuste() && p.Codigo != 29 {
 		if _, ok := values["monto_descuento_credito_debito"]; !ok {
 			values["monto_descuento_credito_debito"] = float64(0)
 		}
@@ -52,6 +52,12 @@ func (compraVentaAdapter) Prepare(p *SectorProfile, req SolicitudFactura) (Secto
 		return SectorDocument{}, err
 	}
 	normalized := normalizeCompraVenta(req)
+	if len(req.Items) > 0 {
+		normalized.MontoTotal, err = TotalDocumento(normalized.MontoTotal, req.DatosSector)
+		if err != nil {
+			return SectorDocument{}, err
+		}
+	}
 	payload := CompraVentaPayload{
 		Cliente:      normalized.Cliente,
 		Items:        normalized.Items,
@@ -76,8 +82,7 @@ func normalizeCompraVenta(req SolicitudFactura) SolicitudFactura {
 	req.TipoCambio = roundMoney(req.TipoCambio)
 	req.Items = append([]ItemFactura(nil), req.Items...)
 	for i := range req.Items {
-		req.Items[i].Cantidad = roundMoney(req.Items[i].Cantidad)
-		req.Items[i].PrecioUnitario = roundMoney(req.Items[i].PrecioUnitario)
+		req.Items[i].Cantidad, req.Items[i].PrecioUnitario, _ = NormalizarImportesItem(SectorCompraVenta, req.Items[i].Cantidad, req.Items[i].PrecioUnitario, 0)
 		if req.Items[i].MontoDescuento != nil {
 			value := roundMoney(*req.Items[i].MontoDescuento)
 			req.Items[i].MontoDescuento = &value
@@ -85,15 +90,7 @@ func normalizeCompraVenta(req SolicitudFactura) SolicitudFactura {
 		// Subtotal estricto dinámico: quantity*unitPrice - discount (corrige 100.00 quemado)
 		req.Items[i].SubTotal = CalcularSubtotal(req.Items[i].Cantidad, req.Items[i].PrecioUnitario, req.Items[i].MontoDescuento)
 	}
-	// MontoTotal dinámico: suma estricta de subtotales (auto-corrección con Warn)
-	total, _ := CalcularTotales(req.Items, false)
-	if round2(req.MontoTotal) != total {
-		// slog importado vía totales.go; round2 visible mismo package
-		// Warn emitido en NormalizarTotales; aquí también por si se llama directo.
-		req.MontoTotal = total
-	} else {
-		req.MontoTotal = roundMoney(req.MontoTotal)
-	}
+	req.MontoTotal, _ = CalcularTotales(req.Items, false)
 	return req
 }
 

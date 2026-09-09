@@ -128,7 +128,7 @@ var catalogoSectores = []*SectorProfile{
 		campo("credito_fiscal_iva", "WithCreditoFiscalIva", "float", false),
 		campo("debito_fiscal_iva", "WithDebitoFiscalIva", "float", false)),
 
-	sector(30, "Boleto Aéreo", TipoDocumentoFacturaConCredito, FachadaBoletoAereo,
+	sector(30, "Boleto Aéreo", TipoDocumentoFacturaSinCredito, FachadaBoletoAereo,
 		b(invoices.NewBoletoAereoBuilder, invoices.NewBoletoAereoCabeceraBuilder, nil),
 		campo("nombre_pasajero", "WithNombrePasajero", "string", true),
 		campo("numero_documento_pasajero", "WithNumeroDocumentoPasajero", "string", true),
@@ -271,13 +271,10 @@ func notaLayout(codigo int, nombre, layout string, facturaCtor, cabeceraCtor, de
 	return p
 }
 
-// experimental marca los sectores sin homologación interna aún: se emiten con su
-// builder real pero la guarda de buildFacturaSDK rechaza su emisión con un error
-// explícito que nombra los campos del SDK que Supay no setea (Paso 2).
+// experimental conserva el nombre histórico del grupo de sectores recientes.
+// Su cobertura se completa igual que los demás mediante completarEsquemaSDK.
 func experimental(codigo int, nombre string, tipoDoc int, bs buildersSector) *SectorProfile {
 	p := sector(codigo, nombre, tipoDoc, FachadaPorModalidad, bs)
-	// Soportado queda false: la guarda de buildFacturaSDK produce un error claro
-	// nombrando los campos faltantes en vez de emitir un XML incompleto.
 	if codigo == 52 {
 		p.Modalidades = []int{ModalidadElectronica}
 	}

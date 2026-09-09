@@ -74,6 +74,7 @@ type FiscalDocument struct {
 	Cuf                   string          `json:"cuf,omitempty"`
 	Cliente               FiscalCustomer  `json:"cliente"`
 	Items                 []FiscalItem    `json:"items"`
+	OriginalItems         []FiscalItem    `json:"original_items,omitempty"`
 }
 
 // FiscalResult es la respuesta de una emisión fiscal.

@@ -50,11 +50,12 @@ type ItemFactura struct {
 // compraventa: CUIS/CUFD vigentes, identidad del emisor y cliente/ítems
 // mapeados a los catálogos sincronizados del SIN.
 type SolicitudFactura struct {
-	CodigoAmbiente int    `json:"codigoAmbiente"`
-	CodigoSistema  string `json:"codigoSistema"`
-	Nit            string `json:"nit"`
-	Modalidad      int    `json:"modalidad"`
-	NumeroFactura  int64  `json:"numeroFactura"`
+	OriginalItems  []ItemFactura `json:"original_items,omitempty"`
+	CodigoAmbiente int           `json:"codigoAmbiente"`
+	CodigoSistema  string        `json:"codigoSistema"`
+	Nit            string        `json:"nit"`
+	Modalidad      int           `json:"modalidad"`
+	NumeroFactura  int64         `json:"numeroFactura"`
 	// NumeroFacturaOriginal es el correlativo de la factura que se ajusta.
 	// Solo aplica a documentos de ajuste; NumeroFactura sigue siendo el
 	// correlativo de la nota nueva.
@@ -951,7 +952,7 @@ func (s SolicitudFactura) validate() error {
 	if strings.TrimSpace(s.Cliente.NumeroDocumento) == "" {
 		return fmt.Errorf("siat emision: numeroDocumento del cliente es obligatorio")
 	}
-	if len(s.Items) == 0 {
+	if len(s.Items) == 0 && perfil.ConDetalle {
 		return fmt.Errorf("siat emision: la factura debe tener al menos un ítem")
 	}
 	for i := range s.Items {

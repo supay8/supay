@@ -231,6 +231,7 @@ func toSiatSolicitudFactura(doc ports.FiscalDocument) SolicitudFactura {
 		Cuf:                   doc.Cuf,
 		Cliente:               toSiatFiscalCustomer(doc.Cliente),
 		Items:                 toSiatFiscalItems(doc.Items),
+		OriginalItems:         toSiatFiscalItems(doc.OriginalItems),
 	}
 }
 

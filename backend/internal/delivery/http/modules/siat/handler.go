@@ -1,6 +1,7 @@
 package siat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,7 +58,14 @@ type siatCuisResponse struct {
 }
 
 func (h *handler) solicitarCUIS(w http.ResponseWriter, r *http.Request) {
-	res, err := h.siatUC.SolicitarCUIS(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"))
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
+	if !h.decodeBody(w, r, &struct{}{}) {
+		return
+	}
+	res, err := h.siatUC.SolicitarCUIS(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"))
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -70,7 +78,14 @@ func (h *handler) solicitarCUIS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) solicitarCUFD(w http.ResponseWriter, r *http.Request) {
-	res, err := h.siatUC.SolicitarCUFD(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"))
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
+	if !h.decodeBody(w, r, &struct{}{}) {
+		return
+	}
+	res, err := h.siatUC.SolicitarCUFD(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"))
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -86,14 +101,15 @@ func (h *handler) solicitarCUFD(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) registrarEventoSignificativo(w http.ResponseWriter, r *http.Request) {
-	var body usecase.EventoSignificativoInput
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-			deliveryHttp.RespondValidation(w, "payload JSON inválido")
-			return
-		}
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
 	}
-	res, err := h.siatUC.RegistrarEventoSignificativo(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	var body usecase.EventoSignificativoInput
+	if !h.decodeBody(w, r, &body) {
+		return
+	}
+	res, err := h.siatUC.RegistrarEventoSignificativo(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -105,12 +121,16 @@ func (h *handler) registrarEventoSignificativo(w http.ResponseWriter, r *http.Re
 }
 
 func (h *handler) enviarPaquete(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	var body usecase.PaqueteInput
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
 
-	res, err := h.siatUC.EnviarPaquete(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	res, err := h.siatUC.EnviarPaquete(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -119,15 +139,25 @@ func (h *handler) enviarPaquete(w http.ResponseWriter, r *http.Request) {
 		"company":       res.Company,
 		"point_of_sale": res.PointOfSale,
 		"response":      res.Response,
+		"batches":       res.Batches,
 	})
 }
 
 func (h *handler) validarPaquete(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	var body usecase.PaqueteValidacionInput
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
-	res, err := h.siatUC.ValidarPaquete(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	body.BatchID = chi.URLParam(r, "batchId")
+	if body.BatchID == "" {
+		deliveryHttp.RespondValidation(w, "batchId es obligatorio")
+		return
+	}
+	res, err := h.siatUC.ValidarPaquete(r.Context(), companyID, "", body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -136,15 +166,20 @@ func (h *handler) validarPaquete(w http.ResponseWriter, r *http.Request) {
 		"company":       res.Company,
 		"point_of_sale": res.PointOfSale,
 		"response":      res.Response,
+		"batches":       res.Batches,
 	})
 }
 
 func (h *handler) enviarMasiva(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	var body usecase.MasivaInput
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
-	res, err := h.siatUC.EnviarMasiva(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	res, err := h.siatUC.EnviarMasiva(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -153,15 +188,25 @@ func (h *handler) enviarMasiva(w http.ResponseWriter, r *http.Request) {
 		"company":       res.Company,
 		"point_of_sale": res.PointOfSale,
 		"response":      res.Response,
+		"batches":       res.Batches,
 	})
 }
 
 func (h *handler) validarMasiva(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	var body usecase.PaqueteValidacionInput
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
-	res, err := h.siatUC.ValidarMasiva(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	body.BatchID = chi.URLParam(r, "batchId")
+	if body.BatchID == "" {
+		deliveryHttp.RespondValidation(w, "batchId es obligatorio")
+		return
+	}
+	res, err := h.siatUC.ValidarMasiva(r.Context(), companyID, "", body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -170,15 +215,20 @@ func (h *handler) validarMasiva(w http.ResponseWriter, r *http.Request) {
 		"company":       res.Company,
 		"point_of_sale": res.PointOfSale,
 		"response":      res.Response,
+		"batches":       res.Batches,
 	})
 }
 
 func (h *handler) enviarCompras(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	var body usecase.ComprasInput
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
-	res, err := h.siatUC.EnviarCompras(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	res, err := h.siatUC.EnviarCompras(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -191,11 +241,15 @@ func (h *handler) enviarCompras(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) firmarFactura(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	var body usecase.FirmaInput
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
-	res, err := h.siatUC.FirmarFactura(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	res, err := h.siatUC.FirmarFactura(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -208,25 +262,33 @@ func (h *handler) firmarFactura(w http.ResponseWriter, r *http.Request) {
 }
 
 type setupRequest struct {
-	CompanyID     string `json:"company_id"`
 	PointOfSaleID string `json:"point_of_sale_id"`
 }
 
 // setup orquesta el alta de un punto de venta en una llamada: CUIS (lazy),
 // sincronización de catálogos, CUFD (lazy) y readiness. Idempotente.
 func (h *handler) setup(w http.ResponseWriter, r *http.Request) {
-	var body setupRequest
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-			deliveryHttp.RespondValidation(w, "payload JSON inválido")
-			return
-		}
-	}
-	if body.CompanyID == "" || body.PointOfSaleID == "" {
-		deliveryHttp.RespondValidation(w, "company_id y point_of_sale_id son obligatorios")
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
 		return
 	}
-	res, err := h.siatUC.Setup(r.Context(), body.CompanyID, body.PointOfSaleID)
+	var body setupRequest
+	if !h.decodeBody(w, r, &body) {
+		return
+	}
+	posID := chi.URLParam(r, "pointOfSaleId")
+	if posID != "" && body.PointOfSaleID != "" && posID != body.PointOfSaleID {
+		deliveryHttp.RespondValidation(w, "point_of_sale_id no coincide con la ruta")
+		return
+	}
+	if posID == "" {
+		posID = body.PointOfSaleID
+	}
+	if posID == "" {
+		deliveryHttp.RespondValidation(w, "point_of_sale_id es obligatorio")
+		return
+	}
+	res, err := h.siatUC.Setup(r.Context(), companyID, posID)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -235,8 +297,14 @@ func (h *handler) setup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) sincronizar(w http.ResponseWriter, r *http.Request) {
-	companyID := chi.URLParam(r, "companyId")
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	posID := chi.URLParam(r, "pointOfSaleId")
+	if !h.decodeBody(w, r, &struct{}{}) {
+		return
+	}
 	res, err := h.siatUC.Sincronizar(r.Context(), companyID, posID, r.URL.Query().Get("operation"))
 	if err != nil && res == nil {
 		deliveryHttp.RespondError(w, err)
@@ -254,9 +322,13 @@ func (h *handler) sincronizar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) listSinProducts(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	limit := deliveryHttp.ParseQueryInt(r.URL.Query().Get("limit"), 50)
 	offset := deliveryHttp.ParseQueryInt(r.URL.Query().Get("offset"), 0)
-	items, total, err := h.siatUC.ListSinProducts(r.URL.Query().Get("company_id"), r.URL.Query().Get("query"), limit, offset)
+	items, total, err := h.siatUC.ListSinProducts(companyID, r.URL.Query().Get("query"), limit, offset)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -265,9 +337,13 @@ func (h *handler) listSinProducts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) listActivitesDocumentSectors(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	limit := deliveryHttp.ParseQueryInt(r.URL.Query().Get("limit"), 50)
 	offset := deliveryHttp.ParseQueryInt(r.URL.Query().Get("offset"), 0)
-	items, total, err := h.siatUC.ListActivitesDocumentSectors(r.URL.Query().Get("company_id"), r.URL.Query().Get("query"), limit, offset)
+	items, total, err := h.siatUC.ListActivitesDocumentSectors(companyID, r.URL.Query().Get("query"), limit, offset)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -276,7 +352,11 @@ func (h *handler) listActivitesDocumentSectors(w http.ResponseWriter, r *http.Re
 }
 
 func (h *handler) catalogReadiness(w http.ResponseWriter, r *http.Request) {
-	readiness, err := h.siatUC.CatalogReadiness(r.URL.Query().Get("company_id"), r.URL.Query().Get("point_of_sale_id"))
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
+	readiness, err := h.siatUC.CatalogReadiness(companyID, r.URL.Query().Get("point_of_sale_id"))
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -285,10 +365,14 @@ func (h *handler) catalogReadiness(w http.ResponseWriter, r *http.Request) {
 }
 
 // getCatalog sirve los catálogos sincronizados desde la BD. Con
-// GET /catalogs/{companyId}/{tipo} devuelve ese catálogo; con
-// GET /catalogs/{companyId} o tipo=all los devuelve todos agrupados.
+// GET /siat/catalogs/{tipo} devuelve ese catálogo del tenant autenticado;
+// GET /siat/catalogs o tipo=all los devuelve todos agrupados.
 func (h *handler) getCatalog(w http.ResponseWriter, r *http.Request) {
-	res, err := h.siatUC.ListCatalog(chi.URLParam(r, "companyId"), chi.URLParam(r, "tipo"))
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.siatUC.ListCatalog(companyID, chi.URLParam(r, "tipo"))
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -297,16 +381,20 @@ func (h *handler) getCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) emitirDocumentoAjuste(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := authenticatedCompany(w, r)
+	if !ok {
+		return
+	}
 	slog.Warn("uso de endpoint deprecado documento-ajuste",
 		"path", r.URL.Path,
-		"company_id", chi.URLParam(r, "companyId"),
+		"company_id", companyID,
 		"point_of_sale_id", chi.URLParam(r, "pointOfSaleId"),
 	)
 	var body usecase.DocumentoAjusteInput
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
-	res, err := h.siatUC.EmitirDocumentoAjuste(r.Context(), chi.URLParam(r, "companyId"), chi.URLParam(r, "pointOfSaleId"), body)
+	res, err := h.siatUC.EmitirDocumentoAjuste(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -318,14 +406,50 @@ func (h *handler) emitirDocumentoAjuste(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// decodeBody decodifica el cuerpo JSON en out; un cuerpo vacío es válido
-// (todos los inputs tienen defaults). Devuelve false si ya respondió.
+// authenticatedCompany usa únicamente el tenant autenticado. Los identificadores
+// heredados en ruta o query solo se aceptan cuando coinciden con ese tenant.
+func authenticatedCompany(w http.ResponseWriter, r *http.Request) (string, bool) {
+	companyID, ok := deliveryHttp.CompanyIDFromContext(r.Context())
+	if !ok {
+		deliveryHttp.WriteErrorBody(w, http.StatusUnauthorized, deliveryHttp.CodeUnauthorized, "no autorizado: falta company_id en contexto")
+		return "", false
+	}
+	legacyIDs := append([]string{chi.URLParam(r, "companyId")}, r.URL.Query()["company_id"]...)
+	for _, requestedID := range legacyIDs {
+		if requestedID != "" && requestedID != companyID {
+			deliveryHttp.WriteErrorBody(w, http.StatusForbidden, "FORBIDDEN", "la empresa solicitada no coincide con el tenant autenticado")
+			return "", false
+		}
+	}
+	return companyID, true
+}
+
+// decodeBody acepta un cuerpo ausente o un único objeto JSON del contrato.
 func (h *handler) decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	if r.Body == nil {
 		return true
 	}
-	if err := json.NewDecoder(r.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
+	decoder := json.NewDecoder(r.Body)
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); errors.Is(err, io.EOF) {
+		return true
+	} else if err != nil {
 		deliveryHttp.RespondValidation(w, "payload JSON inválido")
+		return false
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		deliveryHttp.RespondValidation(w, "el payload debe ser un objeto JSON")
+		return false
+	}
+	if err := decoder.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
+		deliveryHttp.RespondValidation(w, "el payload debe contener un único objeto JSON")
+		return false
+	}
+	strict := json.NewDecoder(bytes.NewReader(raw))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(out); err != nil {
+		deliveryHttp.RespondValidation(w, "payload JSON inválido o campos no permitidos")
 		return false
 	}
 	return true

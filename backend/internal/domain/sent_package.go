@@ -6,6 +6,8 @@ import "time"
 type SentPackageType string
 
 const (
+	PackageStatusSending  SentPackageStatus = "SENDING"
+	PackageStatusUnknown  SentPackageStatus = "UNKNOWN"
 	PackageTypePaquete SentPackageType = "PAQUETE"
 	PackageTypeMasiva  SentPackageType = "MASIVA"
 	PackageTypeCompras SentPackageType = "COMPRAS"
@@ -28,6 +30,14 @@ type SentPackage struct {
 	CompanyId             string            `json:"company_id"`
 	PointOfSaleId         string            `json:"point_of_sale_id"`
 	Type                  SentPackageType   `json:"type"`
+	InvoiceIDs            []string          `json:"invoice_ids"`
+	// Cufs contiene los CUF devueltos por SIAT en el orden de InvoiceIDs.
+	Cufs                  []string          `json:"-"`
+	Modalidad             int               `json:"modalidad"`
+	Layout                string            `json:"layout"`
+	Cufd                  string            `json:"cufd"`
+	CufdID                string            `json:"cufd_id,omitempty"`
+	Cuis                  string            `json:"cuis"`
 	CodigoRecepcion       string            `json:"codigo_recepcion"`
 	HashArchivo           string            `json:"hash_archivo"`
 	CantidadFacturas      int               `json:"cantidad_facturas"`
@@ -55,4 +65,13 @@ type SentPackageRepository interface {
 	ListByPointOfSale(pointOfSaleID string) ([]*SentPackage, error)
 	ListByCompany(companyID string) ([]*SentPackage, error)
 	Update(pkg *SentPackage) error
+}
+
+// FiscalBatchRepository reserva y reconcilia un envío junto con sus facturas.
+// La reserva sobrevive a errores de transporte: un resultado incierto requiere
+// conciliación y nunca habilita automáticamente un nuevo envío.
+type FiscalBatchRepository interface {
+	ReserveBatch(pkg *SentPackage, invoiceIDs []string, expectedStatus InvoiceStatus) error
+	UpdateBatch(pkg *SentPackage, invoiceStatus *InvoiceStatus) error
+	ListPendingBatchInvoices(companyID, posID string, status InvoiceStatus, eventID *string) ([]*Invoice, error)
 }

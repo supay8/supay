@@ -51,6 +51,7 @@ type EmissionType string
 
 const (
 	EmissionEnLinea      EmissionType = "EN_LINEA"
+	EmissionMasiva       EmissionType = "MASIVA"
 	EmissionOffline      EmissionType = "OFFLINE"
 	EmissionContingencia EmissionType = "CONTINGENCIA"
 )
@@ -498,7 +499,12 @@ type SentPackage struct {
 	CompanyId             string    `gorm:"column:tenant_id;type:uuid;index:idx_sent_packages_tenant;not null"`
 	PointOfSaleId         string    `gorm:"type:uuid;index:idx_sent_pkg_pos;not null"`
 	Type                  string    `gorm:"type:varchar(20);not null"`
-	CodigoRecepcion       string    `gorm:"type:varchar(100);uniqueIndex;not null"`
+	CodigoRecepcion       string    `gorm:"type:varchar(100);uniqueIndex:idx_sent_packages_recepcion,where:codigo_recepcion <> '';not null"`
+	Modalidad             int       `gorm:"not null;default:0"`
+	Layout                string    `gorm:"type:varchar(80);not null;default:''"`
+	Cufd                  string    `gorm:"type:text;not null;default:''"`
+	CufdID                *string   `gorm:"type:uuid"`
+	Cuis                  string    `gorm:"type:text;not null;default:''"`
 	HashArchivo           string    `gorm:"type:varchar(100);not null"`
 	CantidadFacturas      int       `gorm:"not null"`
 	CodigoDocumentoSector int       `gorm:"not null"`
@@ -516,6 +522,13 @@ type SentPackage struct {
 	Company          Company           `gorm:"foreignKey:CompanyId"`
 	PointOfSale      PointOfSale       `gorm:"foreignKey:PointOfSaleId"`
 	ContingencyEvent *ContingencyEvent `gorm:"foreignKey:ContingencyEventId"`
+}
+
+// SentPackageInvoice conserva la pertenencia y el orden del envío original.
+type SentPackageInvoice struct {
+	InvoiceID     string `gorm:"type:uuid;primaryKey"`
+	SentPackageID string `gorm:"type:uuid;not null;uniqueIndex:idx_sent_package_invoice_position,priority:1"`
+	Position      int    `gorm:"not null;uniqueIndex:idx_sent_package_invoice_position,priority:2"`
 }
 
 type Certificate struct {

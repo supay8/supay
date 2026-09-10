@@ -197,6 +197,7 @@ func toSiatFiscalItems(items []ports.FiscalItem) []ItemFactura {
 
 func toSiatSolicitudFactura(doc ports.FiscalDocument) SolicitudFactura {
 	return SolicitudFactura{
+		XML:                   doc.XML,
 		CodigoAmbiente:        doc.CodigoAmbiente,
 		CodigoSistema:         doc.CodigoSistema,
 		Nit:                   doc.Nit,

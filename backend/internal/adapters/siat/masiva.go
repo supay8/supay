@@ -305,8 +305,11 @@ func (s SolicitudMasivaFactura) validateBase() error {
 	if s.CodigoSucursal < 0 || s.CodigoPuntoVenta < 0 {
 		return fmt.Errorf("siat masiva: codigoSucursal y codigoPuntoVenta deben ser >= 0")
 	}
-	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" || strings.TrimSpace(s.CodigoControl) == "" {
-		return fmt.Errorf("siat masiva: cuis, cufd y codigoControl son obligatorios")
+	if s.codigoEmision() != EmisionMasiva {
+		return fmt.Errorf("siat masiva: codigoEmision debe ser %d", EmisionMasiva)
+	}
+	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" {
+		return fmt.Errorf("siat masiva: cuis y cufd son obligatorios")
 	}
 	return nil
 }
@@ -335,6 +338,9 @@ func (s SolicitudMasivaFactura) validate() error {
 		return fmt.Errorf("siat masiva sector %d: archivo/hashArchivo solo son válidos para perfiles sin builder", perfil.Codigo)
 	}
 	for i := range s.Facturas {
+		if s.Facturas[i].XML != "" || s.Facturas[i].Cuf != "" {
+			return fmt.Errorf("siat masiva factura %d: no se puede regenerar un documento fiscal ya emitido", i+1)
+		}
 		if err := s.Facturas[i].validate(); err != nil {
 			return fmt.Errorf("siat masiva factura %d: %w", i+1, err)
 		}

@@ -40,6 +40,8 @@ type FiscalItem struct {
 
 // FiscalDocument agrupa los datos necesarios para emitir un documento fiscal.
 type FiscalDocument struct {
+	// XML conserva el documento fiscal persistido para enviarlo sin reconstruirlo.
+	XML                   string          `json:"-"`
 	CodigoAmbiente        int             `json:"codigoAmbiente"`
 	CodigoSistema         string          `json:"codigoSistema"`
 	Nit                   string          `json:"nit"`

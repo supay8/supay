@@ -352,6 +352,103 @@ func TestEnviarPaqueteFacturaValidation(t *testing.T) {
 	}
 }
 
+func paqueteConXMLPersistido(t *testing.T) SolicitudPaqueteFactura {
+	t.Helper()
+	req := paqueteDePrueba()
+	req.Modalidad = ModalidadElectronica
+	req.Facturas = req.Facturas[:1]
+	req.Facturas[0].FechaEmision = time.Date(2026, 9, 8, 11, 20, 30, 123000000, LaPaz)
+	req = req.normalized()
+	signer := newSignedTestService(t, "http://localhost:9999")
+	emitted, err := signer.PrepararFacturaOffline(t.Context(), req.Facturas[0])
+	if err != nil {
+		t.Fatalf("preparar factura offline: %v", err)
+	}
+	req.Facturas[0].XML = emitted.Xml
+	req.Facturas[0].Cuf = emitted.Cuf
+	// El repositorio puede devolver UTC; debe representar el mismo instante.
+	req.Facturas[0].FechaEmision = req.Facturas[0].FechaEmision.UTC()
+	// El CUFD de envío puede ser distinto al CUFD histórico de la factura.
+	req.Cufd = "CUFD-ACTUAL-ENVIO"
+	req.CodigoControl = ""
+	return req
+}
+
+func TestEnviarPaquetePreservaXMLFirmadoHistorico(t *testing.T) {
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		body = string(data)
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><recepcionPaqueteFacturaResponse><RespuestaServicioFacturacion><transaccion>true</transaccion><codigoEstado>908</codigoEstado><codigoRecepcion>PKG-PERSISTED</codigoRecepcion></RespuestaServicioFacturacion></recepcionPaqueteFacturaResponse></soapenv:Body></soapenv:Envelope>`)
+	}))
+	defer server.Close()
+	req := paqueteConXMLPersistido(t)
+	// Los datos de negocio ya no reconstruyen ni modifican la factura firmada.
+	req.Facturas[0].Items = nil
+	req.Facturas[0].MontoTotal = 999
+	// No hay credencial de firma: enviar un XML firmado no debe volver a firmarlo.
+	svc := newTestService(t, server.URL)
+	result, err := svc.EnviarPaqueteFactura(t.Context(), req)
+	if err != nil {
+		t.Fatalf("enviar paquete persistido: %v", err)
+	}
+	if got := facturaXMLDelArchivo(t, result.Archivo, "factura_1.xml"); got != req.Facturas[0].XML {
+		t.Fatal("se modificaron los bytes del XML firmado persistido")
+	}
+	if len(result.Cufs) != 1 || result.Cufs[0] != req.Facturas[0].Cuf {
+		t.Fatalf("CUF persistido modificado: %v", result.Cufs)
+	}
+	if !strings.Contains(body, "<cufd>CUFD-ACTUAL-ENVIO</cufd>") {
+		t.Fatal("el sobre no usa el CUFD de envío")
+	}
+}
+
+func TestEnviarPaqueteRechazaIdentidadXMLInconsistente(t *testing.T) {
+	base := paqueteConXMLPersistido(t)
+	for name, mutate := range map[string]func(*SolicitudPaqueteFactura){
+		"cuf":         func(p *SolicitudPaqueteFactura) { p.Facturas[0].Cuf = "OTRO-CUF" },
+		"cufd":        func(p *SolicitudPaqueteFactura) { p.Facturas[0].Cufd = p.Cufd },
+		"fecha":       func(p *SolicitudPaqueteFactura) { p.Facturas[0].FechaEmision = time.Now() },
+		"numero":      func(p *SolicitudPaqueteFactura) { p.Facturas[0].NumeroFactura++ },
+		"nit":         func(p *SolicitudPaqueteFactura) { p.Facturas[0].Nit = "9876543210" },
+		"sucursal":    func(p *SolicitudPaqueteFactura) { p.Facturas[0].CodigoSucursal++ },
+		"punto_venta": func(p *SolicitudPaqueteFactura) { p.Facturas[0].CodigoPuntoVenta++ },
+		"modalidad": func(p *SolicitudPaqueteFactura) {
+			p.Modalidad = ModalidadComputarizada
+			p.Facturas[0].Modalidad = ModalidadComputarizada
+		},
+		"tipo":          func(p *SolicitudPaqueteFactura) { p.CodigoTipoFactura = 2; p.Facturas[0].CodigoTipoFactura = 2 },
+		"control":       func(p *SolicitudPaqueteFactura) { p.Facturas[0].CodigoControl = "OTRO-CONTROL" },
+		"xml_invalido":  func(p *SolicitudPaqueteFactura) { p.Facturas[0].XML = "<factura>" },
+		"xml_ausente":   func(p *SolicitudPaqueteFactura) { p.Facturas[0].XML = "" },
+		"xml_mezclados": func(p *SolicitudPaqueteFactura) { p.Facturas = append(p.Facturas, facturaDePrueba(2)) },
+		"emision":       func(p *SolicitudPaqueteFactura) { p.CodigoEmision = EmisionMasiva },
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := base
+			req.Facturas = append([]SolicitudFactura(nil), base.Facturas...)
+			mutate(&req)
+			// Validar localmente prueba que la solicitud se rechaza antes de HTTP.
+			if err := req.normalized().validate(); err == nil {
+				t.Fatal("se aceptó un documento fiscal inconsistente")
+			}
+		})
+	}
+}
+
+func TestValidacionRecepcionNoRequiereCodigoControl(t *testing.T) {
+	pkg := paqueteDePrueba()
+	pkg.CodigoControl = ""
+	if err := pkg.validateBase(); err != nil {
+		t.Fatalf("validación paquete: %v", err)
+	}
+	bulk := SolicitudMasivaFactura{Modalidad: pkg.Modalidad, Cuis: pkg.Cuis, Cufd: pkg.Cufd}
+	if err := bulk.validateBase(); err != nil {
+		t.Fatalf("validación masiva: %v", err)
+	}
+}
+
 func TestEnviarPaqueteFacturaInheritsIdentity(t *testing.T) {
 	var gotBody string
 

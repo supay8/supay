@@ -1,7 +1,10 @@
 package siat
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"reflect"
 	"strings"
@@ -9,6 +12,7 @@ import (
 
 	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/ron86i/go-siat/v2/pkg/models"
+	"github.com/ron86i/go-siat/v2/pkg/utils"
 )
 
 // EmisionPaqueteOffline es el codigoEmision que exige el SIAT para el envío de
@@ -81,11 +85,10 @@ type ResultadoPaquete struct {
 }
 
 // EnviarPaqueteFactura envía un paquete de facturas al SIAT
-// (recepcionPaqueteFactura). Cada factura se construye con su propio CUF usando
-// el codigoEmision del paquete (por defecto EmisionOffline); el SDK las firma
-// (modalidad electrónica), las empaqueta en TAR.GZ comprimido y calcula el hash
-// SHA-256 automáticamente (WithFacturas). El CodigoRecepcion devuelto se usa
-// luego en ValidarPaqueteFactura.
+// (recepcionPaqueteFactura). Los XML persistidos se empaquetan sin modificar sus
+// bytes, firmas ni CUF. Para documentos nuevos se utilizan los builders y la
+// firma del SDK con emisión offline. El CodigoRecepcion devuelto se usa luego
+// en ValidarPaqueteFactura.
 func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaqueteFactura) (*ResultadoPaquete, error) {
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
@@ -110,7 +113,8 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 
 	facturas := make([]any, 0, len(req.Facturas))
 	cufs := make([]string, 0, len(req.Facturas))
-	if perfil.HasBuilder() {
+	prepared := req.hasPersistedXML()
+	if perfil.HasBuilder() && !prepared {
 		for i := range req.Facturas {
 			if err := applyIdentityValues(s.sdk.Config(), &req.Facturas[i].CodigoAmbiente, &req.Facturas[i].CodigoSistema, &req.Facturas[i].Nit); err != nil {
 				return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
@@ -146,7 +150,16 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 		// envía vacío para evitar el xsi:nil.
 		WithCafc(&emptyStr)
 
-	if perfil.HasBuilder() {
+	if prepared {
+		archivo, hash, err := empaquetarXMLPersistidos(req.Facturas)
+		if err != nil {
+			return nil, fmt.Errorf("siat paquete: %w", err)
+		}
+		paquete.WithArchivo(archivo).WithHashArchivo(hash).WithCantidadFacturas(len(req.Facturas))
+		for _, factura := range req.Facturas {
+			cufs = append(cufs, factura.Cuf)
+		}
+	} else if perfil.HasBuilder() {
 		if err := paquete.WithFacturas(facturas, s.sdk.Config()); err != nil {
 			return nil, fmt.Errorf("siat paquete: no se pudo empaquetar las facturas: %w", err)
 		}
@@ -344,8 +357,11 @@ func (s SolicitudPaqueteFactura) validateBase() error {
 	if s.CodigoSucursal < 0 || s.CodigoPuntoVenta < 0 {
 		return fmt.Errorf("siat paquete: codigoSucursal y codigoPuntoVenta deben ser >= 0")
 	}
-	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" || strings.TrimSpace(s.CodigoControl) == "" {
-		return fmt.Errorf("siat paquete: cuis, cufd y codigoControl son obligatorios")
+	if s.codigoEmision() != EmisionPaqueteOffline {
+		return fmt.Errorf("siat paquete: codigoEmision debe ser %d", EmisionPaqueteOffline)
+	}
+	if strings.TrimSpace(s.Cuis) == "" || strings.TrimSpace(s.Cufd) == "" {
+		return fmt.Errorf("siat paquete: cuis y cufd son obligatorios")
 	}
 	return nil
 }
@@ -367,6 +383,20 @@ func (s SolicitudPaqueteFactura) validate() error {
 	if err != nil {
 		return err
 	}
+	if err := perfil.ValidarModalidad(s.Modalidad); err != nil {
+		return err
+	}
+	if s.hasPersistedXML() {
+		if s.Archivo != "" || s.HashArchivo != "" {
+			return fmt.Errorf("siat paquete: no combine XML persistidos con un archivo de paquete")
+		}
+		for i, factura := range s.Facturas {
+			if err := validarXMLPersistido(factura, perfil, s); err != nil {
+				return fmt.Errorf("siat paquete factura %d: %w", i+1, err)
+			}
+		}
+		return nil
+	}
 	if !perfil.HasBuilder() {
 		if strings.TrimSpace(s.Archivo) == "" || strings.TrimSpace(s.HashArchivo) == "" {
 			return fmt.Errorf("siat paquete sector %d: archivo y hashArchivo son obligatorios porque no existe builder", perfil.Codigo)
@@ -377,9 +407,92 @@ func (s SolicitudPaqueteFactura) validate() error {
 		return fmt.Errorf("siat paquete sector %d: archivo/hashArchivo solo son válidos para perfiles sin builder", perfil.Codigo)
 	}
 	for i := range s.Facturas {
+		if s.Facturas[i].Cuf != "" {
+			return fmt.Errorf("siat paquete factura %d: el XML persistido es obligatorio para conservar el CUF emitido", i+1)
+		}
 		if err := s.Facturas[i].validate(); err != nil {
 			return fmt.Errorf("siat paquete factura %d: %w", i+1, err)
 		}
 	}
 	return nil
+}
+
+func (s SolicitudPaqueteFactura) hasPersistedXML() bool {
+	for _, factura := range s.Facturas {
+		if factura.XML != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// validarXMLPersistido comprueba la identidad histórica sin reserializar el XML
+// ni cambiar su firma. El CUFD del sobre corresponde al envío; el del XML, a la
+// emisión durante la contingencia.
+func validarXMLPersistido(f SolicitudFactura, perfil *SectorProfile, paquete SolicitudPaqueteFactura) error {
+	if strings.TrimSpace(f.XML) == "" || strings.TrimSpace(f.Cuf) == "" || strings.TrimSpace(f.Cufd) == "" || strings.TrimSpace(f.CodigoControl) == "" {
+		return fmt.Errorf("XML, CUF, CUFD y código de control históricos son obligatorios")
+	}
+	if f.Nit != paquete.Nit || f.CodigoAmbiente != paquete.CodigoAmbiente || f.CodigoSistema != paquete.CodigoSistema ||
+		f.Modalidad != paquete.Modalidad || f.CodigoSucursal != paquete.CodigoSucursal || f.CodigoPuntoVenta != paquete.CodigoPuntoVenta ||
+		f.CodigoDocumentoSector != perfil.Codigo || f.Layout != paquete.Layout ||
+		perfil.TipoDocumentoResuelto(f.CodigoTipoFactura) != perfil.TipoDocumentoResuelto(paquete.CodigoTipoFactura) {
+		return fmt.Errorf("la identidad fiscal no coincide con el paquete")
+	}
+	var document struct {
+		Cabecera struct {
+			Nit                   int64  `xml:"nitEmisor"`
+			Cuf                   string `xml:"cuf"`
+			Cufd                  string `xml:"cufd"`
+			NumeroFactura         int64  `xml:"numeroFactura"`
+			CodigoDocumentoSector int    `xml:"codigoDocumentoSector"`
+			CodigoSucursal        int    `xml:"codigoSucursal"`
+			CodigoPuntoVenta      int    `xml:"codigoPuntoVenta"`
+			FechaEmision          string `xml:"fechaEmision"`
+		} `xml:"cabecera"`
+	}
+	if err := xml.Unmarshal([]byte(f.XML), &document); err != nil {
+		return fmt.Errorf("XML persistido inválido: %w", err)
+	}
+	h := document.Cabecera
+	if h.Cuf != f.Cuf || h.Cufd != f.Cufd || h.Nit != parseNit(f.Nit) || h.NumeroFactura != f.NumeroFactura ||
+		h.CodigoDocumentoSector != f.CodigoDocumentoSector || h.CodigoSucursal != f.CodigoSucursal || h.CodigoPuntoVenta != f.CodigoPuntoVenta {
+		return fmt.Errorf("la cabecera XML no coincide con la identidad fiscal persistida")
+	}
+	fecha, err := time.ParseInLocation("2006-01-02T15:04:05.000", h.FechaEmision, LaPaz)
+	if err != nil || !fecha.Equal(f.FechaEmision.Truncate(time.Millisecond)) {
+		return fmt.Errorf("fechaEmision XML no coincide con la fecha persistida")
+	}
+	// El CUF codifica modalidad, emisión y tipo de factura, que no aparecen como
+	// campos separados en la cabecera. El SDK verifica aquí el valor existente.
+	expectedCUF, err := utils.NewCUF().WithNit(h.Nit).WithFechaHora(fecha).
+		WithSucursal(f.CodigoSucursal).WithModalidad(f.Modalidad).WithTipoEmision(EmisionPaqueteOffline).
+		WithTipoFactura(perfil.TipoDocumentoResuelto(f.CodigoTipoFactura)).WithTipoDocumentoSector(perfil.Codigo).
+		WithNumeroFactura(f.NumeroFactura).WithPuntoVenta(f.CodigoPuntoVenta).WithCodigoControl(f.CodigoControl).Generate()
+	if err != nil {
+		return fmt.Errorf("validar CUF persistido: %w", err)
+	}
+	if expectedCUF != f.Cuf {
+		return fmt.Errorf("CUF persistido no corresponde a la emisión de contingencia y su contexto histórico")
+	}
+	return nil
+}
+
+func empaquetarXMLPersistidos(facturas []SolicitudFactura) (archivo, hash string, err error) {
+	var buffer bytes.Buffer
+	writer := tar.NewWriter(&buffer)
+	for i, factura := range facturas {
+		data := []byte(factura.XML)
+		if err := writer.WriteHeader(&tar.Header{Name: fmt.Sprintf("factura_%d.xml", i+1), Mode: 0600, Size: int64(len(data))}); err != nil {
+			return "", "", err
+		}
+		if _, err := writer.Write(data); err != nil {
+			return "", "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return "", "", err
+	}
+	hash, archivo, err = utils.CompressAndHash(buffer.Bytes())
+	return archivo, hash, err
 }

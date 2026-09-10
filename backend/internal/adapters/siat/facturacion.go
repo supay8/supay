@@ -50,6 +50,8 @@ type ItemFactura struct {
 // compraventa: CUIS/CUFD vigentes, identidad del emisor y cliente/ítems
 // mapeados a los catálogos sincronizados del SIN.
 type SolicitudFactura struct {
+	// XML es el documento persistido; solo se utiliza para paquetes de contingencia.
+	XML            string        `json:"-"`
 	OriginalItems  []ItemFactura `json:"original_items,omitempty"`
 	CodigoAmbiente int           `json:"codigoAmbiente"`
 	CodigoSistema  string        `json:"codigoSistema"`

@@ -1,23 +1,45 @@
 package postgres
 
 import (
+	"encoding/json"
+	"fmt"
+	"slices"
+	"sort"
+	"time"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"gorm.io/datatypes"
 )
 
 type PostgresSentPackageRepository struct {
 	db *gorm.DB
 }
 
+var _ domain.FiscalBatchRepository = (*PostgresSentPackageRepository)(nil)
+
 func NewPostgresSentPackageRepository(db *gorm.DB) domain.SentPackageRepository {
 	return &PostgresSentPackageRepository{db: db}
 }
 
 func (r *PostgresSentPackageRepository) Create(pkg *domain.SentPackage) error {
-	dbModel := models.SentPackage{
-		ID:                    uuid.NewString(),
+	dbModel := toModelSentPackage(pkg)
+	if dbModel.ID == "" {
+		dbModel.ID = uuid.NewString()
+	}
+	if err := r.db.Create(&dbModel).Error; err != nil {
+		return err
+	}
+	pkg.ID = dbModel.ID
+	pkg.CreatedAt = dbModel.CreatedAt
+	return nil
+}
+
+func toModelSentPackage(pkg *domain.SentPackage) models.SentPackage {
+	m := models.SentPackage{
+		ID:                    pkg.ID,
 		CompanyId:             pkg.CompanyId,
 		PointOfSaleId:         pkg.PointOfSaleId,
 		Type:                  string(pkg.Type),
@@ -33,15 +55,17 @@ func (r *PostgresSentPackageRepository) Create(pkg *domain.SentPackage) error {
 		Mensajes:              pkg.Mensajes,
 		XmlHash:               pkg.XmlHash,
 		SentAt:                pkg.SentAt,
+		ValidatedAt:           pkg.ValidatedAt,
+		CreatedAt:             pkg.CreatedAt,
+		Modalidad:             pkg.Modalidad,
+		Layout:                pkg.Layout,
+		Cufd:                  pkg.Cufd,
+		Cuis:                  pkg.Cuis,
 	}
-
-	if err := r.db.Create(&dbModel).Error; err != nil {
-		return err
+	if pkg.CufdID != "" {
+		m.CufdID = &pkg.CufdID
 	}
-
-	pkg.ID = dbModel.ID
-	pkg.CreatedAt = dbModel.CreatedAt
-	return nil
+	return m
 }
 
 func (r *PostgresSentPackageRepository) GetByID(id string) (*domain.SentPackage, error) {
@@ -49,15 +73,20 @@ func (r *PostgresSentPackageRepository) GetByID(id string) (*domain.SentPackage,
 	if err := r.db.Where("id = ?", id).First(&dbModel).Error; err != nil {
 		return nil, err
 	}
-	return toDomainSentPackage(&dbModel), nil
+	pkg := toDomainSentPackage(&dbModel)
+	return pkg, r.loadMembership([]*domain.SentPackage{pkg})
 }
 
 func (r *PostgresSentPackageRepository) GetByCodigoRecepcion(codigoRecepcion string) (*domain.SentPackage, error) {
+	if codigoRecepcion == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
 	var dbModel models.SentPackage
 	if err := r.db.Where("codigo_recepcion = ?", codigoRecepcion).First(&dbModel).Error; err != nil {
 		return nil, err
 	}
-	return toDomainSentPackage(&dbModel), nil
+	pkg := toDomainSentPackage(&dbModel)
+	return pkg, r.loadMembership([]*domain.SentPackage{pkg})
 }
 
 func (r *PostgresSentPackageRepository) ListByPointOfSale(pointOfSaleID string) ([]*domain.SentPackage, error) {
@@ -67,7 +96,8 @@ func (r *PostgresSentPackageRepository) ListByPointOfSale(pointOfSaleID string) 
 		Find(&dbModels).Error; err != nil {
 		return nil, err
 	}
-	return toDomainSentPackages(dbModels), nil
+	pkgs := toDomainSentPackages(dbModels)
+	return pkgs, r.loadMembership(pkgs)
 }
 
 func (r *PostgresSentPackageRepository) ListByCompany(companyID string) ([]*domain.SentPackage, error) {
@@ -77,24 +107,16 @@ func (r *PostgresSentPackageRepository) ListByCompany(companyID string) ([]*doma
 		Find(&dbModels).Error; err != nil {
 		return nil, err
 	}
-	return toDomainSentPackages(dbModels), nil
+	pkgs := toDomainSentPackages(dbModels)
+	return pkgs, r.loadMembership(pkgs)
 }
 
 func (r *PostgresSentPackageRepository) Update(pkg *domain.SentPackage) error {
-	var dbModel models.SentPackage
-	if err := r.db.Where("id = ?", pkg.ID).First(&dbModel).Error; err != nil {
-		return err
-	}
-
-	dbModel.Status = string(pkg.Status)
-	dbModel.Mensajes = pkg.Mensajes
-	dbModel.ValidatedAt = pkg.ValidatedAt
-
-	return r.db.Save(&dbModel).Error
+	return r.UpdateBatch(pkg, nil)
 }
 
 func toDomainSentPackage(dbModel *models.SentPackage) *domain.SentPackage {
-	return &domain.SentPackage{
+	pkg := &domain.SentPackage{
 		ID:                    dbModel.ID,
 		CompanyId:             dbModel.CompanyId,
 		PointOfSaleId:         dbModel.PointOfSaleId,
@@ -113,7 +135,15 @@ func toDomainSentPackage(dbModel *models.SentPackage) *domain.SentPackage {
 		SentAt:                dbModel.SentAt,
 		ValidatedAt:           dbModel.ValidatedAt,
 		CreatedAt:             dbModel.CreatedAt,
+		Modalidad:             dbModel.Modalidad,
+		Layout:                dbModel.Layout,
+		Cufd:                  dbModel.Cufd,
+		Cuis:                  dbModel.Cuis,
 	}
+	if dbModel.CufdID != nil {
+		pkg.CufdID = *dbModel.CufdID
+	}
+	return pkg
 }
 
 func toDomainSentPackages(dbModels []models.SentPackage) []*domain.SentPackage {
@@ -122,4 +152,250 @@ func toDomainSentPackages(dbModels []models.SentPackage) []*domain.SentPackage {
 		out = append(out, toDomainSentPackage(&dbModels[i]))
 	}
 	return out
+}
+
+func (r *PostgresSentPackageRepository) loadMembership(pkgs []*domain.SentPackage) error {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(pkgs))
+	byID := make(map[string]*domain.SentPackage, len(pkgs))
+	for _, pkg := range pkgs {
+		ids = append(ids, pkg.ID)
+		byID[pkg.ID] = pkg
+		pkg.InvoiceIDs = []string{}
+	}
+	var members []models.SentPackageInvoice
+	if err := r.db.Where("sent_package_id IN ?", ids).Order("position").Find(&members).Error; err != nil {
+		return err
+	}
+	for _, member := range members {
+		pkg := byID[member.SentPackageID]
+		pkg.InvoiceIDs = append(pkg.InvoiceIDs, member.InvoiceID)
+	}
+	return nil
+}
+
+func (r *PostgresSentPackageRepository) ListPendingBatchInvoices(companyID, posID string, status domain.InvoiceStatus, eventID *string) ([]*domain.Invoice, error) {
+	if status != domain.InvoicePending && status != domain.InvoiceOffline {
+		return nil, fmt.Errorf("estado no reservable: %s", status)
+	}
+	query := r.db.Where("tenant_id = ? AND point_of_sale_id = ? AND status = ?", companyID, posID, status).
+		Where("(siat_reception_code IS NULL OR btrim(siat_reception_code) = '')").
+		Where("NOT EXISTS (SELECT 1 FROM sent_package_invoices b WHERE b.invoice_id = invoices.id)")
+	if eventID != nil {
+		query = query.Where("contingency_event_id = ?", *eventID)
+	} else {
+		query = query.Where("contingency_event_id IS NULL")
+	}
+	var rows []models.Invoice
+	if err := query.Preload("Items").Preload("Customer").Preload("CufdRecord").
+		Order("invoice_number, id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	invoices := make([]*domain.Invoice, 0, len(rows))
+	for i := range rows {
+		invoices = append(invoices, toDomainInvoice(&rows[i]))
+	}
+	return invoices, nil
+}
+
+func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, invoiceIDs []string, expectedStatus domain.InvoiceStatus) error {
+	if pkg == nil || len(invoiceIDs) == 0 {
+		return fmt.Errorf("el lote debe contener facturas")
+	}
+	if expectedStatus != domain.InvoicePending && expectedStatus != domain.InvoiceOffline {
+		return fmt.Errorf("estado no reservable: %s", expectedStatus)
+	}
+	if pkg.CodigoRecepcion != "" || pkg.CantidadFacturas != len(invoiceIDs) {
+		return fmt.Errorf("metadatos de reserva de lote inconsistentes")
+	}
+	orderedIDs := slices.Clone(invoiceIDs)
+	sort.Strings(orderedIDs)
+	for i, id := range orderedIDs {
+		if id == "" || (i > 0 && orderedIDs[i-1] == id) {
+			return fmt.Errorf("facturas vacías o repetidas en el lote")
+		}
+	}
+	m := toModelSentPackage(pkg)
+	if m.ID == "" {
+		m.ID = uuid.NewString()
+	}
+	m.Status = string(domain.PackageStatusSending)
+	if m.SentAt.IsZero() {
+		m.SentAt = time.Now()
+	}
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var invoices []models.Invoice
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", orderedIDs).
+			Order("id").Find(&invoices).Error; err != nil {
+			return err
+		}
+		if len(invoices) != len(orderedIDs) {
+			return fmt.Errorf("faltan facturas del lote")
+		}
+		for _, invoice := range invoices {
+			if invoice.CompanyId != pkg.CompanyId || invoice.PointOfSaleId != pkg.PointOfSaleId ||
+				domain.InvoiceStatus(invoice.Status) != expectedStatus ||
+				(invoice.SiatReceptionCode != nil && *invoice.SiatReceptionCode != "") ||
+				!sameOptionalString(invoice.ContingencyEventId, pkg.ContingencyEventId) {
+				return fmt.Errorf("factura %s no disponible para el lote", invoice.ID)
+			}
+		}
+		var reserved int64
+		if err := tx.Model(&models.SentPackageInvoice{}).Where("invoice_id IN ?", orderedIDs).Count(&reserved).Error; err != nil {
+			return err
+		}
+		if reserved != 0 {
+			return fmt.Errorf("el lote contiene facturas ya reservadas")
+		}
+		if err := tx.Create(&m).Error; err != nil {
+			return err
+		}
+		members := make([]models.SentPackageInvoice, len(invoiceIDs))
+		for i, id := range invoiceIDs {
+			members[i] = models.SentPackageInvoice{InvoiceID: id, SentPackageID: m.ID, Position: i}
+		}
+		if err := tx.Create(&members).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.Invoice{}).Where("id IN ?", orderedIDs).
+			Update("status", models.StatusSending).Error; err != nil {
+			return err
+		}
+		for _, invoice := range invoices {
+			if err := recordBatchTransition(tx, invoice, m.ID, domain.InvoiceSending, "BATCH_RESERVATION"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		pkg.ID, pkg.Status, pkg.CreatedAt, pkg.SentAt = m.ID, domain.PackageStatusSending, m.CreatedAt, m.SentAt
+		pkg.InvoiceIDs = slices.Clone(invoiceIDs)
+	}
+	return err
+}
+
+func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, invoiceStatus *domain.InvoiceStatus) error {
+	if pkg == nil || pkg.ID == "" {
+		return fmt.Errorf("el lote requiere un identificador")
+	}
+	if invoiceStatus != nil && *invoiceStatus != domain.InvoiceSent && *invoiceStatus != domain.InvoiceAccepted &&
+		*invoiceStatus != domain.InvoiceObserved && *invoiceStatus != domain.InvoiceRejected {
+		return fmt.Errorf("estado de conciliación no permitido: %s", *invoiceStatus)
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var current models.SentPackage
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", pkg.ID).First(&current).Error; err != nil {
+			return err
+		}
+		if current.CompanyId != pkg.CompanyId || current.PointOfSaleId != pkg.PointOfSaleId {
+			return fmt.Errorf("el lote pertenece a otro tenant o punto de venta")
+		}
+		if current.Status == string(domain.PackageStatusAccepted) || current.Status == string(domain.PackageStatusRejected) {
+			if current.Status != string(pkg.Status) {
+				return fmt.Errorf("el lote ya tiene un resultado fiscal definitivo")
+			}
+			return nil
+		}
+		if current.CodigoRecepcion != "" && current.CodigoRecepcion != pkg.CodigoRecepcion {
+			return fmt.Errorf("el código de recepción del lote es inmutable")
+		}
+		var members []models.SentPackageInvoice
+		if err := tx.Where("sent_package_id = ?", pkg.ID).Order("position").Find(&members).Error; err != nil {
+			return err
+		}
+		ids := make([]string, len(members))
+		for i, member := range members {
+			ids[i] = member.InvoiceID
+		}
+		if len(pkg.InvoiceIDs) > 0 && !slices.Equal(ids, pkg.InvoiceIDs) {
+			return fmt.Errorf("la pertenencia y orden de las facturas del lote son inmutables")
+		}
+		if len(pkg.Cufs) > 0 && len(pkg.Cufs) != len(ids) {
+			return fmt.Errorf("cantidad de CUF distinta de la cantidad de facturas del lote")
+		}
+		if len(ids) > 0 && pkg.CantidadFacturas != len(ids) {
+			return fmt.Errorf("cantidad de facturas inconsistente con la reserva")
+		}
+		updated := toModelSentPackage(pkg)
+		if err := tx.Model(&models.SentPackage{}).Where("id = ?", pkg.ID).
+			Select("type", "codigo_recepcion", "hash_archivo", "cantidad_facturas", "codigo_documento_sector",
+				"codigo_tipo_factura", "codigo_emision", "codigo_evento", "contingency_event_id", "status",
+				"mensajes", "xml_hash", "sent_at", "validated_at", "modalidad", "layout", "cufd", "cufd_id", "cuis").
+			Updates(&updated).Error; err != nil {
+			return err
+		}
+		if len(ids) == 0 || (invoiceStatus == nil && len(pkg.Cufs) == 0) {
+			return nil
+		}
+		var invoices []models.Invoice
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", ids).
+			Order("id").Find(&invoices).Error; err != nil {
+			return err
+		}
+		cufs := make(map[string]string, len(pkg.Cufs))
+		for i, cuf := range pkg.Cufs {
+			if cuf == "" {
+				return fmt.Errorf("CUF vacío en respuesta del lote")
+			}
+			cufs[ids[i]] = cuf
+		}
+		for _, invoice := range invoices {
+			if invoice.Status != models.StatusSending && invoice.Status != models.StatusSent {
+				continue // La conciliación individual puede haberse adelantado al lote.
+			}
+			values := map[string]any{}
+			if invoiceStatus != nil {
+				values["status"] = models.InvoiceStatus(*invoiceStatus)
+			}
+			if pkg.CodigoRecepcion != "" {
+				values["siat_reception_code"] = pkg.CodigoRecepcion
+			}
+			if pkg.Mensajes != nil {
+				values["siat_mensajes"] = pkg.Mensajes
+			}
+			if cuf, ok := cufs[invoice.ID]; ok {
+				values["cuf"] = cuf
+			}
+			if pkg.Type == domain.PackageTypeMasiva {
+				values["emission_type"] = models.EmissionMasiva
+				if pkg.CufdID != "" {
+					values["cufd_id"] = pkg.CufdID
+				}
+			}
+			if len(values) > 0 {
+				if err := tx.Model(&models.Invoice{}).Where("id = ? AND status IN ?", invoice.ID,
+					[]models.InvoiceStatus{models.StatusSending, models.StatusSent}).Updates(values).Error; err != nil {
+					return err
+				}
+			}
+			if invoiceStatus != nil && domain.InvoiceStatus(invoice.Status) != *invoiceStatus {
+				if err := recordBatchTransition(tx, invoice, pkg.ID, *invoiceStatus, "BATCH_RECONCILIATION"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func sameOptionalString(a, b *string) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
+}
+
+func recordBatchTransition(tx *gorm.DB, invoice models.Invoice, packageID string, status domain.InvoiceStatus, reason string) error {
+	payload, err := json.Marshal(map[string]string{
+		"from_status": string(invoice.Status), "to_status": string(status),
+		"reason": reason, "source": "FiscalBatchRepository", "sent_package_id": packageID,
+	})
+	if err != nil {
+		return err
+	}
+	return tx.Create(&models.InvoiceEvent{
+		ID: uuid.NewString(), InvoiceId: invoice.ID, TenantID: invoice.CompanyId,
+		Type: "STATUS_TRANSITION", Message: fmt.Sprintf("invoice status changed from %s to %s", invoice.Status, status),
+		Payload: datatypes.JSON(payload),
+	}).Error
 }

@@ -1,3 +1,12 @@
+/**
+ * @deprecated ESTE ARCHIVO NO SE USA EN DEV.
+ * El frontend real renderiza `SupayDashboard` desde `@supay/dashboard`
+ * (alias Vite `@` -> `../packages/dashboard/src`, ver `frontend/vite.config.ts:11`).
+ * `main.tsx` importa `SupayDashboard` y nunca importa este `App`.
+ * Si editas este archivo NO verás cambios en `pnpm dev`.
+ * Edita `packages/dashboard/src/routing.tsx` y `packages/dashboard/src/pages/*` en su lugar.
+ * Se mantiene solo como referencia histórica / fallback si se quiere modo standalone.
+ */
 import { lazy, Suspense } from "react"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import { AppShell } from "@/components/layout/app-shell"

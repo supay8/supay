@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { LogoSupay } from "@/components/logo"
 
 export function ContingenciaPage() {
   const navigate = useNavigate()
@@ -41,12 +42,13 @@ export function ContingenciaPage() {
         description="Qué pasa cuando el SIAT no responde y cómo se resuelve solo."
       />
 
+
       <section className="rounded-lg border p-5 text-sm">
         <p className="text-muted-foreground">
           Si el SIAT deja de responder, Supay sigue emitiendo en modo local: las
-          facturas quedan guardadas con validez legal bajo un evento de
-          contingencia y se envían automáticamente al volver el servicio. No
-          necesitás hacer nada.
+         
+      <LogoSupay size={48} className="mx-auto text-primary" />
+
         </p>
       </section>
 

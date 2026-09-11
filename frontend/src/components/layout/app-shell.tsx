@@ -1,9 +1,18 @@
+/**
+ * @deprecated ESTE ARCHIVO NO SE USA EN DEV — CÓDIGO MUERTO.
+ * El frontend real renderiza `AppShell` desde `packages/dashboard/src/components/layout/app-shell.tsx`
+ * vía alias Vite `@` -> `../packages/dashboard/src` (ver `frontend/vite.config.ts:11`).
+ * `frontend/src/main.tsx` monta `SupayDashboard` que importa `@/components/layout/app-shell` (dashboard).
+ * Si editas ESTE archivo NO verás cambios en `pnpm dev`.
+ * Edita `packages/dashboard/src/components/layout/app-shell.tsx` en su lugar.
+ */
 import { useEffect } from "react"
 import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom"
 
 import { NAV_SECTIONS } from "@/lib/nav-config"
 import { AppHeader } from "@/components/layout/header"
 import { SidebarUserMenu } from "@/components/layout/user-menu"
+import { LogoSupay } from "@/components/logo"
 import {
   Sidebar,
   SidebarContent,
@@ -75,12 +84,13 @@ export function AppShell() {
     <SidebarProvider>
       <Sidebar collapsible="icon">
         <SidebarHeader className="h-14 justify-center border-b border-border/60">
-          <span className="px-2 text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            Supay
-          </span>
-          <span className="hidden text-sm font-semibold tracking-tight group-data-[collapsible=icon]:grid place-items-center">
-            S
-          </span>
+          <div className="flex items-center gap-2 px-2 group-data-[collapsible=icon]:hidden">
+            <LogoSupay size={35} className="shrink-0 text-primary" color="currentColor" />
+            <span className="font-bold tracking-widest ">Supay</span>
+          </div>
+          <div className="hidden group-data-[collapsible=icon]:flex justify-center">
+            <LogoSupay size={28} className="text-primary" color="currentColor" />
+          </div>
         </SidebarHeader>
         <SidebarContent>
           {NAV_SECTIONS.map((section, index) => (

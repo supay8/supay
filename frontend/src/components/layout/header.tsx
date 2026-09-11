@@ -1,3 +1,8 @@
+/**
+ * @deprecated ESTE ARCHIVO NO SE USA EN DEV — CÓDIGO MUERTO.
+ * Fuente de verdad: `packages/dashboard/src/components/layout/header.tsx`
+ * (alias Vite `@` -> dashboard). Edita ahí para ver HMR.
+ */
 import { useLocation, useNavigate } from "react-router-dom"
 import { Bell, MessageSquarePlus, Plus } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"

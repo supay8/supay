@@ -1,20 +1,51 @@
-import path from "path"
+import path from "node:path"
+
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
-// https://vite.dev/config/
+const dashboardSrc = path.resolve(
+  import.meta.dirname,
+  "../packages/dashboard/src"
+)
+
+const frontendSrc = path.resolve(
+  import.meta.dirname,
+  "./src"
+)
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
+
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "../packages/dashboard/src"),
-      "@frontend": path.resolve(__dirname, "./src"),
-      "@supay/dashboard": path.resolve(__dirname, "../packages/dashboard/src"),
-      "@supay/dashboard/styles.css": path.resolve(
-        __dirname,
-        "../packages/dashboard/src/styles.css"
-      ),
+      // frontend
+      "@": frontendSrc,
+
+      // dashboard package
+      "@supay/dashboard": dashboardSrc,
     },
+
+    // Muy recomendable en monorepos con React
+    dedupe: ["react", "react-dom"],
+  },
+
+  server: {
+    fs: {
+      allow: [
+        path.resolve(import.meta.dirname, ".."),
+      ],
+    },
+
+    hmr: {
+      overlay: true,
+    },
+  },
+
+  optimizeDeps: {
+    exclude: ["@supay/dashboard"],
   },
 })

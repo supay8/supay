@@ -73,12 +73,41 @@ func TestSinProductReplaceDeduplica(t *testing.T) {
 		t.Errorf("codigo_actividad=%d, se esperaba 8549100", items[0].CodigoActividad)
 	}
 
+	var sinProduct models.SinProduct
+	if err := db.Where("tenant_id = ? AND codigo_producto_sin = ?", cid, 1004879).First(&sinProduct).Error; err != nil {
+		t.Fatalf("buscar producto SIN: %v", err)
+	}
+	product := models.Product{ID: uuid.NewString(), CompanyId: cid, SKU: "SKU-1", Name: "Producto"}
+	if err := db.Create(&product).Error; err != nil {
+		t.Fatalf("crear producto: %v", err)
+	}
+	mapping := models.ProductMapping{
+		ID:                    uuid.NewString(),
+		ProductId:             product.ID,
+		SinProductId:          &sinProduct.ID,
+		CodigoProductoSin:     sinProduct.CodigoProductoSin,
+		CodigoActividad:       "8550100",
+		CodigoDocumentoSector: 1,
+		UnidadMedida:          1,
+		SyncedAt:              now,
+	}
+	if err := db.Create(&mapping).Error; err != nil {
+		t.Fatalf("crear mapping: %v", err)
+	}
+
 	// Replace posterior reemplaza el catálogo completo.
 	if err := repo.Replace(cid, productos[:1], now); err != nil {
 		t.Fatalf("replace final: %v", err)
 	}
 	if _, total, _ = repo.List(cid, "", 0, 50, 0); total != 1 {
 		t.Errorf("tras el replace debería haber 1 producto, hay %d", total)
+	}
+	var savedMapping models.ProductMapping
+	if err := db.First(&savedMapping, "id = ?", mapping.ID).Error; err != nil {
+		t.Fatalf("buscar mapping tras replace: %v", err)
+	}
+	if savedMapping.SinProductId != nil {
+		t.Errorf("sin_product_id=%v, se esperaba NULL tras reemplazar el catálogo", *savedMapping.SinProductId)
 	}
 }
 

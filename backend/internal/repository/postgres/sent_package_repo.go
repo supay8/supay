@@ -1,17 +1,19 @@
 package postgres
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"slices"
-	"sort"
-	"time"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/datatypes"
+	"slices"
+	"sort"
+	"strings"
+	"time"
 )
 
 type PostgresSentPackageRepository struct {
@@ -183,6 +185,10 @@ func (r *PostgresSentPackageRepository) ListPendingBatchInvoices(companyID, posI
 	query := r.db.Where("tenant_id = ? AND point_of_sale_id = ? AND status = ?", companyID, posID, status).
 		Where("(siat_reception_code IS NULL OR btrim(siat_reception_code) = '')").
 		Where("NOT EXISTS (SELECT 1 FROM sent_package_invoices b WHERE b.invoice_id = invoices.id)")
+	if status == domain.InvoicePending {
+		query = query.Where("(cuf IS NULL OR btrim(cuf) = '')").
+			Where("emission_type NOT IN ?", []models.EmissionType{models.EmissionOffline, models.EmissionMasiva})
+	}
 	if eventID != nil {
 		query = query.Where("contingency_event_id = ?", *eventID)
 	} else {
@@ -209,6 +215,26 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 	}
 	if pkg.CodigoRecepcion != "" || pkg.CantidadFacturas != len(invoiceIDs) {
 		return fmt.Errorf("metadatos de reserva de lote inconsistentes")
+	}
+	if (pkg.Type != domain.PackageTypeMasiva || expectedStatus != domain.InvoicePending) &&
+		(pkg.Type != domain.PackageTypePaquete || expectedStatus != domain.InvoiceOffline) {
+		return fmt.Errorf("tipo de lote incompatible con el estado de sus facturas")
+	}
+	if (pkg.Type == domain.PackageTypeMasiva && len(pkg.Documents) != len(invoiceIDs)) ||
+		(len(pkg.Documents) > 0 && len(pkg.Documents) != len(invoiceIDs)) {
+		return fmt.Errorf("documentos preparados inconsistentes con el lote")
+	}
+	documents := make(map[string]domain.BatchInvoiceDocument, len(pkg.Documents))
+	for i, document := range pkg.Documents {
+		if strings.TrimSpace(document.Cuf) == "" || strings.TrimSpace(document.Xml) == "" {
+			return fmt.Errorf("el documento preparado requiere CUF y XML")
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(document.Xml)))
+		if document.XmlHash != "" && document.XmlHash != hash {
+			return fmt.Errorf("hash del XML preparado inconsistente")
+		}
+		document.XmlHash = hash
+		documents[invoiceIDs[i]] = document
 	}
 	orderedIDs := slices.Clone(invoiceIDs)
 	sort.Strings(orderedIDs)
@@ -237,9 +263,24 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 		for _, invoice := range invoices {
 			if invoice.CompanyId != pkg.CompanyId || invoice.PointOfSaleId != pkg.PointOfSaleId ||
 				domain.InvoiceStatus(invoice.Status) != expectedStatus ||
-				(invoice.SiatReceptionCode != nil && *invoice.SiatReceptionCode != "") ||
+				(invoice.SiatReceptionCode != nil && strings.TrimSpace(*invoice.SiatReceptionCode) != "") ||
 				!sameOptionalString(invoice.ContingencyEventId, pkg.ContingencyEventId) {
 				return fmt.Errorf("factura %s no disponible para el lote", invoice.ID)
+			}
+			if expectedStatus == domain.InvoicePending &&
+				((invoice.Cuf != nil && strings.TrimSpace(*invoice.Cuf) != "") ||
+					invoice.EmissionType == models.EmissionOffline || invoice.EmissionType == models.EmissionMasiva) {
+				return fmt.Errorf("factura %s ya tiene una identidad fiscal preparada", invoice.ID)
+			}
+			if invoice.CodigoDocumentoSector > 0 && invoice.CodigoDocumentoSector != pkg.CodigoDocumentoSector ||
+				invoice.CodigoTipoFactura > 0 && invoice.CodigoTipoFactura != pkg.CodigoTipoFactura ||
+				invoice.Modalidad > 0 && invoice.Modalidad != pkg.Modalidad ||
+				invoice.Layout != "" && invoice.Layout != pkg.Layout {
+				return fmt.Errorf("factura %s tiene metadatos fiscales distintos al lote", invoice.ID)
+			}
+			if document, ok := documents[invoice.ID]; ok && invoice.Cuf != nil &&
+				strings.TrimSpace(*invoice.Cuf) != "" && *invoice.Cuf != document.Cuf {
+				return fmt.Errorf("el CUF de la factura %s es inmutable", invoice.ID)
 			}
 		}
 		var reserved int64
@@ -264,6 +305,25 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 			return err
 		}
 		for _, invoice := range invoices {
+			if document, ok := documents[invoice.ID]; ok {
+				fields := map[string]any{"cuf": document.Cuf, "xml": document.Xml, "xml_hash": document.XmlHash}
+				if document.Archivo != "" {
+					fields["archivo"], fields["hash_archivo"] = document.Archivo, document.HashArchivo
+				}
+				if pkg.Type == domain.PackageTypeMasiva {
+					fields["emission_type"] = models.EmissionMasiva
+					fields["cufd_id"] = pkg.CufdID
+					fields["modalidad"] = pkg.Modalidad
+					fields["layout"] = pkg.Layout
+					fields["codigo_tipo_factura"] = pkg.CodigoTipoFactura
+				}
+				if err := tx.Model(&models.Invoice{}).Where("id = ?", invoice.ID).Updates(fields).Error; err != nil {
+					return err
+				}
+				if err := persistInvoiceDocuments(tx, invoice.ID, fields); err != nil {
+					return err
+				}
+			}
 			if err := recordBatchTransition(tx, invoice, m.ID, domain.InvoiceSending, "BATCH_RESERVATION"); err != nil {
 				return err
 			}
@@ -293,14 +353,8 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 		if current.CompanyId != pkg.CompanyId || current.PointOfSaleId != pkg.PointOfSaleId {
 			return fmt.Errorf("el lote pertenece a otro tenant o punto de venta")
 		}
-		if current.Status == string(domain.PackageStatusAccepted) || current.Status == string(domain.PackageStatusRejected) {
-			if current.Status != string(pkg.Status) {
-				return fmt.Errorf("el lote ya tiene un resultado fiscal definitivo")
-			}
-			return nil
-		}
-		if current.CodigoRecepcion != "" && current.CodigoRecepcion != pkg.CodigoRecepcion {
-			return fmt.Errorf("el código de recepción del lote es inmutable")
+		if err := validateBatchSnapshot(current, pkg); err != nil {
+			return err
 		}
 		var members []models.SentPackageInvoice
 		if err := tx.Where("sent_package_id = ?", pkg.ID).Order("position").Find(&members).Error; err != nil {
@@ -319,11 +373,18 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 		if len(ids) > 0 && pkg.CantidadFacturas != len(ids) {
 			return fmt.Errorf("cantidad de facturas inconsistente con la reserva")
 		}
+		if current.Status == string(domain.PackageStatusAccepted) || current.Status == string(domain.PackageStatusRejected) {
+			if current.Status != string(pkg.Status) {
+				return fmt.Errorf("el lote ya tiene un resultado fiscal definitivo")
+			}
+			return nil
+		}
+		if err := validateBatchStatus(domain.SentPackageStatus(current.Status), pkg.Status); err != nil {
+			return err
+		}
 		updated := toModelSentPackage(pkg)
 		if err := tx.Model(&models.SentPackage{}).Where("id = ?", pkg.ID).
-			Select("type", "codigo_recepcion", "hash_archivo", "cantidad_facturas", "codigo_documento_sector",
-				"codigo_tipo_factura", "codigo_emision", "codigo_evento", "contingency_event_id", "status",
-				"mensajes", "xml_hash", "sent_at", "validated_at", "modalidad", "layout", "cufd", "cufd_id", "cuis").
+			Select("codigo_recepcion", "hash_archivo", "status", "mensajes", "xml_hash", "validated_at").
 			Updates(&updated).Error; err != nil {
 			return err
 		}
@@ -342,7 +403,13 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 			}
 			cufs[ids[i]] = cuf
 		}
+		if len(invoices) != len(ids) {
+			return fmt.Errorf("faltan facturas de la reserva")
+		}
 		for _, invoice := range invoices {
+			if cuf, ok := cufs[invoice.ID]; ok && invoice.Cuf != nil && *invoice.Cuf != "" && *invoice.Cuf != cuf {
+				return fmt.Errorf("el CUF de la factura %s es inmutable", invoice.ID)
+			}
 			if invoice.Status != models.StatusSending && invoice.Status != models.StatusSent {
 				continue // La conciliación individual puede haberse adelantado al lote.
 			}
@@ -379,6 +446,44 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 		}
 		return nil
 	})
+}
+
+// La consulta de un lote utiliza el contexto fiscal capturado en su reserva;
+// ningún resultado tardío puede reescribir ese contexto ni su identidad.
+func validateBatchSnapshot(current models.SentPackage, pkg *domain.SentPackage) error {
+	if current.Type != string(pkg.Type) || current.CantidadFacturas != pkg.CantidadFacturas ||
+		current.Modalidad != pkg.Modalidad || current.Layout != pkg.Layout || current.Cufd != pkg.Cufd ||
+		current.Cuis != pkg.Cuis || !sameOptionalString(current.CufdID, toModelSentPackage(pkg).CufdID) ||
+		current.CodigoDocumentoSector != pkg.CodigoDocumentoSector || current.CodigoTipoFactura != pkg.CodigoTipoFactura ||
+		current.CodigoEmision != pkg.CodigoEmision || !sameOptionalString(current.ContingencyEventId, pkg.ContingencyEventId) ||
+		!sameOptionalInt64(current.CodigoEvento, pkg.CodigoEvento) || current.SentAt.UnixMicro() != pkg.SentAt.UnixMicro() {
+		return fmt.Errorf("los metadatos fiscales de la reserva son inmutables")
+	}
+	if current.CodigoRecepcion != "" && current.CodigoRecepcion != pkg.CodigoRecepcion {
+		return fmt.Errorf("el código de recepción del lote es inmutable")
+	}
+	if current.HashArchivo != "" && current.HashArchivo != pkg.HashArchivo ||
+		current.XmlHash != "" && current.XmlHash != pkg.XmlHash {
+		return fmt.Errorf("los hashes del lote son inmutables")
+	}
+	return nil
+}
+
+func validateBatchStatus(from, to domain.SentPackageStatus) error {
+	stages := map[domain.SentPackageStatus]int{
+		domain.PackageStatusSending: 0, domain.PackageStatusUnknown: 1,
+		domain.PackageStatusSent: 2, domain.PackageStatusPending: 3,
+		domain.PackageStatusAccepted: 4, domain.PackageStatusRejected: 4,
+	}
+	stage, ok := stages[to]
+	if !ok || stage < stages[from] {
+		return fmt.Errorf("transición de lote no permitida: %s a %s", from, to)
+	}
+	return nil
+}
+
+func sameOptionalInt64(a, b *int64) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
 func sameOptionalString(a, b *string) bool {

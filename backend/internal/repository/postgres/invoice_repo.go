@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PostgresInvoiceRepository struct {
@@ -138,19 +139,16 @@ func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
 		return domain.ErrStatusUpdateRequiresTransition
 	}
 	res := r.db.Model(&models.Invoice{}).
-		Where("id = ?", inv.ID).
+		Where("id = ? AND status = ?", inv.ID, models.InvoiceStatus(inv.Status)).
 		Updates(invoiceMutableFields(inv))
 	if res.Error != nil {
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		var count int64
-		if err := r.db.Model(&models.Invoice{}).Where("id = ?", inv.ID).Count(&count).Error; err != nil {
+		if err := r.db.Select("status").Where("id = ?", inv.ID).First(&current).Error; err != nil {
 			return err
 		}
-		if count == 0 {
-			return gorm.ErrRecordNotFound
-		}
+		return domain.ErrStatusUpdateRequiresTransition
 	}
 	return nil
 }
@@ -261,26 +259,41 @@ func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
 
 func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-olderThan)
-	var ids []string
-	if err := r.db.Model(&models.Invoice{}).
-		Where("status = ? AND (updated_at IS NULL OR updated_at < ?)", models.StatusSending, cutoff).
-		Pluck("id", &ids).Error; err != nil {
-		return 0, err
-	}
 	var released int64
-	for _, id := range ids {
-		event := &domain.InvoiceEvent{
-			Type:    "STATUS_TRANSITION",
-			Message: "invoice status changed from SENDING to PENDING",
-			Payload: []byte(`{"from_status":"SENDING","to_status":"PENDING","reason":"STALE_RECOVERY","source":"StaleEmissionReaper"}`),
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var invoices []models.Invoice
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("status = ? AND (updated_at IS NULL OR updated_at < ?)", models.StatusSending, cutoff).
+			Where("NOT EXISTS (SELECT 1 FROM sent_package_invoices b WHERE b.invoice_id = invoices.id)").
+			Order("id").Find(&invoices).Error; err != nil {
+			return err
 		}
-		claimed, err := r.TransitionStatus(id, domain.InvoiceSending, domain.InvoicePending, domain.TransitionStaleRecovery, nil, event)
-		if err != nil {
-			return released, err
-		}
-		if claimed {
+		for _, invoice := range invoices {
+			// Comprobar pertenencia bajo el bloqueo de factura también impide
+			// liberar una reserva creada mientras se seleccionaban candidatas.
+			var reserved int64
+			if err := tx.Model(&models.SentPackageInvoice{}).Where("invoice_id = ?", invoice.ID).Count(&reserved).Error; err != nil {
+				return err
+			}
+			if reserved != 0 {
+				continue
+			}
+			if err := tx.Model(&models.Invoice{}).Where("id = ?", invoice.ID).Update("status", models.StatusPending).Error; err != nil {
+				return err
+			}
+			if err := tx.Create(&models.InvoiceEvent{
+				ID: uuid.NewString(), InvoiceId: invoice.ID, TenantID: invoice.CompanyId,
+				Type: "STATUS_TRANSITION", Message: "invoice status changed from SENDING to PENDING",
+				Payload: datatypes.JSON(`{"from_status":"SENDING","to_status":"PENDING","reason":"STALE_RECOVERY","source":"StaleEmissionReaper"}`),
+			}).Error; err != nil {
+				return err
+			}
 			released++
 		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	return released, nil
 }

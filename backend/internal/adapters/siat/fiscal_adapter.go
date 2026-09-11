@@ -3,6 +3,7 @@ package siat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"github.com/brandsrx/supay/internal/ports"
@@ -101,6 +102,14 @@ func (a *FiscalAdapter) RegisterSignificantEvent(ctx context.Context, ev ports.F
 }
 
 func (a *FiscalAdapter) SendPackage(ctx context.Context, pkg ports.FiscalPackage) (ports.FiscalPackageResult, error) {
+	if pkg.Prepared != nil {
+		prepared, ok := pkg.Prepared.(*paquetePreparada)
+		if !ok || prepared == nil || prepared.service != a.svc {
+			return ports.FiscalPackageResult{}, fmt.Errorf("siat paquete: preparación incompatible con el adaptador")
+		}
+		res, err := a.svc.enviarPaquetePreparada(ctx, prepared)
+		return fromSiatResultadoPaquete(res), err
+	}
 	res, err := a.svc.EnviarPaqueteFactura(ctx, toSiatPaquete(pkg))
 	if err != nil {
 		return ports.FiscalPackageResult{}, err
@@ -117,6 +126,14 @@ func (a *FiscalAdapter) ValidatePackage(ctx context.Context, pkg ports.FiscalPac
 }
 
 func (a *FiscalAdapter) SendBulk(ctx context.Context, bulk ports.FiscalBulk) (ports.FiscalPackageResult, error) {
+	if bulk.Prepared != nil {
+		prepared, ok := bulk.Prepared.(*masivaPreparada)
+		if !ok || prepared == nil || prepared.service != a.svc {
+			return ports.FiscalPackageResult{}, fmt.Errorf("siat masiva: preparación incompatible con el adaptador")
+		}
+		res, err := a.svc.enviarMasivaPreparada(ctx, prepared)
+		return fromSiatResultadoPaquete(res), err
+	}
 	res, err := a.svc.EnviarMasivaFacturas(ctx, toSiatMasiva(bulk))
 	if err != nil {
 		return ports.FiscalPackageResult{}, err

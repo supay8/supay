@@ -172,6 +172,9 @@ type FiscalEventResult struct {
 
 // FiscalPackage agrupa un paquete de facturas para envío en contingencia.
 type FiscalPackage struct {
+	// Prepared conserva el envío opaco construido por FiscalBatchPreparer.
+	// Debe entregarse al mismo adaptador sin modificar la solicitud preparada.
+	Prepared              any              `json:"-"`
 	CodigoAmbiente        int              `json:"codigoAmbiente"`
 	CodigoSistema         string           `json:"codigoSistema"`
 	Nit                   string           `json:"nit"`
@@ -206,6 +209,8 @@ type FiscalPackageResult struct {
 
 // FiscalBulk agrupa un lote de facturas para emisión masiva.
 type FiscalBulk struct {
+	// Prepared conserva el envío opaco construido por FiscalBatchPreparer.
+	Prepared              any              `json:"-"`
 	CodigoAmbiente        int              `json:"codigoAmbiente"`
 	CodigoSistema         string           `json:"codigoSistema"`
 	Nit                   string           `json:"nit"`
@@ -429,6 +434,14 @@ type FiscalSyncResult struct {
 // can build and sign an offline invoice without contacting the SIAT.
 type OfflineFiscalService interface {
 	PrepareOffline(ctx context.Context, doc FiscalDocument) (FiscalResult, error)
+}
+
+// FiscalBatchPreparer valida, construye y firma los documentos de un lote sin
+// contactar al SIAT. Devuelve los XML/CUF y archivos exactos para persistirlos
+// antes de reservar el envío; SendBulk/SendPackage reutilizan ese mismo envío.
+type FiscalBatchPreparer interface {
+	PrepareBulk(ctx context.Context, bulk FiscalBulk) (FiscalBulk, error)
+	PreparePackage(ctx context.Context, pkg FiscalPackage) (FiscalPackage, error)
 }
 
 type FiscalService interface {

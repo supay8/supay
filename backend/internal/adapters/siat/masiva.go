@@ -60,6 +60,25 @@ type SolicitudMasivaFactura struct {
 // (WithFacturas). El CodigoRecepcion devuelto se usa luego en
 // ValidarMasivaFacturas.
 func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaFactura) (*ResultadoPaquete, error) {
+	prepared, err := s.prepararMasiva(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.enviarMasivaPreparada(ctx, prepared)
+}
+
+type masivaPreparada struct {
+	service *Service
+	req     SolicitudMasivaFactura
+	perfil  *SectorProfile
+	request models.RecepcionMasivaFactura
+	result  ResultadoPaquete
+}
+
+func (s *Service) prepararMasiva(ctx context.Context, req SolicitudMasivaFactura) (*masivaPreparada, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat masiva: servicio SIAT no inicializado")
 	}
@@ -118,6 +137,20 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 	built := lote.Build()
 	archivo, hash, cantidad := extraerArchivoMasiva(built)
 
+	if perfil.HasBuilder() || len(cufs) > 0 {
+		if err := recuperarDocumentosLote(archivo, req.Facturas, cufs); err != nil {
+			return nil, fmt.Errorf("siat masiva: %w", err)
+		}
+	}
+	req.Archivo, req.HashArchivo = archivo, hash
+	return &masivaPreparada{
+		service: s, req: req, perfil: perfil, request: built,
+		result: ResultadoPaquete{Archivo: archivo, HashArchivo: hash, CantidadFacturas: cantidad, Cufs: cufs},
+	}, nil
+}
+
+func (s *Service) enviarMasivaPreparada(ctx context.Context, prepared *masivaPreparada) (*ResultadoPaquete, error) {
+	req, perfil, built := prepared.req, prepared.perfil, prepared.request
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
 	resp, err := s.masivaParaPerfil(ctx, perfil, req.Modalidad, built)
@@ -132,16 +165,10 @@ func (s *Service) EnviarMasivaFacturas(ctx context.Context, req SolicitudMasivaF
 		return nil, fmt.Errorf("siat masiva: %w", err)
 	}
 
-	return &ResultadoPaquete{
-		Transaccion:      transaccion,
-		CodigoEstado:     codigoEstado,
-		CodigoRecepcion:  codigoRecepcion,
-		Mensajes:         mensajes,
-		Archivo:          archivo,
-		HashArchivo:      hash,
-		CantidadFacturas: cantidad,
-		Cufs:             cufs,
-	}, nil
+	result := prepared.result
+	result.Transaccion, result.CodigoEstado = transaccion, codigoEstado
+	result.CodigoRecepcion, result.Mensajes = codigoRecepcion, mensajes
+	return &result, nil
 }
 
 // ValidarMasivaFacturas consulta al SIAT la validación de un lote ya enviado
@@ -327,6 +354,20 @@ func (s SolicitudMasivaFactura) validate() error {
 	perfil, err := PerfilSectorLayout(s.sector(), s.Layout)
 	if err != nil {
 		return err
+	}
+	if err := perfil.ValidarModalidad(s.Modalidad); err != nil {
+		return err
+	}
+	if perfil.EsAjuste() {
+		return fmt.Errorf("siat masiva: los documentos de ajuste no se envían en lote")
+	}
+	if err := validarIdentidadLote(s.Facturas, SolicitudPaqueteFactura{
+		CodigoAmbiente: s.CodigoAmbiente, CodigoSistema: s.CodigoSistema, Nit: s.Nit,
+		Modalidad: s.Modalidad, CodigoSucursal: s.CodigoSucursal, CodigoPuntoVenta: s.CodigoPuntoVenta,
+		Cuis: s.Cuis, Cufd: s.Cufd, CodigoControl: s.CodigoControl,
+		CodigoDocumentoSector: s.sector(), Layout: s.Layout, CodigoTipoFactura: s.CodigoTipoFactura,
+	}, false); err != nil {
+		return fmt.Errorf("siat masiva: %w", err)
 	}
 	if !perfil.HasBuilder() {
 		if strings.TrimSpace(s.Archivo) == "" || strings.TrimSpace(s.HashArchivo) == "" {

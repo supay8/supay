@@ -6,11 +6,11 @@ import "time"
 type SentPackageType string
 
 const (
-	PackageStatusSending  SentPackageStatus = "SENDING"
-	PackageStatusUnknown  SentPackageStatus = "UNKNOWN"
-	PackageTypePaquete SentPackageType = "PAQUETE"
-	PackageTypeMasiva  SentPackageType = "MASIVA"
-	PackageTypeCompras SentPackageType = "COMPRAS"
+	PackageStatusSending SentPackageStatus = "SENDING"
+	PackageStatusUnknown SentPackageStatus = "UNKNOWN"
+	PackageTypePaquete   SentPackageType   = "PAQUETE"
+	PackageTypeMasiva    SentPackageType   = "MASIVA"
+	PackageTypeCompras   SentPackageType   = "COMPRAS"
 )
 
 // SentPackageStatus identifica el estado de un envío.
@@ -26,35 +26,47 @@ const (
 // SentPackage representa un envío de facturas al SIAT (paquete, lote masivo
 // o paquete de compras) con su código de recepción, hash y estado de validación.
 type SentPackage struct {
-	ID                    string            `json:"id"`
-	CompanyId             string            `json:"company_id"`
-	PointOfSaleId         string            `json:"point_of_sale_id"`
-	Type                  SentPackageType   `json:"type"`
-	InvoiceIDs            []string          `json:"invoice_ids"`
+	ID            string          `json:"id"`
+	CompanyId     string          `json:"company_id"`
+	PointOfSaleId string          `json:"point_of_sale_id"`
+	Type          SentPackageType `json:"type"`
+	InvoiceIDs    []string        `json:"invoice_ids"`
 	// Cufs contiene los CUF devueltos por SIAT en el orden de InvoiceIDs.
-	Cufs                  []string          `json:"-"`
-	Modalidad             int               `json:"modalidad"`
-	Layout                string            `json:"layout"`
-	Cufd                  string            `json:"cufd"`
-	CufdID                string            `json:"cufd_id,omitempty"`
-	Cuis                  string            `json:"cuis"`
-	CodigoRecepcion       string            `json:"codigo_recepcion"`
-	HashArchivo           string            `json:"hash_archivo"`
-	CantidadFacturas      int               `json:"cantidad_facturas"`
-	CodigoDocumentoSector int               `json:"codigo_documento_sector"`
-	CodigoTipoFactura     int               `json:"codigo_tipo_factura"`
-	CodigoEmision         int               `json:"codigo_emision"`
-	CodigoEvento          *int64            `json:"codigo_evento,omitempty"`
-	ContingencyEventId    *string           `json:"contingency_event_id,omitempty"`
-	Status                SentPackageStatus `json:"status"`
-	Mensajes              *string           `json:"mensajes,omitempty"`
-	XmlHash               string            `json:"xml_hash"`
-	SentAt                time.Time         `json:"sent_at"`
-	ValidatedAt           *time.Time        `json:"validated_at,omitempty"`
-	CreatedAt             time.Time         `json:"created_at"`
+	Cufs []string `json:"-"`
+	// Documents conserva el payload preparado antes de contactar SIAT, en el orden de InvoiceIDs.
+	Documents             []BatchInvoiceDocument `json:"-"`
+	Modalidad             int                    `json:"modalidad"`
+	Layout                string                 `json:"layout"`
+	Cufd                  string                 `json:"cufd"`
+	CufdID                string                 `json:"cufd_id,omitempty"`
+	Cuis                  string                 `json:"cuis"`
+	CodigoRecepcion       string                 `json:"codigo_recepcion"`
+	HashArchivo           string                 `json:"hash_archivo"`
+	CantidadFacturas      int                    `json:"cantidad_facturas"`
+	CodigoDocumentoSector int                    `json:"codigo_documento_sector"`
+	CodigoTipoFactura     int                    `json:"codigo_tipo_factura"`
+	CodigoEmision         int                    `json:"codigo_emision"`
+	CodigoEvento          *int64                 `json:"codigo_evento,omitempty"`
+	ContingencyEventId    *string                `json:"contingency_event_id,omitempty"`
+	Status                SentPackageStatus      `json:"status"`
+	Mensajes              *string                `json:"mensajes,omitempty"`
+	XmlHash               string                 `json:"xml_hash"`
+	SentAt                time.Time              `json:"sent_at"`
+	ValidatedAt           *time.Time             `json:"validated_at,omitempty"`
+	CreatedAt             time.Time              `json:"created_at"`
 
 	Company     Company     `json:"company"`
 	PointOfSale PointOfSale `json:"point_of_sale"`
+}
+
+// BatchInvoiceDocument contiene la identidad fiscal preparada de una factura.
+// Se persiste junto a la reserva para conciliar incluso un envío sin respuesta.
+type BatchInvoiceDocument struct {
+	Cuf         string
+	Xml         string
+	XmlHash     string
+	Archivo     string
+	HashArchivo string
 }
 
 // SentPackageRepository define el contrato para la persistencia de envíos.

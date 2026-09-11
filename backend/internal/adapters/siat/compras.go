@@ -55,11 +55,14 @@ type ResultadoCompras struct {
 // los genera el integrador; el SDK se encarga del transporte, la inyección de
 // identidad y la firma/empaquetado si aplicara.
 func (s *Service) EnviarCompras(ctx context.Context, req SolicitudCompras) (*ResultadoCompras, error) {
-	if err := req.validate(); err != nil {
-		return nil, err
-	}
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat compras: servicio SIAT no inicializado")
+	}
+	if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
+		return nil, err
+	}
+	if err := req.validate(); err != nil {
+		return nil, err
 	}
 
 	fechaEnvio := req.FechaEnvio

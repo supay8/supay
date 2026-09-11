@@ -104,6 +104,34 @@ func TestEnviarComprasPayload(t *testing.T) {
 	}
 }
 
+func TestEnviarComprasCompletaIdentidadDesdeConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <recepcionPaqueteComprasResponse><RespuestaServicioFacturacion>
+      <transaccion>true</transaccion><codigoEstado>904</codigoEstado><codigoRecepcion>RCV-IDENTITY</codigoRecepcion>
+    </RespuestaServicioFacturacion></recepcionPaqueteComprasResponse>
+  </soapenv:Body>
+</soapenv:Envelope>`))
+	}))
+	defer server.Close()
+
+	svc := newTestService(t, server.URL)
+	req := validSolicitudCompras()
+	req.CodigoSistema = ""
+	req.Nit = ""
+
+	result, err := svc.EnviarCompras(t.Context(), req)
+	if err != nil {
+		t.Fatalf("EnviarCompras con identidad omitida: %v", err)
+	}
+	if result.CodigoRecepcion != "RCV-IDENTITY" {
+		t.Fatalf("codigoRecepcion=%q, se esperaba RCV-IDENTITY", result.CodigoRecepcion)
+	}
+}
+
 func TestEnviarComprasValidaLimite(t *testing.T) {
 	svc := newTestService(t, "http://localhost:9999")
 

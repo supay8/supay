@@ -125,22 +125,17 @@ func (h *handler) enviarPaquete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body usecase.PaqueteInput
+	var body batchSubmissionRequest
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
 
-	res, err := h.siatUC.EnviarPaquete(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
+	res, err := h.siatUC.EnviarPaquete(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), usecase.PaqueteInput{FacturaIDs: body.InvoiceIDs})
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
 	}
-	deliveryHttp.WriteJSON(w, http.StatusOK, map[string]any{
-		"company":       res.Company,
-		"point_of_sale": res.PointOfSale,
-		"response":      res.Response,
-		"batches":       res.Batches,
-	})
+	deliveryHttp.WriteJSON(w, http.StatusOK, newBatchResponse(res))
 }
 
 func (h *handler) validarPaquete(w http.ResponseWriter, r *http.Request) {
@@ -162,12 +157,7 @@ func (h *handler) validarPaquete(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondError(w, err)
 		return
 	}
-	deliveryHttp.WriteJSON(w, http.StatusOK, map[string]any{
-		"company":       res.Company,
-		"point_of_sale": res.PointOfSale,
-		"response":      res.Response,
-		"batches":       res.Batches,
-	})
+	deliveryHttp.WriteJSON(w, http.StatusOK, newBatchResponse(res))
 }
 
 func (h *handler) enviarMasiva(w http.ResponseWriter, r *http.Request) {
@@ -175,21 +165,16 @@ func (h *handler) enviarMasiva(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body usecase.MasivaInput
+	var body batchSubmissionRequest
 	if !h.decodeBody(w, r, &body) {
 		return
 	}
-	res, err := h.siatUC.EnviarMasiva(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
+	res, err := h.siatUC.EnviarMasiva(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), usecase.MasivaInput{FacturaIDs: body.InvoiceIDs})
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
 	}
-	deliveryHttp.WriteJSON(w, http.StatusOK, map[string]any{
-		"company":       res.Company,
-		"point_of_sale": res.PointOfSale,
-		"response":      res.Response,
-		"batches":       res.Batches,
-	})
+	deliveryHttp.WriteJSON(w, http.StatusOK, newBatchResponse(res))
 }
 
 func (h *handler) validarMasiva(w http.ResponseWriter, r *http.Request) {
@@ -211,12 +196,7 @@ func (h *handler) validarMasiva(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondError(w, err)
 		return
 	}
-	deliveryHttp.WriteJSON(w, http.StatusOK, map[string]any{
-		"company":       res.Company,
-		"point_of_sale": res.PointOfSale,
-		"response":      res.Response,
-		"batches":       res.Batches,
-	})
+	deliveryHttp.WriteJSON(w, http.StatusOK, newBatchResponse(res))
 }
 
 func (h *handler) enviarCompras(w http.ResponseWriter, r *http.Request) {

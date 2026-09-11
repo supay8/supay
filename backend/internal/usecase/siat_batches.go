@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -27,11 +28,13 @@ func (uc *SiatUsecase) EnviarPaquete(ctx context.Context, companyID, posID strin
 type invoiceBatch struct {
 	pkg       *domain.SentPackage
 	documents []ports.FiscalDocument
+	bulk      ports.FiscalBulk
+	pack      ports.FiscalPackage
 }
 
 func (uc *SiatUsecase) batchRepository() (domain.FiscalBatchRepository, error) {
 	repo, ok := uc.sentPackageRepo.(domain.FiscalBatchRepository)
-	if !ok || uc.invoiceRepo == nil {
+	if !ok {
 		return nil, domain.NewConflictError("La persistencia de lotes no está configurada")
 	}
 	return repo, nil
@@ -97,8 +100,10 @@ func (uc *SiatUsecase) selectBatchInvoices(repo domain.FiscalBatchRepository, co
 			if inv.IssueDate.Before(event.StartDate) || inv.IssueDate.After(*event.EndDate) {
 				return nil, domain.NewConflictError("La fecha de la factura " + inv.ID + " está fuera del evento de contingencia")
 			}
-		} else if inv.Cuf != nil && *inv.Cuf != "" {
-			return nil, domain.NewConflictError("La factura " + inv.ID + " ya tiene una identidad fiscal; no puede emitirse otra vez como masiva")
+		} else {
+			if inv.ContingencyEventId != nil || inv.EmissionType == "OFFLINE" || inv.EmissionType == "MASIVA" || (inv.Cuf != nil && *inv.Cuf != "") {
+				return nil, domain.NewConflictError("La factura " + inv.ID + " ya tiene una identidad fiscal o pertenece a una contingencia; no puede emitirse como masiva")
+			}
 		}
 	}
 	// Orden estable para dividir lotes y para asociar CUFs con las facturas.
@@ -112,6 +117,9 @@ func (uc *SiatUsecase) selectBatchInvoices(repo domain.FiscalBatchRepository, co
 }
 
 func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domain.PointOfSale, current *domain.Cufd, invoices []*domain.Invoice, event *domain.ContingencyEvent, kind domain.SentPackageType) ([]invoiceBatch, error) {
+	if current == nil || current.ID == "" || current.PointOfSaleID != pos.ID || pos.Cuis == nil || *pos.Cuis == "" {
+		return nil, domain.NewConflictError("No se pudieron resolver las credenciales del punto de venta")
+	}
 	limit, emission := siat.MaxFacturasMasiva, siat.EmisionMasiva
 	if kind == domain.PackageTypePaquete {
 		limit, emission = siat.MaxFacturasPorPaquete, siat.EmisionPaqueteOffline
@@ -142,15 +150,33 @@ func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domai
 		if err != nil {
 			return nil, domain.NewBadRequestError(err.Error())
 		}
-		doc, err := uc.solicitudDesdeInvoice(inv, company, pos, credential)
-		if err != nil {
-			return nil, err
+		var doc ports.FiscalDocument
+		if kind == domain.PackageTypePaquete {
+			// El XML emitido es la fuente de verdad. Los cambios posteriores
+			// del cliente o catálogo no deben alterar una factura offline.
+			if inv.Modalidad <= 0 || inv.CodigoTipoFactura <= 0 {
+				return nil, domain.NewConflictError("La factura offline " + inv.ID + " no conserva su modalidad o tipo fiscal")
+			}
+			doc = ports.FiscalDocument{
+				CodigoAmbiente: company.Ambiente.CodigoAmbiente(), CodigoSistema: company.CodigoSistema,
+				Nit: company.Nit, Modalidad: inv.Modalidad, NumeroFactura: int64(inv.InvoiceNumber),
+				CodigoSucursal: pos.CodigoSucursal, CodigoDocumentoSector: inv.CodigoDocumentoSector,
+				FechaEmision: inv.IssueDate, XML: *inv.Xml, Cuf: *inv.Cuf,
+			}
+		} else {
+			doc, err = uc.solicitudDesdeInvoice(inv, company, pos, credential)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if doc.Modalidad == 0 {
 			doc.Modalidad = uc.effectiveModalidadForCompany(company)
 		}
 		if doc.Modalidad != siat.ModalidadElectronica && doc.Modalidad != siat.ModalidadComputarizada {
 			return nil, domain.NewConflictError("La factura " + inv.ID + " no tiene una modalidad válida")
+		}
+		if err := profile.ValidarModalidad(doc.Modalidad); err != nil {
+			return nil, domain.NewConflictError(err.Error())
 		}
 		doc.Layout = profile.Layout
 		doc.CodigoTipoFactura = profile.TipoDocumentoResuelto(inv.CodigoTipoFactura)
@@ -206,9 +232,58 @@ func packageRequest(bulk ports.FiscalBulk, eventCode *int64) ports.FiscalPackage
 	return pkg
 }
 
+// Preparar todos los lotes antes de reservar evita que un error local en una
+// factura tardía deje envíos parciales o facturas atascadas en SENDING.
+func prepareBatchPayloads(ctx context.Context, svc ports.FiscalService, batches []invoiceBatch, company *domain.Company, pos *domain.PointOfSale, current *domain.Cufd) error {
+	preparer, ok := svc.(ports.FiscalBatchPreparer)
+	if !ok {
+		return domain.NewConflictError("El servicio fiscal no permite preparar lotes antes de enviarlos")
+	}
+	for i := range batches {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		batch := &batches[i]
+		req := fiscalBatchRequest(batch.pkg, company, pos)
+		req.CodigoControl, req.Facturas = current.ControlCode, batch.documents
+		var documents []ports.FiscalDocument
+		var err error
+		if batch.pkg.Type == domain.PackageTypeMasiva {
+			batch.bulk, err = preparer.PrepareBulk(ctx, req)
+			documents = batch.bulk.Facturas
+			batch.pkg.HashArchivo = batch.bulk.HashArchivo
+		} else {
+			batch.pack, err = preparer.PreparePackage(ctx, packageRequest(req, batch.pkg.CodigoEvento))
+			documents = batch.pack.Facturas
+			batch.pkg.HashArchivo = batch.pack.HashArchivo
+		}
+		if err != nil {
+			return domain.NewBadRequestError("No se pudo preparar el lote: " + err.Error())
+		}
+		if len(documents) != len(batch.pkg.InvoiceIDs) || batch.pkg.HashArchivo == "" {
+			return fmt.Errorf("el servicio fiscal preparó un lote incompleto")
+		}
+		batch.pkg.Documents = make([]domain.BatchInvoiceDocument, len(documents))
+		for j, doc := range documents {
+			if doc.XML == "" || doc.Cuf == "" || doc.Archivo == "" || doc.HashArchivo == "" {
+				return fmt.Errorf("el servicio fiscal no preparó los documentos de la factura %s", batch.pkg.InvoiceIDs[j])
+			}
+			hash := sha256.Sum256([]byte(doc.XML))
+			batch.pkg.Documents[j] = domain.BatchInvoiceDocument{
+				Cuf: doc.Cuf, Xml: doc.XML, XmlHash: fmt.Sprintf("%x", hash),
+				Archivo: doc.Archivo, HashArchivo: doc.HashArchivo,
+			}
+		}
+	}
+	return nil
+}
+
 func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID string, ids []string, kind domain.SentPackageType) (*PaqueteResultado, error) {
 	if err := uc.requireService(); err != nil {
 		return nil, err
+	}
+	if uc.invoiceRepo == nil {
+		return nil, domain.NewConflictError("El repositorio de facturas no está configurado")
 	}
 	repo, err := uc.batchRepository()
 	if err != nil {
@@ -253,9 +328,12 @@ func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID 
 	if err != nil {
 		return nil, err
 	}
+	if err := prepareBatchPayloads(ctx, svc, batches, company, pos, current); err != nil {
+		return nil, err
+	}
 	for _, batch := range batches {
 		pkg := batch.pkg
-		item := BatchResultado{InvoiceIDs: pkg.InvoiceIDs, Status: pkg.Status}
+		item := BatchResultado{InvoiceIDs: pkg.InvoiceIDs, Status: "NOT_SENT"}
 		if err := ctx.Err(); err != nil {
 			item.Error = err.Error()
 			out.Batches = append(out.Batches, item)
@@ -269,13 +347,11 @@ func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID 
 			continue
 		}
 		item.BatchID = pkg.ID
-		req := fiscalBatchRequest(pkg, company, pos)
-		req.CodigoControl, req.Facturas = current.ControlCode, batch.documents
 		var result ports.FiscalPackageResult
 		if kind == domain.PackageTypeMasiva {
-			result, err = svc.SendBulk(ctx, req)
+			result, err = svc.SendBulk(ctx, batch.bulk)
 		} else {
-			result, err = svc.SendPackage(ctx, packageRequest(req, pkg.CodigoEvento))
+			result, err = svc.SendPackage(ctx, batch.pack)
 		}
 		var invoiceStatus *domain.InvoiceStatus
 		if err != nil {
@@ -286,23 +362,32 @@ func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID 
 			out.Response.Transaccion = false
 		} else {
 			item.Response = &result
-			pkg.CodigoRecepcion, pkg.HashArchivo, pkg.Cufs = result.CodigoRecepcion, result.HashArchivo, result.Cufs
-			pkg.SentAt = time.Now()
+			pkg.CodigoRecepcion = result.CodigoRecepcion
 			messages, _ := json.Marshal(result.Mensajes)
 			text := string(messages)
 			pkg.Mensajes = &text
 			if result.Transaccion && result.CodigoRecepcion != "" {
 				pkg.Status = domain.PackageStatusPending
 				sent := domain.InvoiceSent
+				if result.CodigoEstado == 908 {
+					pkg.Status, sent = domain.PackageStatusAccepted, domain.InvoiceAccepted
+				}
 				invoiceStatus = &sent
+				out.Response.CantidadFacturas += pkg.CantidadFacturas
+			} else if result.CodigoEstado == 902 {
+				pkg.Status = domain.PackageStatusRejected
+				rejected := domain.InvoiceRejected
+				invoiceStatus = &rejected
+				out.Response.Transaccion = false
 			} else {
 				pkg.Status = domain.PackageStatusUnknown
 				out.Response.Transaccion = false
 			}
-			out.Response.CantidadFacturas += result.CantidadFacturas
 		}
 		if persistErr := repo.UpdateBatch(pkg, invoiceStatus); persistErr != nil {
-			item.Error = fmt.Sprintf("%s no se pudo guardar el resultado del lote %s: %v", item.Error, pkg.ID, persistErr)
+			item.Error = strings.TrimSpace(fmt.Sprintf("%s No se pudo guardar el resultado del lote %s: %v", item.Error, pkg.ID, persistErr))
+			// El estado de SIAT puede conocerse, pero la BD conserva la reserva.
+			pkg.Status = domain.PackageStatusUnknown
 			out.Response.Transaccion = false
 		}
 		item.Status = pkg.Status
@@ -365,6 +450,10 @@ func (uc *SiatUsecase) validateInvoiceBatch(ctx context.Context, companyID, posI
 		pkg.Status = domain.PackageStatusAccepted
 		accepted := domain.InvoiceAccepted
 		invoiceStatus = &accepted
+	} else if result.CodigoEstado == 902 && pkg.Status != domain.PackageStatusAccepted {
+		pkg.Status = domain.PackageStatusRejected
+		rejected := domain.InvoiceRejected
+		invoiceStatus = &rejected
 	}
 	now := time.Now()
 	pkg.ValidatedAt = &now

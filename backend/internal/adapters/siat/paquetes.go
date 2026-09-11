@@ -90,6 +90,25 @@ type ResultadoPaquete struct {
 // firma del SDK con emisión offline. El CodigoRecepcion devuelto se usa luego
 // en ValidarPaqueteFactura.
 func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaqueteFactura) (*ResultadoPaquete, error) {
+	prepared, err := s.prepararPaquete(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.enviarPaquetePreparada(ctx, prepared)
+}
+
+type paquetePreparada struct {
+	service *Service
+	req     SolicitudPaqueteFactura
+	perfil  *SectorProfile
+	request models.RecepcionPaqueteFactura
+	result  ResultadoPaquete
+}
+
+func (s *Service) prepararPaquete(ctx context.Context, req SolicitudPaqueteFactura) (*paquetePreparada, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat paquete: servicio SIAT no inicializado")
 	}
@@ -104,6 +123,9 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 	perfil, err := PerfilSectorLayout(req.sector(), req.Layout)
 	if err != nil {
 		return nil, fmt.Errorf("siat paquete: %w", err)
+	}
+	if perfil.Facade.Fixed() == FachadaBoletoAereo {
+		return nil, fmt.Errorf("siat paquete: el boleto aéreo no admite paquete de facturas; use la emisión masiva")
 	}
 	if perfil.EsAjuste() {
 		return nil, fmt.Errorf("siat paquete: los documentos de ajuste (sectores 24/29/47/48) no se envían en paquete")
@@ -170,6 +192,20 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 	built := paquete.Build()
 	archivo, hash, cantidad := extraerArchivoPaquete(built)
 
+	if perfil.HasBuilder() || len(cufs) > 0 {
+		if err := recuperarDocumentosLote(archivo, req.Facturas, cufs); err != nil {
+			return nil, fmt.Errorf("siat paquete: %w", err)
+		}
+	}
+	req.Archivo, req.HashArchivo = archivo, hash
+	return &paquetePreparada{
+		service: s, req: req, perfil: perfil, request: built,
+		result: ResultadoPaquete{Archivo: archivo, HashArchivo: hash, CantidadFacturas: cantidad, Cufs: cufs},
+	}, nil
+}
+
+func (s *Service) enviarPaquetePreparada(ctx context.Context, prepared *paquetePreparada) (*ResultadoPaquete, error) {
+	req, perfil, built := prepared.req, prepared.perfil, prepared.request
 	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
 
 	resp, err := s.paqueteParaPerfil(ctx, perfil, req.Modalidad, built)
@@ -184,16 +220,10 @@ func (s *Service) EnviarPaqueteFactura(ctx context.Context, req SolicitudPaquete
 		return nil, fmt.Errorf("siat paquete: %w", err)
 	}
 
-	return &ResultadoPaquete{
-		Transaccion:      transaccion,
-		CodigoEstado:     codigoEstado,
-		CodigoRecepcion:  codigoRecepcion,
-		Mensajes:         mensajes,
-		Archivo:          archivo,
-		HashArchivo:      hash,
-		CantidadFacturas: cantidad,
-		Cufs:             cufs,
-	}, nil
+	result := prepared.result
+	result.Transaccion, result.CodigoEstado = transaccion, codigoEstado
+	result.CodigoRecepcion, result.Mensajes = codigoRecepcion, mensajes
+	return &result, nil
 }
 
 // ValidarPaqueteFactura consulta al SIAT la validación de un paquete ya enviado
@@ -263,6 +293,11 @@ func (s SolicitudPaqueteFactura) normalized() SolicitudPaqueteFactura {
 		}
 		if strings.TrimSpace(f.CodigoSistema) == "" {
 			f.CodigoSistema = s.CodigoSistema
+		}
+		// Un XML emitido conserva su contexto histórico. Solo el sistema y el
+		// ambiente del sobre pueden resolverse desde la configuración común.
+		if f.XML != "" {
+			continue
 		}
 		if strings.TrimSpace(f.Nit) == "" {
 			f.Nit = s.Nit
@@ -385,6 +420,9 @@ func (s SolicitudPaqueteFactura) validate() error {
 	}
 	if err := perfil.ValidarModalidad(s.Modalidad); err != nil {
 		return err
+	}
+	if err := validarIdentidadLote(s.Facturas, s, s.hasPersistedXML()); err != nil {
+		return fmt.Errorf("siat paquete: %w", err)
 	}
 	if s.hasPersistedXML() {
 		if s.Archivo != "" || s.HashArchivo != "" {

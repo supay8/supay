@@ -1012,6 +1012,10 @@ func TestSiatRejectsInvalidBatchPayloads(t *testing.T) {
 		"/siat/masiva/batch-1/validate", "/siat/paquete/batch-1/validate",
 	}
 	bodies := []string{
+		`{"invoice_ids":null}`, `{"invoice_ids":[null]}`, `{"invoice_ids":["inv-1",null]}`,
+		`{"invoice_ids":"inv-1"}`, `{"invoice_ids":[1]}`, `{"invoice_ids":{}}`,
+		`{"invoice_ids":["inv-1"],"invoice_ids":null}`, `{"invoice_ids":["inv-1"],"invoice_ids":[]}`,
+		`{"invoice_ids":[],"invoice_ids":["inv-1"]}`, `{"invoice_ids":["inv-1"],"INVOICE_IDS":[]}`,
 		`{"company_id":"other-company"}`, `{"archivo":"<xml/>"}`, `{"codigoDocumentoSector":1}`,
 		`{"codigo_recepcion":"receipt-1"}`, `{"batch_id":"other-batch"}`, `{"factura_ids":["inv-1"]}`,
 		`{"facturas":[{"xml":"<xml/>"}]}`, `{"unknown":true}`, `null`, `[]`, `""`, `{`, `{} {}`, `{} null`, `{} invalid`,

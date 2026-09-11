@@ -107,6 +107,9 @@ func (s *FiscalService) RegisterSignificantEvent(ctx context.Context, ev ports.F
 }
 
 func (s *FiscalService) SendPackage(ctx context.Context, pkg ports.FiscalPackage) (ports.FiscalPackageResult, error) {
+	if pkg.Prepared != nil {
+		return s.sendPrepared(ctx, pkg.Prepared, false)
+	}
 	return s.packageResult(len(pkg.Facturas)), nil
 }
 
@@ -115,6 +118,9 @@ func (s *FiscalService) ValidatePackage(ctx context.Context, pkg ports.FiscalPac
 }
 
 func (s *FiscalService) SendBulk(ctx context.Context, bulk ports.FiscalBulk) (ports.FiscalPackageResult, error) {
+	if bulk.Prepared != nil {
+		return s.sendPrepared(ctx, bulk.Prepared, true)
+	}
 	return s.packageResult(len(bulk.Facturas)), nil
 }
 

@@ -67,6 +67,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { Invoice } from "@/lib/types"
+import { LogoSupay } from "@/components/logo"
 
 const PAGE_SIZE = 20
 
@@ -173,6 +174,7 @@ export function InvoicesPage() {
         <h1 className="text-xl font-semibold tracking-tight">Facturas</h1>
         <p className="text-sm text-muted-foreground">
           Lo emitido por tu empresa, con su estado real ante el SIAT.
+          <LogoSupay  size={100} color="#e11d48" className="inline-block ml-1" />
         </p>
       </div>
 

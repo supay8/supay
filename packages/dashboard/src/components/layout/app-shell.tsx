@@ -4,6 +4,7 @@ import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom"
 import { useDashboardExtensions } from "@/dashboard-context"
 import { AppHeader } from "@/components/layout/header"
 import { SidebarUserMenu } from "@/components/layout/user-menu"
+import { LogoSupay } from "@/components/logo"
 import {
   Sidebar,
   SidebarContent,
@@ -78,12 +79,13 @@ export function AppShell() {
     <SidebarProvider>
       <Sidebar collapsible="icon">
         <SidebarHeader className="h-14 justify-center border-b border-border/60">
-          <span className="px-2 text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            Supay
-          </span>
-          <span className="hidden text-sm font-semibold tracking-tight group-data-[collapsible=icon]:grid place-items-center">
-            S
-          </span>
+          <div className="flex items-center gap-2 px-2 group-data-[collapsible=icon]:hidden">
+            <LogoSupay size={28} className="shrink-0 text-primary" color="currentColor" />
+            <span className="text-sm font-semibold tracking-tight">Supay</span>
+          </div>
+          <div className="hidden group-data-[collapsible=icon]:flex justify-center">
+            <LogoSupay size={28} className="text-primary" color="currentColor" />
+          </div>
         </SidebarHeader>
         <SidebarContent>
           {navSections.map((section, index) => (

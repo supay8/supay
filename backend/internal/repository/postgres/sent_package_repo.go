@@ -195,7 +195,7 @@ func (r *PostgresSentPackageRepository) ListPendingBatchInvoices(companyID, posI
 		query = query.Where("contingency_event_id IS NULL")
 	}
 	var rows []models.Invoice
-	if err := query.Preload("Items").Preload("Customer").Preload("CufdRecord").
+	if err := query.Preload("Items").Preload("CufdRecord").
 		Order("invoice_number, id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -295,7 +295,7 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 		}
 		members := make([]models.SentPackageInvoice, len(invoiceIDs))
 		for i, id := range invoiceIDs {
-			members[i] = models.SentPackageInvoice{InvoiceID: id, SentPackageID: m.ID, Position: i}
+			members[i] = models.SentPackageInvoice{TenantID: m.CompanyId, InvoiceID: id, SentPackageID: m.ID, Position: i}
 		}
 		if err := tx.Create(&members).Error; err != nil {
 			return err

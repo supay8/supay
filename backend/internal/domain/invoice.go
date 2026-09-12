@@ -36,7 +36,6 @@ func InvoiceStatuses() string {
 type InvoiceItem struct {
 	ID                string  `json:"id"`
 	InvoiceId         string  `json:"invoice_id"`
-	ProductID         *string `json:"product_id,omitempty"`
 	Code              string  `json:"code"`
 	Description       string  `json:"description"`
 	CodigoActividad   *string `json:"codigo_actividad,omitempty"`
@@ -53,9 +52,11 @@ type InvoiceItem struct {
 }
 
 type Invoice struct {
-	ID                    string          `json:"id"`
-	CompanyId             string          `json:"company_id"`
-	CustomerId            string          `json:"customer_id"`
+	ID         string `json:"id"`
+	CompanyId  string `json:"company_id"`
+	CustomerId string `json:"customer_id"`
+	// Customer es el snapshot fiscal inmutable del receptor. CustomerId solo
+	// enlaza la fila histórica usada para analítica y no es fuente fiscal.
 	PointOfSaleId         string          `json:"point_of_sale_id"`
 	IdempotencyKey        *string         `json:"idempotency_key,omitempty"`
 	CufdId                string          `json:"cufd_id"`

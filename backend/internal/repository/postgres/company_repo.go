@@ -63,7 +63,7 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 
 func (r *PostgresCompanyRepository) GetByNit(nit string) (*domain.Company, error) {
 	var tenant models.Company
-	if err := r.db.Where("nit = ?", nit).First(&tenant).Error; err != nil {
+	if err := r.db.Where("nit = ? AND is_active = true", nit).First(&tenant).Error; err != nil {
 		return nil, err
 	}
 	return r.withTenantConfig(&tenant)
@@ -71,7 +71,7 @@ func (r *PostgresCompanyRepository) GetByNit(nit string) (*domain.Company, error
 
 func (r *PostgresCompanyRepository) GetByID(id string) (*domain.Company, error) {
 	var tenant models.Company
-	if err := r.db.Where("id = ?", id).First(&tenant).Error; err != nil {
+	if err := r.db.Where("id = ? AND is_active = true", id).First(&tenant).Error; err != nil {
 		return nil, err
 	}
 	return r.withTenantConfig(&tenant)
@@ -194,11 +194,6 @@ func tenantSettingsWithCertificateWebhook(raw datatypes.JSON, webhookURL string)
 }
 
 func (r *PostgresCompanyRepository) Delete(id string) error {
-	if err := r.db.Where("id = ?", id).Delete(&models.Company{}).Error; err != nil {
-		if isForeignKeyViolation(err) {
-			return domain.ErrCompanyHasDependencies
-		}
-		return err
-	}
-	return nil
+	return r.db.Model(&models.Company{}).Where("id = ? AND is_active = true").
+		Update("is_active", false).Error
 }

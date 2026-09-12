@@ -28,21 +28,25 @@ func (r *PostgresPointOfSaleRepository) Create(pos *domain.PointOfSale) error {
 			return err
 		}
 
-		if pos.CodigoPuntoVenta <= 0 {
-			var next int
-			if err := tx.Model(&models.PointOfSale{}).
-				Where("tenant_id = ? AND codigo_sucursal = ?", pos.CompanyId, pos.CodigoSucursal).
-				Select("COALESCE(MAX(codigo_punto_venta), 0) + 1").
-				Scan(&next).Error; err != nil {
-				return err
-			}
-			pos.CodigoPuntoVenta = next
+		var next int
+		if err := tx.Model(&models.PointOfSale{}).
+			Where(
+				"tenant_id = ? AND codigo_sucursal = ?",
+				pos.CompanyId,
+				pos.CodigoSucursal,
+			).
+			Select("COALESCE(MAX(codigo_punto_venta), -1) + 1").
+			Scan(&next).Error; err != nil {
+			return err
 		}
+
+		pos.CodigoPuntoVenta = next
 
 		dbModel := models.PointOfSale{
 			ID:               uuid.NewString(),
 			CompanyId:        pos.CompanyId,
-			BranchId:         pos.BranchId,
+			BranchId:         nullableString(pos.BranchId),
+			Name:             pos.Name,
 			CodigoSucursal:   pos.CodigoSucursal,
 			CodigoPuntoVenta: pos.CodigoPuntoVenta,
 			Description:      pos.Description,
@@ -77,10 +81,10 @@ func (r *PostgresPointOfSaleRepository) GetByID(id string) (*domain.PointOfSale,
 		return nil, domain.NewBadRequestError("point_of_sale_id debe ser un UUID válido")
 	}
 	var dbModel models.PointOfSale
-	if err := r.db.Where("id = ?", id).First(&dbModel).Error; err != nil {
+
+	if err := r.db.Where("id = ? AND is_active = true", id).First(&dbModel).Error; err != nil {
 		return nil, err
 	}
-
 	return toDomainPointOfSale(&dbModel), nil
 }
 
@@ -89,7 +93,7 @@ func (r *PostgresPointOfSaleRepository) List(companyID string) ([]*domain.PointO
 		return nil, domain.ErrMissingCompanyID
 	}
 	var dbModels []models.PointOfSale
-	if err := r.db.Where("tenant_id = ?", companyID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
+	if err := r.db.Where("tenant_id = ? AND is_active = true", companyID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
 		return nil, err
 	}
 
@@ -102,7 +106,7 @@ func (r *PostgresPointOfSaleRepository) List(companyID string) ([]*domain.PointO
 
 func (r *PostgresPointOfSaleRepository) ListByBranch(branchID string) ([]*domain.PointOfSale, error) {
 	var dbModels []models.PointOfSale
-	if err := r.db.Where("branch_id = ?", branchID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
+	if err := r.db.Where("branch_id = ? AND is_active = true", branchID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
 		return nil, err
 	}
 
@@ -120,11 +124,12 @@ func (r *PostgresPointOfSaleRepository) Update(pos *domain.PointOfSale) error {
 	}
 
 	dbModel.CompanyId = pos.CompanyId
-	dbModel.BranchId = pos.BranchId
+	dbModel.BranchId = nullableString(pos.BranchId)
 	dbModel.CodigoSucursal = pos.CodigoSucursal
 	dbModel.CodigoPuntoVenta = pos.CodigoPuntoVenta
 	dbModel.Description = pos.Description
 	dbModel.Cuis = pos.Cuis
+	dbModel.Name = pos.Name
 	dbModel.CuisCreatedAt = pos.CuisCreatedAt
 	dbModel.CuisExpiresAt = pos.CuisExpiresAt
 	dbModel.IsActive = pos.IsActive
@@ -146,22 +151,18 @@ func (r *PostgresPointOfSaleRepository) Update(pos *domain.PointOfSale) error {
 }
 
 func (r *PostgresPointOfSaleRepository) Delete(id string) error {
-	if err := r.db.Where("id = ?", id).Delete(&models.PointOfSale{}).Error; err != nil {
-		if isForeignKeyViolation(err) {
-			return domain.ErrPointOfSaleHasDependencies
-		}
-		return err
-	}
-	return nil
+	return r.db.Model(&models.PointOfSale{}).Where("id = ? AND is_active = true", id).
+		Update("is_active", false).Error
 }
 
 func toDomainPointOfSale(dbModel *models.PointOfSale) *domain.PointOfSale {
 	return &domain.PointOfSale{
 		ID:               dbModel.ID,
 		CompanyId:        dbModel.CompanyId,
-		BranchId:         dbModel.BranchId,
+		BranchId:         stringValue(dbModel.BranchId),
 		CodigoSucursal:   dbModel.CodigoSucursal,
 		CodigoPuntoVenta: dbModel.CodigoPuntoVenta,
+		Name:             dbModel.Name,
 		Description:      dbModel.Description,
 		Cuis:             dbModel.Cuis,
 		CuisCreatedAt:    dbModel.CuisCreatedAt,
@@ -176,6 +177,20 @@ func toDomainPointOfSale(dbModel *models.PointOfSale) *domain.PointOfSale {
 		SiatError:        dbModel.SiatError,
 		CreatedAt:        dbModel.CreatedAt,
 	}
+}
+
+func nullableString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func isUniqueViolation(err error) bool {

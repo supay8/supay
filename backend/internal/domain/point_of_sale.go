@@ -20,10 +20,11 @@ var ErrTipoPuntoVentaInvalido = errors.New("código de tipo de punto de venta no
 
 type PointOfSale struct {
 	ID               string     `json:"id"`
-	CompanyId        string     `json:"company_id"`
-	BranchId         *string    `json:"branch_id,omitempty"`
+	CompanyId        string     `json:"company_id,omitempty"`
+	BranchId         string     `json:"branch_id,omitempty"`
 	CodigoSucursal   int        `json:"codigo_sucursal"`
 	CodigoPuntoVenta int        `json:"codigo_punto_venta"`
+	Name             string     `json:"name"`
 	Description      string     `json:"description"`
 	Cuis             *string    `json:"cuis,omitempty"`
 	CuisCreatedAt    *time.Time `json:"cuis_created_at,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/datatypes" // Útil para el tipo Json de GORM
 )
 
@@ -81,6 +82,7 @@ type Company struct {
 	CodigoActividad *string         `gorm:"type:varchar(20)"`
 	PiePagina       string          `gorm:"type:text;not null;default:''"`
 	UsuarioSiat     string          `gorm:"type:varchar(50);not null;default:'SUPAY'"`
+	IsActive        bool            `gorm:"column:is_active;not null;default:true"`
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 
@@ -113,6 +115,7 @@ type PointOfSale struct {
 	BranchId         *string `gorm:"type:uuid;index"`
 	CodigoSucursal   int     `gorm:"uniqueIndex:idx_points_of_sale_tenant_codes,priority:2;default:0;not null"`
 	CodigoPuntoVenta int     `gorm:"uniqueIndex:idx_points_of_sale_tenant_codes,priority:3;not null"`
+	Name             string  `gorm:"type:varchar(100);not null;default:''"`
 	Description      string  `gorm:"type:varchar(150);not null"`
 	Cuis             *string `gorm:"type:varchar(100)"`
 	CuisCreatedAt    *time.Time
@@ -130,6 +133,7 @@ type PointOfSale struct {
 	SiatError        *string         `gorm:"type:text"`
 
 	Company           Company            `gorm:"foreignKey:CompanyId"`
+	Branch            *Branch            `gorm:"foreignKey:CompanyId,BranchId;references:CompanyId,ID"`
 	Cufds             []Cufd             `gorm:"foreignKey:PointOfSaleId"`
 	Invoices          []Invoice          `gorm:"foreignKey:PointOfSaleId"`
 	ContingencyEvents []ContingencyEvent `gorm:"foreignKey:PointOfSaleId"`
@@ -194,6 +198,8 @@ type CatalogItem struct {
 	Codigo      string         `gorm:"type:varchar(100);not null"`
 	Descripcion string         `gorm:"type:text;not null"`
 	Metadata    datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'"`
+
+	Version CatalogVersion `gorm:"foreignKey:VersionID;constraint:OnDelete:CASCADE"`
 }
 
 type SinProduct struct {
@@ -271,35 +277,6 @@ type CatalogSyncState struct {
 	UpdatedAt     time.Time
 }
 
-type Product struct {
-	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId string `gorm:"column:tenant_id;type:uuid;uniqueIndex:idx_products_tenant_sku,priority:1;not null"`
-	SKU       string `gorm:"type:varchar(100);uniqueIndex:idx_products_tenant_sku,priority:2;not null"`
-	Name      string `gorm:"type:varchar(200);not null"`
-	Active    bool   `gorm:"default:true;not null"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-
-	Company  Company          `gorm:"foreignKey:CompanyId"`
-	Mappings []ProductMapping `gorm:"foreignKey:ProductId"`
-}
-
-type ProductMapping struct {
-	ID                    string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	ProductId             string    `gorm:"type:uuid;index:idx_product_mapping,priority:1;not null"`
-	SinProductId          *string   `gorm:"type:uuid;index"`
-	CodigoProductoSin     int64     `gorm:"not null"`
-	CodigoActividad       string    `gorm:"type:varchar(20);not null"`
-	CodigoDocumentoSector int       `gorm:"not null"`
-	UnidadMedida          int       `gorm:"not null"`
-	IsDefault             bool      `gorm:"default:false;not null"`
-	Active                bool      `gorm:"default:true;not null"`
-	SyncedAt              time.Time `gorm:"not null"`
-
-	Product    Product     `gorm:"foreignKey:ProductId"`
-	SinProduct *SinProduct `gorm:"foreignKey:SinProductId"`
-}
-
 type Cufd struct {
 	ID            string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	TenantId      string    `gorm:"column:tenant_id;type:uuid;not null"`
@@ -328,6 +305,8 @@ type Cuis struct {
 	ValidTo       *time.Time
 	Active        bool `gorm:"column:is_active;default:true;not null"`
 	CreatedAt     time.Time
+
+	PointOfSale PointOfSale `gorm:"foreignKey:TenantId,PointOfSaleId;references:CompanyId,ID"`
 }
 
 func (Cuis) TableName() string { return "cuis_history" }
@@ -348,6 +327,7 @@ type ContingencyEvent struct {
 	CreatedAt         time.Time
 
 	PointOfSale PointOfSale `gorm:"foreignKey:PointOfSaleId"`
+	CufdRecord  *Cufd       `gorm:"foreignKey:TenantId,CufdId;references:TenantId,ID"`
 	Invoices    []Invoice   `gorm:"foreignKey:ContingencyEventId"`
 }
 
@@ -363,6 +343,7 @@ type Customer struct {
 	Name           string       `gorm:"type:varchar(150);not null"`
 	Email          *string      `gorm:"type:varchar(150)"`
 	CodigoCliente  string       `gorm:"type:varchar(50);not null;default:''"`
+	IsActive       bool         `gorm:"column:is_active;not null;default:true"`
 	CreatedAt      time.Time
 
 	Company  Company   `gorm:"foreignKey:CompanyId"`
@@ -370,45 +351,50 @@ type Customer struct {
 }
 
 type Invoice struct {
-	ID                    string         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId             string         `gorm:"column:tenant_id;type:uuid;not null"`
-	CustomerId            string         `gorm:"type:uuid;index;not null"`
-	PointOfSaleId         string         `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;uniqueIndex:idx_invoice_idem_key,priority:1;not null"`
-	IdempotencyKey        *string        `gorm:"type:varchar(100);uniqueIndex:idx_invoice_idem_key,priority:2"`
-	CufdId                string         `gorm:"type:uuid;not null"`
-	ContingencyEventId    *string        `gorm:"type:uuid"`
-	InvoiceNumber         int            `gorm:"uniqueIndex:idx_pos_invoice_num,priority:2;not null"`
-	Cuf                   *string        `gorm:"type:varchar(150);uniqueIndex"`
-	EmissionType          EmissionType   `gorm:"type:varchar(30);default:'EN_LINEA';not null"`
-	CodigoMetodoPago      int            `gorm:"default:1;not null"`
-	CodigoMoneda          int            `gorm:"default:1;not null"`
-	TipoCambio            float64        `gorm:"type:decimal(18,5);default:1;not null"`
-	CodigoDocumentoSector int            `gorm:"default:1;not null"`
-	Layout                string         `gorm:"type:varchar(80)"`
-	Modalidad             int            `gorm:"default:1;not null"`
-	CodigoTipoFactura     int            `gorm:"default:1;not null"`
-	Archivo               string         `gorm:"type:text"`
-	HashArchivo           string         `gorm:"type:varchar(100)"`
-	NombreEstudiante      *string        `gorm:"type:varchar(150)"`
-	PeriodoFacturado      *string        `gorm:"type:varchar(30)"`
-	SectorData            datatypes.JSON `gorm:"type:jsonb"`
-	AjustaFacturaId       *string        `gorm:"type:uuid;index"`
-	IssueDate             time.Time      `gorm:"index;not null"`
-	Subtotal              float64        `gorm:"type:decimal(18,2);not null"`
-	Discount              float64        `gorm:"type:decimal(18,2);default:0;not null"`
-	Total                 float64        `gorm:"type:decimal(18,2);not null"`
-	Xml                   *string        `gorm:"type:text"`
-	XmlHash               *string        `gorm:"type:varchar(100)"`
-	SiatReceptionCode     *string        `gorm:"type:varchar(100)"`
-	SiatMensajes          *string        `gorm:"type:text"`
-	Status                InvoiceStatus  `gorm:"type:varchar(30);default:'PENDING';index;not null"`
-	MotivoAnulacion       *int
-	FechaAnulacion        *time.Time
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID                     string          `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CompanyId              string          `gorm:"column:tenant_id;type:uuid;not null"`
+	CustomerId             string          `gorm:"type:uuid;index;not null"`
+	CustomerDocumentType   DocumentType    `gorm:"column:customer_document_type;type:varchar(20);not null"`
+	CustomerDocumentNumber string          `gorm:"column:customer_document_number;type:varchar(30);not null"`
+	CustomerComplement     *string         `gorm:"column:customer_complement;type:varchar(10)"`
+	CustomerName           string          `gorm:"column:customer_name;type:varchar(150);not null"`
+	CustomerEmail          *string         `gorm:"column:customer_email;type:varchar(150)"`
+	CustomerCode           string          `gorm:"column:customer_code;type:varchar(50);not null"`
+	PointOfSaleId          string          `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;uniqueIndex:idx_invoice_idem_key,priority:1;not null"`
+	IdempotencyKey         *string         `gorm:"type:varchar(100);uniqueIndex:idx_invoice_idem_key,priority:2"`
+	CufdId                 string          `gorm:"type:uuid;not null"`
+	ContingencyEventId     *string         `gorm:"type:uuid"`
+	InvoiceNumber          int             `gorm:"uniqueIndex:idx_pos_invoice_num,priority:2;not null"`
+	Cuf                    *string         `gorm:"type:varchar(150);uniqueIndex"`
+	EmissionType           EmissionType    `gorm:"type:varchar(30);default:'EN_LINEA';not null"`
+	CodigoMetodoPago       int             `gorm:"default:1;not null"`
+	CodigoMoneda           int             `gorm:"default:1;not null"`
+	TipoCambio             decimal.Decimal `gorm:"type:numeric(18,5);default:1;not null"`
+	CodigoDocumentoSector  int             `gorm:"default:1;not null"`
+	Layout                 string          `gorm:"type:varchar(80)"`
+	Modalidad              int             `gorm:"default:1;not null"`
+	CodigoTipoFactura      int             `gorm:"default:1;not null"`
+	Archivo                string          `gorm:"type:text"`
+	HashArchivo            string          `gorm:"type:varchar(100)"`
+	NombreEstudiante       *string         `gorm:"type:varchar(150)"`
+	PeriodoFacturado       *string         `gorm:"type:varchar(30)"`
+	SectorData             datatypes.JSON  `gorm:"type:jsonb"`
+	AjustaFacturaId        *string         `gorm:"type:uuid;index"`
+	IssueDate              time.Time       `gorm:"index;not null"`
+	Subtotal               decimal.Decimal `gorm:"type:numeric(18,2);not null"`
+	Discount               decimal.Decimal `gorm:"type:numeric(18,2);default:0;not null"`
+	Total                  decimal.Decimal `gorm:"type:numeric(18,2);not null"`
+	Xml                    *string         `gorm:"type:text"`
+	XmlHash                *string         `gorm:"type:varchar(100)"`
+	SiatReceptionCode      *string         `gorm:"type:varchar(100)"`
+	SiatMensajes           *string         `gorm:"type:text"`
+	Status                 InvoiceStatus   `gorm:"type:varchar(30);default:'PENDING';index;not null"`
+	MotivoAnulacion        *int
+	FechaAnulacion         *time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 
 	Company          Company           `gorm:"foreignKey:CompanyId"`
-	Customer         Customer          `gorm:"foreignKey:CustomerId"`
 	PointOfSale      PointOfSale       `gorm:"foreignKey:PointOfSaleId"`
 	CufdRecord       Cufd              `gorm:"foreignKey:CufdId"`
 	ContingencyEvent *ContingencyEvent `gorm:"foreignKey:ContingencyEventId"`
@@ -443,18 +429,18 @@ func (InvoiceDocument) TableName() string { return "invoice_documents" }
 
 type InvoiceItem struct {
 	ID                string  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	TenantID          string  `gorm:"column:tenant_id;type:uuid;not null"`
 	InvoiceId         string  `gorm:"type:uuid;index;not null"`
-	ProductId         *string `gorm:"type:uuid;index"`
 	Code              string  `gorm:"type:varchar(50);not null"`
 	Description       string  `gorm:"type:text;not null"`
 	CodigoActividad   *string `gorm:"type:varchar(20)"`
 	CodigoProductoSin *string `gorm:"type:varchar(20)"`
 	UnitCode          *int
-	Quantity          float64        `gorm:"type:decimal(18,3);not null"`
-	UnitPrice         float64        `gorm:"type:decimal(18,2);not null"`
-	Discount          float64        `gorm:"type:decimal(18,2);default:0;not null"`
-	Subtotal          float64        `gorm:"type:decimal(18,2);not null"`
-	SectorData        datatypes.JSON `gorm:"type:jsonb"`
+	Quantity          decimal.Decimal `gorm:"type:numeric(18,5);not null"`
+	UnitPrice         decimal.Decimal `gorm:"type:numeric(18,5);not null"`
+	Discount          decimal.Decimal `gorm:"type:numeric(18,2);default:0;not null"`
+	Subtotal          decimal.Decimal `gorm:"type:numeric(18,2);not null"`
+	SectorData        datatypes.JSON  `gorm:"type:jsonb"`
 
 	Invoice Invoice `gorm:"foreignKey:InvoiceId"`
 }
@@ -522,13 +508,18 @@ type SentPackage struct {
 	Company          Company           `gorm:"foreignKey:CompanyId"`
 	PointOfSale      PointOfSale       `gorm:"foreignKey:PointOfSaleId"`
 	ContingencyEvent *ContingencyEvent `gorm:"foreignKey:ContingencyEventId"`
+	CufdRecord       *Cufd             `gorm:"foreignKey:CompanyId,CufdID;references:TenantId,ID"`
 }
 
 // SentPackageInvoice conserva la pertenencia y el orden del envío original.
 type SentPackageInvoice struct {
+	TenantID      string `gorm:"column:tenant_id;type:uuid;not null"`
 	InvoiceID     string `gorm:"type:uuid;primaryKey"`
 	SentPackageID string `gorm:"type:uuid;not null;uniqueIndex:idx_sent_package_invoice_position,priority:1"`
 	Position      int    `gorm:"not null;uniqueIndex:idx_sent_package_invoice_position,priority:2"`
+
+	Invoice     Invoice     `gorm:"foreignKey:TenantID,InvoiceID;references:CompanyId,ID"`
+	SentPackage SentPackage `gorm:"foreignKey:TenantID,SentPackageID;references:CompanyId,ID"`
 }
 
 type Certificate struct {
@@ -562,7 +553,8 @@ type Certificate struct {
 	IsActive             bool    `gorm:"column:is_active;not null;default:true"`
 	UploadedAt           time.Time
 
-	Company Company `gorm:"foreignKey:CompanyId"`
+	Company           Company      `gorm:"foreignKey:CompanyId"`
+	RenewedFromRecord *Certificate `gorm:"foreignKey:CompanyId,RenewedFrom;references:CompanyId,ID"`
 }
 
 type CertificateNotification struct {
@@ -577,6 +569,8 @@ type CertificateNotification struct {
 	DeliveredAt   *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+
+	Certificate Certificate `gorm:"foreignKey:TenantID,CertificateID;references:CompanyId,ID"`
 }
 
 func (CertificateNotification) TableName() string { return "certificate_notifications" }

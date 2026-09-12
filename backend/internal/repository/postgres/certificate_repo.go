@@ -129,7 +129,9 @@ func (r *PostgresCertificateRepository) Update(c *domain.Certificate) error {
 }
 
 func (r *PostgresCertificateRepository) Delete(id string) error {
-	return r.db.Delete(&models.Certificate{}, "id = ?", id).Error
+	return r.db.Model(&models.Certificate{}).Where("id = ?", id).Updates(map[string]any{
+		"status": domain.CertificateRevoked, "is_active": false, "updated_at": time.Now(),
+	}).Error
 }
 
 func toDomainCertificate(m *models.Certificate) *domain.Certificate {

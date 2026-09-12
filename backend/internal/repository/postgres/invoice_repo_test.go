@@ -35,7 +35,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err := db.Exec(`TRUNCATE TABLE
 		outbox, invoice_items, invoice_events, invoices, sent_packages, contingency_events,
 		cufd_history, cuis_history, catalog_items, catalog_versions,
-		catalog_sync_states, product_mappings, products, sin_products,
+		catalog_sync_states, sin_products,
 		certificates, api_keys, points_of_sale, branches, customers,
 		tenant_configs, tenants CASCADE`).Error; err != nil {
 		t.Fatalf("limpieza de base de pruebas: %v", err)
@@ -117,11 +117,15 @@ func nuevaFacturaPendiente(f repoFixture) *domain.Invoice {
 		Subtotal:      100,
 		Total:         116,
 		Status:        domain.InvoicePending,
+		Customer:      *f.customer,
 		Items: []domain.InvoiceItem{
-			{Description: "Item 1", Quantity: 1, UnitPrice: 100, Subtotal: 100},
+			{Code: "ITEM-1", Description: "Item 1", CodigoActividad: stringPtr("101010"), CodigoProductoSin: stringPtr("5113100"), UnitCode: testIntPtr(58), Quantity: 1, UnitPrice: 100, Subtotal: 100},
 		},
 	}
 }
+
+func stringPtr(value string) *string { return &value }
+func testIntPtr(value int) *int      { return &value }
 
 func TestCreateAsignaCorrelativosPorPuntoDeVenta(t *testing.T) {
 	db := newTestDB(t)
@@ -208,11 +212,13 @@ func TestClaimStatusTransicionCondicional(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	ok, err := repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, map[string]any{"motivo_anulacion": 1}, nil)
+	cancelledAt := time.Now()
+	cancellationFields := map[string]any{"motivo_anulacion": 1, "fecha_anulacion": cancelledAt}
+	ok, err := repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, cancellationFields, nil)
 	if err != nil || !ok {
 		t.Fatalf("primera transición debe ser true, got ok=%v err=%v", ok, err)
 	}
-	ok, err = repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, map[string]any{"motivo_anulacion": 1}, nil)
+	ok, err = repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, cancellationFields, nil)
 	if err != nil || ok {
 		t.Fatalf("segunda transición debe ser false, got ok=%v err=%v", ok, err)
 	}

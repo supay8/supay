@@ -19,11 +19,6 @@ func NewPostgresSinProductRepository(db *gorm.DB) domain.SinProductRepository {
 
 func (r *PostgresSinProductRepository) Replace(companyID string, products []domain.SinProduct, syncedAt time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.ProductMapping{}).
-			Where("sin_product_id IN (SELECT id FROM sin_products WHERE tenant_id = ?)", companyID).
-			Update("sin_product_id", nil).Error; err != nil {
-			return err
-		}
 		if err := tx.Where("tenant_id = ?", companyID).Delete(&models.SinProduct{}).Error; err != nil {
 			return err
 		}

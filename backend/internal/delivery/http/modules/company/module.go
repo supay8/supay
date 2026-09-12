@@ -18,7 +18,6 @@ func NewModule(uc *usecase.CompanyUsecase) *Module {
 func (m *Module) PathPrefix() string { return "/companies" }
 
 func (m *Module) RegisterRoutes(r chi.Router) {
-	r.Post("/", m.h.create)
 	r.Get("/", m.h.getByNit)
 	r.Patch("/{id}", m.h.update)
 	r.Delete("/{id}", m.h.delete)

@@ -49,3 +49,30 @@ func TestRouterExponeHealthYBootstrapVersionados(t *testing.T) {
 		t.Fatalf("health status=%d", health.Code)
 	}
 }
+
+type companyRouteTestModule struct{}
+
+func (companyRouteTestModule) PathPrefix() string { return "/companies" }
+func (companyRouteTestModule) RegisterRoutes(r chi.Router) {
+	r.Get("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	r.Patch("/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	r.Delete("/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+}
+
+func TestRouterSoloPermiteCrearCompanyDesdeBootstrapInterno(t *testing.T) {
+	router := NewRouter(config.Config{}, []modules.Module{companyRouteTestModule{}}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	publicCreate := httptest.NewRecorder()
+	router.ServeHTTP(publicCreate, httptest.NewRequest(http.MethodPost, "/companies", nil))
+	if publicCreate.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /companies status=%d, se esperaba 405", publicCreate.Code)
+	}
+
+	internalCreate := httptest.NewRecorder()
+	router.ServeHTTP(internalCreate, httptest.NewRequest(http.MethodPost, "/internal/companies", nil))
+	if internalCreate.Code != http.StatusCreated {
+		t.Fatalf("POST /internal/companies status=%d", internalCreate.Code)
+	}
+}

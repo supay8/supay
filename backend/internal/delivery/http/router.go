@@ -55,7 +55,8 @@ func registerTenantRoutes(r chi.Router, registered []modules.Module, lookup ApiK
 // NewRouter construye el router de Chi con todas las rutas de la API.
 // lookup resuelve API keys a tenants. Si lookup es nil la API queda abierta
 // (útil para tests de handlers aislados).
-// companyCreateHandler es el handler público para POST /companies (bootstrap).
+// companyCreateHandler es el handler interno para POST /internal/companies
+// (bootstrap protegido por X-Backend-Token).
 func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup, companyCreateHandler http.HandlerFunc) http.Handler {
 	r := chi.NewRouter()
 	metrics := observability.DefaultMetrics()
@@ -84,7 +85,7 @@ func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup,
 	r.Get("/health", healthHandler)
 	r.Method(http.MethodGet, "/metrics", metrics.Handler())
 
-	// POST /companies es público para bootstrap (con rate-limit por IP)
+	// POST /internal/companies es el bootstrap interno con rate-limit por IP.
 	r.Group(func(r chi.Router) {
 		r.Use(InternalBootstrapMiddleware(cfg.BackendSecret))
 		r.With(RateLimitIP(10/60, 10, 5*time.Minute)).Post("/internal/companies", companyCreateHandler)

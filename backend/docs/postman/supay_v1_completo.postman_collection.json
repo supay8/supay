@@ -1,0 +1,3017 @@
+{
+  "info": {
+    "name": "Supay API v1 - Cuaderno completo",
+    "_postman_id": "supay-v1-cuaderno-completo",
+    "description": "Cuaderno generado para pruebas directas de TODOS los endpoints /v1.\n\nAuth:\n- Negocio: header X-API-Key: {{apiKey}} (ya preconfigurado).\n- Bootstrap: POST /v1/internal/companies usa X-Backend-Token: {{backendToken}}.\n- Idempotencia: POST /v1/invoices y /emit aceptan Idempotency-Key (preconfigurado test-key-001, quitalo para 201).\n\nOrden sugerido: 0-System > Companies > POS > Customers > Products > Catalogs > Invoices-v1 (preview>create>emit) > SIAT (cuis>cufd>sincronizar>firma>evento>paquete/masiva) > Certificates > Branches/API-Keys.\n\nVars: baseUrl=http://localhost:8080, companyId, pointOfSaleId, invoiceId, batchId, productId, customerId.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "apiKey",
+      "value": ""
+    },
+    {
+      "key": "backendToken",
+      "value": ""
+    },
+    {
+      "key": "companyId",
+      "value": ""
+    },
+    {
+      "key": "pointOfSaleId",
+      "value": ""
+    },
+    {
+      "key": "invoiceId",
+      "value": ""
+    },
+    {
+      "key": "batchId",
+      "value": ""
+    },
+    {
+      "key": "productId",
+      "value": ""
+    },
+    {
+      "key": "customerId",
+      "value": ""
+    },
+    {
+      "key": "branchId",
+      "value": ""
+    },
+    {
+      "key": "keyId",
+      "value": ""
+    },
+    {
+      "key": "certId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0-System",
+      "description": "",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "health"
+              ]
+            },
+            "description": "200 {status,message}. Sin auth."
+          },
+          "response": []
+        },
+        {
+          "name": "Metrics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/plain"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/metrics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "metrics"
+              ]
+            },
+            "description": "Prometheus. Sin auth."
+          },
+          "response": []
+        },
+        {
+          "name": "Bootstrap company (X-Backend-Token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Backend-Token",
+                "value": "{{backendToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/internal/companies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "internal",
+                "companies"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nit\": \"1234567012\",\n  \"business_name\": \"Demo SRL\",\n  \"codigo_sistema\": \"ABC123\",\n  \"ambiente\": \"PILOTO\",\n  \"municipio\": \"La Paz\",\n  \"direccion\": \"Av. Test 123\",\n  \"telefono\": \"2-123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201. Header X-Backend-Token requerido. Rate-limit IP."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Companies",
+      "description": "",
+      "item": [
+        {
+          "name": "Crear company (tenant)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nit\": \"1234567012\",\n  \"business_name\": \"Demo SRL\",\n  \"codigo_sistema\": \"SYS1\",\n  \"ambiente\": \"PILOTO\",\n  \"municipio\": \"La Paz\",\n  \"direccion\": \"Av. X\",\n  \"telefono\": \"2-123456\",\n  \"codigo_actividad\": \"47110\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201. Requiere X-API-Key (distinto del bootstrap interno)."
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar por NIT",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/?nit=1234567012",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies"
+              ],
+              "query": [
+                {
+                  "key": "nit",
+                  "value": "1234567012"
+                }
+              ]
+            },
+            "description": "200. Query ?nit= requerido."
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar company",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"business_name\": \"Nuevo SRL\",\n  \"telefono\": \"77700000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Eliminar company",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}"
+              ]
+            },
+            "description": "204."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "API-Keys",
+      "description": "",
+      "item": [
+        {
+          "name": "Crear API key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/api-keys/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "api-keys"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"default\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201 {api_key,key_prefix,id,name}. Guarda api_key en {{apiKey}}."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar API keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/api-keys/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "api-keys"
+              ]
+            },
+            "description": "200 {items}."
+          },
+          "response": []
+        },
+        {
+          "name": "Revocar API key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/api-keys/{{keyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "api-keys",
+                "{{keyId}}"
+              ]
+            },
+            "description": "204. Path keyId requerido."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Branches",
+      "description": "",
+      "item": [
+        {
+          "name": "Crear sucursal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/branches/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "branches"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"{{companyId}}\",\n  \"codigo_sucursal\": 0,\n  \"name\": \"Casa Matriz\",\n  \"address\": \"Av. Arce 123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar sucursales",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/branches/?company_id={{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "branches"
+              ],
+              "query": [
+                {
+                  "key": "company_id",
+                  "value": "{{companyId}}"
+                }
+              ]
+            },
+            "description": "200. ?company_id= opcional."
+          },
+          "response": []
+        },
+        {
+          "name": "Obtener sucursal",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/branches/{{branchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "branches",
+                "{{branchId}}"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar sucursal",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/branches/{{branchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "branches",
+                "{{branchId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Matriz 2\",\n  \"address\": \"Calle 1\",\n  \"active\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Eliminar sucursal",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/branches/{{branchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "branches",
+                "{{branchId}}"
+              ]
+            },
+            "description": "204."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "PointOfSales",
+      "description": "",
+      "item": [
+        {
+          "name": "Registrar POS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/point-of-sales/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "point-of-sales"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"{{companyId}}\",\n  \"codigo_sucursal\": 0,\n  \"description\": \"Caja 1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201. Guarda id en {{pointOfSaleId}}."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar POS",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/point-of-sales/?company_id={{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "point-of-sales"
+              ],
+              "query": [
+                {
+                  "key": "company_id",
+                  "value": "{{companyId}}"
+                }
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Obtener POS",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/point-of-sales/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "point-of-sales",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar POS",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/point-of-sales/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "point-of-sales",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Caja 2\",\n  \"is_active\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Eliminar POS",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/point-of-sales/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "point-of-sales",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "description": "204."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Customers",
+      "description": "",
+      "item": [
+        {
+          "name": "Crear cliente",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/customers/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"{{companyId}}\",\n  \"document_type\": \"CI\",\n  \"document_number\": \"1234567\",\n  \"name\": \"Juan Perez\",\n  \"complement\": \"1A\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201. document_type: CI|CEX|PAS|NIT|OD."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar clientes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/customers/?company_id={{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers"
+              ],
+              "query": [
+                {
+                  "key": "company_id",
+                  "value": "{{companyId}}"
+                }
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Obtener cliente",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/customers/{{customerId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerId}}"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "description": "",
+      "item": [
+        {
+          "name": "Crear producto",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/products/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"{{companyId}}\",\n  \"sku\": \"PROD-001\",\n  \"name\": \"Laptop\",\n  \"mappings\": [\n    {\n      \"codigo_producto_sin\": 12345,\n      \"codigo_actividad\": \"47110\",\n      \"codigo_documento_sector\": 1,\n      \"unidad_medida\": 57,\n      \"is_default\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201. Guarda id en {{productId}}."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar productos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/products/?company_id={{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "company_id",
+                  "value": "{{companyId}}"
+                }
+              ]
+            },
+            "description": "200. ?company_id= REQUERIDO (400 si falta)."
+          },
+          "response": []
+        },
+        {
+          "name": "Agregar mapping",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/products/{{productId}}/mappings?company_id={{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "products",
+                "{{productId}}",
+                "mappings"
+              ],
+              "query": [
+                {
+                  "key": "company_id",
+                  "value": "{{companyId}}"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo_producto_sin\": 12345,\n  \"codigo_actividad\": \"47110\",\n  \"codigo_documento_sector\": 1,\n  \"unidad_medida\": 57,\n  \"is_default\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "204. Query ?company_id= requerido."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Invoices-v1",
+      "description": "Contrato docs/api-v1.md. Preview no persiste. Sector 30 solo masiva.",
+      "item": [
+        {
+          "name": "Preview (validar sin crear)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "preview"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 InvoicePreview{subtotal,total,codigo_documento_sector}. 400 VALIDATION_ERROR si faltan campos/data sectorial. No persiste, no acepta Idempotency-Key."
+          },
+          "response": []
+        },
+        {
+          "name": "Crear borrador",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "test-key-001"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "201 sin Idempotency-Key, 200 con clave (replay). Location: /v1/invoices/{id}. Guarda id en {{invoiceId}}. DisallowUnknownFields."
+          },
+          "response": []
+        },
+        {
+          "name": "Crear + emitir",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "test-key-001"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/emit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "emit"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 ACCEPTED/OBSERVED, u OFFLINE+contingency_event_id si cae SIAT. Sector 30 -> 400 (usar masiva)."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar facturas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/?point_of_sale_id={{pointOfSaleId}}&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices"
+              ],
+              "query": [
+                {
+                  "key": "point_of_sale_id",
+                  "value": "{{pointOfSaleId}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "200. ?point_of_sale_id= REQ. Opc: ?status=&from=&to=(RFC3339)&limit=&offset=&include="
+          },
+          "response": []
+        },
+        {
+          "name": "Sectores soportados",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/sectores?company_id={{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "sectores"
+              ],
+              "query": [
+                {
+                  "key": "company_id",
+                  "value": "{{companyId}}"
+                }
+              ]
+            },
+            "description": "200 [{codigo,...,campos_datos_sector}]. ?company_id= agrega habilitado."
+          },
+          "response": []
+        },
+        {
+          "name": "Obtener factura",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/{{invoiceId}}?include=all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "{{invoiceId}}"
+              ],
+              "query": [
+                {
+                  "key": "include",
+                  "value": "all"
+                }
+              ]
+            },
+            "description": "200. ?include=xml,company,point_of_sale,cufd,archivo,all."
+          },
+          "response": []
+        },
+        {
+          "name": "Descargar XML",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/{{invoiceId}}/xml",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "{{invoiceId}}",
+                "xml"
+              ]
+            },
+            "description": "200 application/xml (solo emitidas, sino 409)."
+          },
+          "response": []
+        },
+        {
+          "name": "Descargar PDF",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/{{invoiceId}}/pdf",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "{{invoiceId}}",
+                "pdf"
+              ]
+            },
+            "description": "200 application/pdf factura-{id}.pdf."
+          },
+          "response": []
+        },
+        {
+          "name": "Emitir borrador",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/{{invoiceId}}/emit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "{{invoiceId}}",
+                "emit"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200. Body vacio/{}."
+          },
+          "response": []
+        },
+        {
+          "name": "Estado SIAT",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/{{invoiceId}}/siat-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "{{invoiceId}}",
+                "siat-status"
+              ]
+            },
+            "description": "200 con estado SIAT."
+          },
+          "response": []
+        },
+        {
+          "name": "Anular",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/{{invoiceId}}/annul",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "{{invoiceId}}",
+                "annul"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo_motivo\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200. codigo_motivo cat. motivoAnulacion (1=mal emitida)."
+          },
+          "response": []
+        },
+        {
+          "name": "Revertir anulacion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/invoices/{{invoiceId}}/annul/revert",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "invoices",
+                "{{invoiceId}}",
+                "annul",
+                "revert"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200. Body vacio. Sin codigoMotivo (907 esperado SIAT)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Catalogs",
+      "description": "",
+      "item": [
+        {
+          "name": "Actividades empresa",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/actividades-economicas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "actividades-economicas"
+              ]
+            },
+            "description": "200 actividades asignadas."
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/catalogs/readiness?point_of_sale_id={{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "catalogs",
+                "readiness"
+              ],
+              "query": [
+                {
+                  "key": "point_of_sale_id",
+                  "value": "{{pointOfSaleId}}"
+                }
+              ]
+            },
+            "description": "200. ?point_of_sale_id= opcional."
+          },
+          "response": []
+        },
+        {
+          "name": "Actividades SIAT",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/catalogs/actividades-economicas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "catalogs",
+                "actividades-economicas"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Documentos-sector",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/catalogs/documentos-sector",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "catalogs",
+                "documentos-sector"
+              ]
+            },
+            "description": "200. ?codigo_actividad= opcional."
+          },
+          "response": []
+        },
+        {
+          "name": "Leyendas factura",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/catalogs/leyendas-factura",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "catalogs",
+                "leyendas-factura"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Productos SIN",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/catalogs/productos-sin?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "catalogs",
+                "productos-sin"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "200. ?codigo_actividad=&q=&limit=50&offset=0."
+          },
+          "response": []
+        },
+        {
+          "name": "Emision bootstrap",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/catalogs/emision-bootstrap",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "catalogs",
+                "emision-bootstrap"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Parametrico por slug",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/catalogs/tipos-moneda",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "catalogs",
+                "tipos-moneda"
+              ]
+            },
+            "description": "200. slug ej: tipos-moneda, metodos-pago."
+          },
+          "response": []
+        },
+        {
+          "name": "Perfiles documento-sector",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/catalogs/perfiles-documento-sector",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "catalogs",
+                "perfiles-documento-sector"
+              ]
+            },
+            "description": "200 perfiles Supay con campos_extra."
+          },
+          "response": []
+        },
+        {
+          "name": "Perfil sector {codigo}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/catalogs/perfiles-documento-sector/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "catalogs",
+                "perfiles-documento-sector",
+                "1"
+              ]
+            },
+            "description": "200. codigo>0."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Certificates",
+      "description": "Subida es multipart/form-data.",
+      "item": [
+        {
+          "name": "Subir certificado (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/certificates/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "certificates",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "p12_file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "token",
+                  "type": "text",
+                  "value": "delegado123"
+                },
+                {
+                  "key": "name",
+                  "type": "text",
+                  "value": "principal"
+                },
+                {
+                  "key": "type",
+                  "type": "text",
+                  "value": "P12"
+                },
+                {
+                  "key": "modalidad",
+                  "type": "text",
+                  "value": "1"
+                },
+                {
+                  "key": "ambiente",
+                  "type": "text",
+                  "value": "PILOTO"
+                },
+                {
+                  "key": "p12_password",
+                  "type": "text",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "201. multipart: p12_file binario .p12/.pfx <=5MB + token/token_delegado."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar certificados",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/certificates/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "certificates"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Certificado activo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/certificates/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "certificates",
+                "active"
+              ]
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Eliminar certificado",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/{{companyId}}/certificates/{{certId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "{{companyId}}",
+                "certificates",
+                "{{certId}}"
+              ]
+            },
+            "description": "204."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "SIAT-v1",
+      "description": "Flujo: cuis>cufd>sincronizar>emit/paquete>evento. Bodies estrictos (rechazan unknown fields).",
+      "item": [
+        {
+          "name": "Setup generico",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/setup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "setup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 {cuis,cufd,readiness} idempotente. body point_of_sale_id req."
+          },
+          "response": []
+        },
+        {
+          "name": "Setup POS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/setup/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "setup",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200. {} o {point_of_sale_id} (debe coincidir)."
+          },
+          "response": []
+        },
+        {
+          "name": "Etapa I - CUIS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/cuis/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "cuis",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 {success,cuis,fecha_vigencia}. Body {} o vacio."
+          },
+          "response": []
+        },
+        {
+          "name": "Etapa III - CUFD",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/cufd/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "cufd",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 {success,data:{cufd,fecha_vigencia,codigo_control}}."
+          },
+          "response": []
+        },
+        {
+          "name": "Etapa II - Sincronizar",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/sincronizar/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "sincronizar",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 resumen. Sin query = todas las operaciones. Para una sola: ?operation=tipoPuntoVenta (ParseFiscalSyncOperation; desconocida -> 400)."
+          },
+          "response": []
+        },
+        {
+          "name": "Etapa V - Evento significativo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/evento-significativo/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "evento-significativo",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo_motivo_evento\": 6,\n  \"descripcion\": \"Corte del servicio de internet\",\n  \"cufd_evento\": \"\",\n  \"fecha_hora_inicio_evento\": \"2026-09-11T10:00:00.000\",\n  \"fecha_hora_fin_evento\": \"2026-09-11T12:00:00.000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 {success,codigo_recepcion}. Todo opcional (defaults + ventana holgada). Formato fechas YYYY-MM-DDTHH:mm:ss.SSS."
+          },
+          "response": []
+        },
+        {
+          "name": "Etapa VIII - Firmar XML",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/firma/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "firma",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xml\": \"<factura xmlns=\\\"https://siat.impuestos.gob.bo/\\\"><nitEmisor>1020304050</nitEmisor></factura>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 {xmlFirmado,archivo,hashArchivo} XAdES-BES."
+          },
+          "response": []
+        },
+        {
+          "name": "Enviar paquete (contingencia)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/paquete/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "paquete",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoice_ids\": [\n    \"{{invoiceId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 batch. Omitido=auto pendientes; null/repetidos=400."
+          },
+          "response": []
+        },
+        {
+          "name": "Validar paquete",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/paquete/{{batchId}}/validate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "paquete",
+                "{{batchId}}",
+                "validate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 validacion. path batchId manda."
+          },
+          "response": []
+        },
+        {
+          "name": "Enviar masiva",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/masiva/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "masiva",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoice_ids\": [\n    \"{{invoiceId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200. Requerido para sector 30."
+          },
+          "response": []
+        },
+        {
+          "name": "Validar masiva",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/masiva/{{batchId}}/validate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "masiva",
+                "{{batchId}}",
+                "validate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200."
+          },
+          "response": []
+        },
+        {
+          "name": "Libro compras",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/compras/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "compras",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"descripcion\": \"Compras Ene\",\n  \"tipoCompra\": 1,\n  \"archivo\": \"<base64 TAR.GZ>\",\n  \"hashArchivo\": \"<sha256>\",\n  \"cantidadFacturas\": 2,\n  \"gestion\": 2026,\n  \"periodo\": 9,\n  \"fechaEnvio\": \"2026-09-11T00:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200. cantidadFacturas<10, puntoVenta no aplica (0)."
+          },
+          "response": []
+        },
+        {
+          "name": "Documento ajuste (deprecado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/documento-ajuste/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "documento-ajuste",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"numeroFactura\": 5,\n  \"cufFacturaOriginal\": \"CUF-FACTURA-ORIGINAL\",\n  \"codigoDocumentoSector\": 24,\n  \"codigoTipoFactura\": 1,\n  \"tipoNota\": 1,\n  \"motivo\": \"Devolucion de mercaderia\",\n  \"codigoMetodoPago\": 1,\n  \"codigoMoneda\": 1,\n  \"tipoCambio\": 1,\n  \"montoTotal\": 100,\n  \"leyenda\": \"Ley N 453\",\n  \"cliente\": {\n    \"razonSocial\": \"CLIENTE TEST SRL\",\n    \"codigoTipoDocumentoIdentidad\": 5,\n    \"numeroDocumento\": \"1234567\",\n    \"codigoCliente\": \"C-001\"\n  },\n  \"items\": [\n    {\n      \"actividadEconomica\": \"473000\",\n      \"codigoProductoSin\": 12345,\n      \"codigoProducto\": \"P-001\",\n      \"descripcion\": \"Producto de prueba\",\n      \"cantidad\": 1,\n      \"unidadMedida\": 57,\n      \"precioUnitario\": 100,\n      \"subTotal\": 100\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Deprecado; preferir /v1/invoices con reference_invoice_id. Claves camelCase (struct DocumentoAjusteInput). Requeridos: cufFacturaOriginal, tipoNota 1|2, cliente{razonSocial,codigoTipoDocumentoIdentidad,numeroDocumento}, items[]."
+          },
+          "response": []
+        },
+        {
+          "name": "Catalogos SIAT (todos)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/catalogs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "catalogs"
+              ]
+            },
+            "description": "200 todos o all=agrupados."
+          },
+          "response": []
+        },
+        {
+          "name": "Catalogo SIAT por tipo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/catalogs/tipos-moneda",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "catalogs",
+                "tipos-moneda"
+              ]
+            },
+            "description": "200 un tipo."
+          },
+          "response": []
+        },
+        {
+          "name": "PDF via SIAT",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/invoice/{{invoiceId}}/pdf",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "invoice",
+                "{{invoiceId}}",
+                "pdf"
+              ]
+            },
+            "description": "200 application/pdf (alias de /v1/invoices/{id}/pdf)."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat cuis companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/cuis/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "cuis",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Igual que sin companyId; companyId debe==tenant."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat cufd companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/cufd/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "cufd",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Idem."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat sincronizar companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/sincronizar/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "sincronizar",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "200 resumen. Sin query = todas las operaciones. Para una sola: ?operation=tipoPuntoVenta (ParseFiscalSyncOperation; desconocida -> 400)."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat evento-significativo companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/evento-significativo/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "evento-significativo",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Igual que sin companyId; companyId debe==tenant."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat firma companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/firma/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "firma",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"xml\": \"<factura/>\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Igual que sin companyId."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat paquete companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/paquete/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "paquete",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"invoice_ids\": [\"{{invoiceId}}\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Igual que sin companyId."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat masiva companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/masiva/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "masiva",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"invoice_ids\": [\"{{invoiceId}}\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Igual que sin companyId."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat compras companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/compras/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "compras",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"descripcion\": \"Compras Ene\",\n  \"tipoCompra\": 1,\n  \"archivo\": \"<base64 TAR.GZ>\",\n  \"hashArchivo\": \"<sha256>\",\n  \"cantidadFacturas\": 2,\n  \"gestion\": 2026,\n  \"periodo\": 9,\n  \"fechaEnvio\": \"2026-09-11T00:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Igual que sin companyId."
+          },
+          "response": []
+        },
+        {
+          "name": "Compat documento-ajuste companyId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/siat/documento-ajuste/{{companyId}}/{{pointOfSaleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "siat",
+                "documento-ajuste",
+                "{{companyId}}",
+                "{{pointOfSaleId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"numeroFactura\": 5,\n  \"cufFacturaOriginal\": \"CUF-FACTURA-ORIGINAL\",\n  \"codigoDocumentoSector\": 24,\n  \"codigoTipoFactura\": 1,\n  \"tipoNota\": 1,\n  \"motivo\": \"Devolucion de mercaderia\",\n  \"codigoMetodoPago\": 1,\n  \"codigoMoneda\": 1,\n  \"tipoCambio\": 1,\n  \"montoTotal\": 100,\n  \"leyenda\": \"Ley N 453\",\n  \"cliente\": {\n    \"razonSocial\": \"CLIENTE TEST SRL\",\n    \"codigoTipoDocumentoIdentidad\": 5,\n    \"numeroDocumento\": \"1234567\",\n    \"codigoCliente\": \"C-001\"\n  },\n  \"items\": [\n    {\n      \"actividadEconomica\": \"473000\",\n      \"codigoProductoSin\": 12345,\n      \"codigoProducto\": \"P-001\",\n      \"descripcion\": \"Producto de prueba\",\n      \"cantidad\": 1,\n      \"unidadMedida\": 57,\n      \"precioUnitario\": 100,\n      \"subTotal\": 100\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Deprecado; preferir /v1/invoices con reference_invoice_id. Claves camelCase (struct DocumentoAjusteInput). Requeridos: cufFacturaOriginal, tipoNota 1|2, cliente{razonSocial,codigoTipoDocumentoIdentidad,numeroDocumento}, items[]."
+          },
+          "response": []
+        },
+        {
+          "name": "Legacy activites-document-sectors",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/catalogs/activites-document-sectors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "catalogs",
+                "activites-document-sectors"
+              ]
+            },
+            "description": "Compat legacy (notar typo activites). ?query=&limit=&offset=."
+          },
+          "response": []
+        },
+        {
+          "name": "Legacy products SIN",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/catalogs/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "catalogs",
+                "products"
+              ]
+            },
+            "description": "Compat legacy. ?query=&limit=50&offset=0."
+          },
+          "response": []
+        },
+        {
+          "name": "Legacy readiness",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/catalogs/readiness",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "catalogs",
+                "readiness"
+              ]
+            },
+            "description": "Compat legacy. ?point_of_sale_id= opcional."
+          },
+          "response": []
+        },
+        {
+          "name": "Legacy catalog por company",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/catalogs/{{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "catalogs",
+                "{{companyId}}"
+              ]
+            },
+            "description": "Compat legacy; companyId debe==tenant."
+          },
+          "response": []
+        },
+        {
+          "name": "Legacy catalog por company+tipo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/catalogs/{{companyId}}/tipos-moneda",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "catalogs",
+                "{{companyId}}",
+                "tipos-moneda"
+              ]
+            },
+            "description": "Compat legacy; {tipo} opcional, all=agrupados."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

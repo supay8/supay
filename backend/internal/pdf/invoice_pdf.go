@@ -27,7 +27,7 @@ func Generate(data InvoicePDFData) ([]byte, error) {
 		return nil, fmt.Errorf("pdf: invoice es obligatoria")
 	}
 	inv := data.Invoice
-	if inv.Company.ID == "" || inv.Customer.Name == "" {
+	if inv.Company.ID == "" || inv.CustomerName == "" {
 		return nil, fmt.Errorf("pdf: factura sin datos de empresa o cliente precargados")
 	}
 
@@ -248,7 +248,12 @@ func drawFechasCard(page *template.PageBuilder, inv *models.Invoice) {
 
 // drawClienteFormal: tarjeta con header navy y campos en grilla.
 func drawClienteFormal(page *template.PageBuilder, inv *models.Invoice) {
-	customer := inv.Customer
+	customer := models.Customer{
+		ID: inv.CustomerId, CompanyId: inv.CompanyId,
+		DocumentType: inv.CustomerDocumentType, DocumentNumber: inv.CustomerDocumentNumber,
+		Complement: inv.CustomerComplement, Email: inv.CustomerEmail,
+		Name: inv.CustomerName, CodigoCliente: inv.CustomerCode,
+	}
 	page.AutoRow(func(r *template.RowBuilder) {
 		r.Col(12, func(c *template.ColBuilder) { c.Spacer(document.Mm(2.2)) })
 	})
@@ -336,9 +341,9 @@ func drawDetalleFormal(page *template.PageBuilder, inv *models.Invoice) {
 		rows = append(rows, []string{
 			it.Code,
 			it.Description,
-			fmt.Sprintf("%.2f", it.Quantity),
-			fmt.Sprintf("%.2f", it.UnitPrice),
-			fmt.Sprintf("%.2f", it.Subtotal),
+			it.Quantity.StringFixed(2),
+			it.UnitPrice.StringFixed(2),
+			it.Subtotal.StringFixed(2),
 		})
 	}
 	if len(rows) == 0 {
@@ -377,9 +382,9 @@ func drawTotalesFormal(page *template.PageBuilder, inv *models.Invoice) {
 		kind  string // "sub" | "desc" | "total"
 	}
 	tots := []tot{
-		{"Subtotal", inv.Subtotal, "sub"},
-		{"Descuento", inv.Discount, "desc"},
-		{"TOTAL", inv.Total, "total"},
+		{"Subtotal", inv.Subtotal.InexactFloat64(), "sub"},
+		{"Descuento", inv.Discount.InexactFloat64(), "desc"},
+		{"TOTAL", inv.Total.InexactFloat64(), "total"},
 	}
 
 	// Contenedor alineado a la derecha: dejamos 5 cols vacías

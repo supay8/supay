@@ -21,7 +21,6 @@ type invoiceCustomerDTO struct {
 // invoiceItemDTO es la representación de un ítem de factura.
 type invoiceItemDTO struct {
 	ID                string          `json:"id"`
-	ProductID         *string         `json:"product_id,omitempty"`
 	Code              string          `json:"code"`
 	Description       string          `json:"description"`
 	CodigoActividad   *string         `json:"codigo_actividad,omitempty"`
@@ -105,7 +104,6 @@ func parseIncludes(raw string) map[string]bool {
 func toInvoiceItemDTO(it domain.InvoiceItem) invoiceItemDTO {
 	return invoiceItemDTO{
 		ID:                it.ID,
-		ProductID:         it.ProductID,
 		Code:              it.Code,
 		Description:       it.Description,
 		CodigoActividad:   it.CodigoActividad,
@@ -124,8 +122,8 @@ func toInvoiceDTO(inv *domain.Invoice, includes map[string]bool) invoiceDTO {
 		includes = map[string]bool{}
 	}
 
-	// El cliente siempre está presente: es la única fuente de verdad de los
-	// datos fiscales del receptor (el snapshot receiver fue eliminado).
+	// El cliente embebido proviene del snapshot de invoices, nunca de una
+	// consulta mutable a customers.
 	customerDTO := &invoiceCustomerDTO{
 		ID:             inv.Customer.ID,
 		Name:           inv.Customer.Name,

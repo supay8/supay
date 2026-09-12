@@ -1,7 +1,6 @@
 package customer
 
 import (
-	"encoding/json"
 	"net/http"
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
@@ -15,20 +14,6 @@ type handler struct {
 
 func newHandler(uc *usecase.CustomerUsecase) *handler {
 	return &handler{uc: uc}
-}
-
-func (h *handler) create(w http.ResponseWriter, r *http.Request) {
-	var req usecase.CreateCustomerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		deliveryHttp.RespondValidation(w, "payload JSON inválido")
-		return
-	}
-	c, err := h.uc.Create(req)
-	if err != nil {
-		deliveryHttp.RespondError(w, err)
-		return
-	}
-	deliveryHttp.WriteJSON(w, http.StatusCreated, c)
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {

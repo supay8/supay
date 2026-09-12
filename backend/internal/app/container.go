@@ -22,7 +22,6 @@ import (
 	"github.com/brandsrx/supay/internal/delivery/http/modules/customer"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/invoice"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/pos"
-	"github.com/brandsrx/supay/internal/delivery/http/modules/product"
 	siatModule "github.com/brandsrx/supay/internal/delivery/http/modules/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/emissionqueue"
@@ -53,7 +52,6 @@ type Container struct {
 	siatActividadRepo          domain.SiatActividadRepository
 	siatLeyendaRepo            domain.SiatLeyendaRepository
 	siatActividadDocSectorRepo domain.SiatActividadDocSectorRepository
-	productRepo                domain.ProductRepository
 	branchRepo                 domain.BranchRepository
 	sentPackageRepo            domain.SentPackageRepository
 	customerRepo               domain.CustomerRepository
@@ -77,7 +75,6 @@ type Container struct {
 	companyUsecase     *usecase.CompanyUsecase
 	apiKeyUsecase      *usecase.ApiKeyUsecase
 	pointOfSaleUsecase *usecase.PointOfSaleUsecase
-	productUsecase     *usecase.ProductUsecase
 	branchUsecase      *usecase.BranchUsecase
 	customerUsecase    *usecase.CustomerUsecase
 	invoiceUsecase     *usecase.InvoiceUsecase
@@ -181,13 +178,6 @@ func (c *Container) SiatActividadDocSectorRepo() domain.SiatActividadDocSectorRe
 		c.siatActividadDocSectorRepo = postgres.NewPostgresSiatActividadDocSectorRepository(c.db)
 	}
 	return c.siatActividadDocSectorRepo
-}
-
-func (c *Container) ProductRepo() domain.ProductRepository {
-	if c.productRepo == nil {
-		c.productRepo = postgres.NewPostgresProductRepository(c.db)
-	}
-	return c.productRepo
 }
 
 func (c *Container) BranchRepo() domain.BranchRepository {
@@ -413,19 +403,9 @@ func (c *Container) ApiKeyUsecase() *usecase.ApiKeyUsecase {
 
 func (c *Container) PointOfSaleUsecase() *usecase.PointOfSaleUsecase {
 	if c.pointOfSaleUsecase == nil {
-		c.pointOfSaleUsecase = usecase.NewPointOfSaleUsecase(c.PointOfSaleRepo(), c.CompanyRepo())
+		c.pointOfSaleUsecase = usecase.NewPointOfSaleUsecase(c.PointOfSaleRepo(), c.BranchRepo())
 	}
 	return c.pointOfSaleUsecase
-}
-
-func (c *Container) ProductUsecase() *usecase.ProductUsecase {
-	if c.productUsecase == nil {
-		c.productUsecase = usecase.NewProductUsecase(
-			c.ProductRepo(), c.CompanyRepo(), c.CatalogRepo(),
-			c.SinProductRepo(), c.SiatActividadDocSectorRepo(),
-		)
-	}
-	return c.productUsecase
 }
 
 func (c *Container) BranchUsecase() *usecase.BranchUsecase {
@@ -437,7 +417,7 @@ func (c *Container) BranchUsecase() *usecase.BranchUsecase {
 
 func (c *Container) CustomerUsecase() *usecase.CustomerUsecase {
 	if c.customerUsecase == nil {
-		c.customerUsecase = usecase.NewCustomerUsecase(c.CustomerRepo(), c.CompanyRepo())
+		c.customerUsecase = usecase.NewCustomerUsecase(c.CustomerRepo())
 	}
 	return c.customerUsecase
 }
@@ -448,7 +428,7 @@ func (c *Container) InvoiceUsecase() *usecase.InvoiceUsecase {
 			c.InvoiceRepo(), c.CustomerRepo(), c.CompanyRepo(),
 			c.PointOfSaleRepo(), c.CatalogRepo(), c.CufdRepo(),
 			c.FiscalService(), c.cfg.SiatInfra.Modalidad,
-			c.ProductRepo(), c.SyncStateRepo(), c.SiatLeyendaRepo(),
+			c.SyncStateRepo(), c.SiatLeyendaRepo(),
 			c.SiatActividadDocSectorRepo(), c.CredentialService(),
 			c.PdfService(), c.cfg.AllowCustomIssueDate, c.SiatProvider(),
 		)
@@ -514,7 +494,6 @@ func (c *Container) Modules() []deliveryModules.Module {
 			pos.NewModule(c.PointOfSaleUsecase()),
 			branch.NewModule(c.BranchUsecase()),
 			customer.NewModule(c.CustomerUsecase()),
-			product.NewModule(c.ProductUsecase()),
 			invoice.NewModule(c.InvoiceUsecase()),
 			siatModule.NewModule(c.SiatUsecase(), c.PdfService()),
 			catalog.NewModule(c.SiatUsecase()),

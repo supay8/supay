@@ -17,21 +17,6 @@ func newHandler(uc *usecase.CompanyUsecase) *handler {
 	return &handler{usecase: uc}
 }
 
-func (h *handler) create(w http.ResponseWriter, r *http.Request) {
-	var req usecase.RegisterCompanyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		deliveryHttp.RespondValidation(w, "payload JSON inválido")
-		return
-	}
-
-	company, err := h.usecase.Register(req)
-	if err != nil {
-		deliveryHttp.RespondError(w, err)
-		return
-	}
-	deliveryHttp.WriteJSON(w, http.StatusCreated, company)
-}
-
 func (h *handler) getByNit(w http.ResponseWriter, r *http.Request) {
 	nit := r.URL.Query().Get("nit")
 	if nit == "" {

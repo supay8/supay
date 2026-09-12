@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/shopspring/decimal"
 )
 
 func TestGenerate_PDFValido(t *testing.T) {
@@ -96,17 +97,23 @@ func sampleInvoice() *models.Invoice {
 	cuf := "8727F63A15F8976591FDDE5B387C5D015A29E06A1A19E23EF34124CD"
 	unitCode := 1
 	return &models.Invoice{
-		ID:               "factura-1",
-		InvoiceNumber:    1001,
-		EmissionType:     models.EmissionEnLinea,
-		CodigoMetodoPago: 1,
-		CodigoMoneda:     1,
-		TipoCambio:       1,
-		IssueDate:        time.Date(2026, 8, 5, 14, 30, 0, 0, time.UTC),
-		Subtotal:         150.50,
-		Discount:         0,
-		Total:            150.50,
-		Cuf:              &cuf,
+		ID:                     "factura-1",
+		InvoiceNumber:          1001,
+		EmissionType:           models.EmissionEnLinea,
+		CodigoMetodoPago:       1,
+		CodigoMoneda:           1,
+		TipoCambio:             decimal.NewFromInt(1),
+		IssueDate:              time.Date(2026, 8, 5, 14, 30, 0, 0, time.UTC),
+		Subtotal:               decimal.NewFromFloat(150.50),
+		Discount:               decimal.Zero,
+		Total:                  decimal.NewFromFloat(150.50),
+		Cuf:                    &cuf,
+		CustomerId:             "customer-1",
+		CustomerDocumentType:   models.DocNIT,
+		CustomerDocumentNumber: "3456789012",
+		CustomerComplement:     &comp,
+		CustomerName:           "Cliente Supay S.A.",
+		CustomerCode:           "NIT3456789012",
 		Company: models.Company{
 			ID:              "company-1",
 			Nit:             "102965402",
@@ -117,13 +124,6 @@ func sampleInvoice() *models.Invoice {
 			Telefono:        "2444444",
 			CodigoActividad: &act,
 			PiePagina:       "Ley Nro 453: Toda persona, natural o juridica, tiene derecho a la informacion.",
-		},
-		Customer: models.Customer{
-			ID:             "customer-1",
-			DocumentType:   models.DocNIT,
-			DocumentNumber: "3456789012",
-			Complement:     &comp,
-			Name:           "Cliente Supay S.A.",
 		},
 		PointOfSale: models.PointOfSale{
 			CodigoSucursal:   0,
@@ -140,18 +140,18 @@ func sampleInvoice() *models.Invoice {
 				Code:            "SRV-001",
 				Description:     "Servicio de desarrollo de software a medida para plataformas de facturacion",
 				CodigoActividad: nil,
-				Quantity:        1,
-				UnitPrice:       100.25,
-				Subtotal:        100.25,
+				Quantity:        decimal.NewFromInt(1),
+				UnitPrice:       decimal.NewFromFloat(100.25),
+				Subtotal:        decimal.NewFromFloat(100.25),
 				UnitCode:        &unitCode,
 			},
 			{
 				Code:            "SRV-002",
 				Description:     "Mantenimiento",
 				CodigoActividad: &act,
-				Quantity:        2,
-				UnitPrice:       25.125,
-				Subtotal:        50.25,
+				Quantity:        decimal.NewFromInt(2),
+				UnitPrice:       decimal.NewFromFloat(25.125),
+				Subtotal:        decimal.NewFromFloat(50.25),
 			},
 		},
 	}

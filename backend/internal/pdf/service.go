@@ -31,7 +31,7 @@ func NewServiceWithStorage(db *gorm.DB, storage Storage) *Service {
 	return &Service{db: db, storage: storage}
 }
 
-// GenerateInvoicePDF carga la factura (empresa, cliente, punto de venta,
+// GenerateInvoicePDF carga la factura (empresa, snapshot del receptor, punto de venta,
 // CUFD e ítems) y devuelve el PDF como []byte. Implementa cache-aside:
 // intenta storage.Get primero; en miss genera y hace Save best-effort.
 func (s *Service) GenerateInvoicePDF(invoiceID string) ([]byte, error) {
@@ -55,7 +55,7 @@ func (s *Service) GenerateInvoicePDFWithContext(ctx context.Context, invoiceID s
 
 	var inv models.Invoice
 	if err := s.db.Preload("Items").Preload("PointOfSale").
-		Preload("Company.Config").Preload("Customer").Preload("CufdRecord").
+		Preload("Company.Config").Preload("CufdRecord").
 		First(&inv, "id = ?", invoiceID).Error; err != nil {
 		return nil, fmt.Errorf("pdf: factura no encontrada: %w", err)
 	}

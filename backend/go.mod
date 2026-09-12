@@ -15,6 +15,7 @@ require (
 	github.com/riverqueue/river/riverdriver/riverdatabasesql v0.44.0
 	github.com/riverqueue/river/rivertype v0.44.0
 	github.com/ron86i/go-siat/v2 v2.1.1
+	github.com/shopspring/decimal v1.4.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
 	gorm.io/datatypes v1.2.7
@@ -42,7 +43,6 @@ require (
 	github.com/riverqueue/river/riverdriver v0.44.0 // indirect
 	github.com/riverqueue/river/rivershared v0.44.0 // indirect
 	github.com/russellhaering/goxmldsig v1.6.0 // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

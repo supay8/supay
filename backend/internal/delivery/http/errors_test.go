@@ -47,12 +47,6 @@ func TestClassifyError(t *testing.T) {
 			wantMessage: "no hay un cufd vigente",
 		},
 		{
-			name:       "conflicto centinela de dominio (documento de cliente)",
-			err:        domain.ErrCustomerDocumentConflict,
-			wantStatus: http.StatusConflict,
-			wantCode:   CodeConflict,
-		},
-		{
 			name:       "conflicto centinela de dominio (dependencias de POS)",
 			err:        domain.ErrPointOfSaleHasDependencies,
 			wantStatus: http.StatusConflict,

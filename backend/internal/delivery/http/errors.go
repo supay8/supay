@@ -208,7 +208,6 @@ func isConflict(err error) bool {
 	switch err {
 	case domain.ErrCompanyNitConflict,
 		domain.ErrCompanyHasDependencies,
-		domain.ErrCustomerDocumentConflict,
 		domain.ErrBranchSucursalConflict,
 		domain.ErrPointOfSaleCodeConflict,
 		domain.ErrPointOfSaleHasDependencies:

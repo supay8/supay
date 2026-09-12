@@ -44,11 +44,15 @@ type MinimalInvoiceCustomer struct {
 }
 
 type MinimalInvoiceItem struct {
-	SKU      string          `json:"sku"`
-	Quantity float64         `json:"quantity"`
-	Price    float64         `json:"price"`
-	Discount float64         `json:"discount,omitempty"`
-	Data     json.RawMessage `json:"data,omitempty"`
+	SKU               string          `json:"sku"`
+	Description       string          `json:"description"`
+	CodigoActividad   string          `json:"codigo_actividad"`
+	CodigoProductoSin int64           `json:"codigo_producto_sin"`
+	UnidadMedida      int             `json:"unidad_medida"`
+	Quantity          float64         `json:"quantity"`
+	Price             float64         `json:"price"`
+	Discount          float64         `json:"discount,omitempty"`
+	Data              json.RawMessage `json:"data,omitempty"`
 }
 
 // InvoicePreview exposes the fields inferred by the API without persisting a
@@ -79,7 +83,6 @@ type InvoicePreviewCustomer struct {
 }
 
 type InvoicePreviewItem struct {
-	ProductID             string  `json:"product_id"`
 	SKU                   string  `json:"sku"`
 	Description           string  `json:"description"`
 	Quantity              float64 `json:"quantity"`
@@ -180,6 +183,7 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		return nil, domain.NewBadRequestError("items debe contener al menos un producto")
 	}
 	request.Items = make([]CreateInvoiceItemRequest, 0, len(input.Items))
+	adjustmentSnapshot := esSectorAjuste(request.CodigoDocumentoSector) && input.ReferenceInvoiceID != nil
 	for index, item := range input.Items {
 		if strings.TrimSpace(item.SKU) == "" {
 			return nil, domain.NewBadRequestError(fmt.Sprintf("items[%d].sku es obligatorio", index))
@@ -190,12 +194,46 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		if item.Price < 0 || item.Discount < 0 || item.Discount > item.Quantity*item.Price {
 			return nil, domain.NewBadRequestError(fmt.Sprintf("items[%d] tiene precio o descuento inválido", index))
 		}
+		description := strings.TrimSpace(item.Description)
+		if description == "" && !adjustmentSnapshot {
+			return nil, domain.NewBadRequestError(fmt.Sprintf("items[%d].description es obligatorio", index))
+		}
+		activity := strings.TrimSpace(item.CodigoActividad)
+		if activity == "" && company.CodigoActividad != nil {
+			activity = strings.TrimSpace(*company.CodigoActividad)
+		}
+		if (activity == "" || item.CodigoProductoSin <= 0 || item.UnidadMedida <= 0) && !adjustmentSnapshot {
+			return nil, domain.NewBadRequestError(fmt.Sprintf("items[%d] requiere codigo_actividad, codigo_producto_sin y unidad_medida válidos", index))
+		}
+		var sinCode string
+		var unit int
+		if item.CodigoProductoSin > 0 {
+			sinCode = strconv.FormatInt(item.CodigoProductoSin, 10)
+		}
+		if item.UnidadMedida > 0 {
+			unit = item.UnidadMedida
+		}
+		var activityPtr, sinCodePtr *string
+		var unitPtr *int
+		if activity != "" {
+			activityPtr = &activity
+		}
+		if sinCode != "" {
+			sinCodePtr = &sinCode
+		}
+		if unit > 0 {
+			unitPtr = &unit
+		}
 		request.Items = append(request.Items, CreateInvoiceItemRequest{
-			SKU:        strings.TrimSpace(item.SKU),
-			Quantity:   item.Quantity,
-			UnitPrice:  item.Price,
-			Discount:   item.Discount,
-			SectorData: item.Data,
+			SKU:               strings.TrimSpace(item.SKU),
+			Description:       description,
+			CodigoActividad:   activityPtr,
+			CodigoProductoSin: sinCodePtr,
+			UnitCode:          unitPtr,
+			Quantity:          item.Quantity,
+			UnitPrice:         item.Price,
+			Discount:          item.Discount,
+			SectorData:        item.Data,
 		})
 	}
 
@@ -218,19 +256,14 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 	if err != nil {
 		return nil, err
 	}
-	if reference != nil && reference.CustomerId != "" && reference.CustomerId != request.CustomerId {
-		return nil, domain.NewBadRequestError("customer debe coincidir con el cliente de la factura referenciada")
-	}
-	mappings, products, _, _, err := s.uc.resolveProductMappings(request)
-	if err != nil {
-		return nil, err
+	if reference != nil && !sameCustomerSnapshot(reference.Customer, domain.Customer{
+		DocumentType: request.ClientDocumentType, DocumentNumber: request.ClientDocumentNumber,
+		Complement: request.ClientComplement, Name: request.ClientName,
+	}) {
+		return nil, domain.NewBadRequestError("el receptor debe coincidir con el snapshot de la factura referenciada")
 	}
 	if request.CodigoDocumentoSector == 0 {
-		request.CodigoDocumentoSector, err = s.uc.resolveInvoiceSector(request.InvoiceType, mappingSectors(mappings), company)
-		if err != nil {
-			return nil, err
-		}
-		mappings, products, _, _, err = s.uc.resolveProductMappings(request)
+		request.CodigoDocumentoSector, err = s.uc.resolveInvoiceSector(request.InvoiceType, company)
 		if err != nil {
 			return nil, err
 		}
@@ -295,41 +328,23 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		if item.Quantity <= 0 {
 			return nil, domain.NewBadRequestError("quantity debe ser mayor a cero con la precisión del sector")
 		}
-		mapping, ok := mappings[index]
-		if !ok {
-			return nil, domain.NewConflictError(fmt.Sprintf("el producto del ítem %d no tiene mapeo fiscal", index+1))
-		}
-		product := products[index]
-		if product == nil {
-			return nil, domain.NewNotFoundError(fmt.Sprintf("el producto del ítem %d no existe", index+1))
-		}
 		if _, err := profile.ValidarDatosDetalle(request.Items[index].SectorData); err != nil {
 			return nil, domain.NewBadRequestError(fmt.Sprintf("ítem %d: %v", index+1, err))
 		}
-		activity := mapping.CodigoActividad
-		sinCode := strconv.FormatInt(mapping.CodigoProductoSin, 10)
-		unit := mapping.UnidadMedida
-		productID := product.ID
-		request.Items[index].ProductID = product.ID
-		request.Items[index].Code = product.SKU
-		request.Items[index].Description = product.Name
-		request.Items[index].CodigoActividad = &activity
-		request.Items[index].CodigoProductoSin = &sinCode
-		request.Items[index].UnitCode = &unit
+		request.Items[index].Code = request.Items[index].SKU
 		subtotal := round2(request.Items[index].Quantity*request.Items[index].UnitPrice - request.Items[index].Discount)
 		preview.Subtotal += subtotal
 		preview.Items = append(preview.Items, InvoicePreviewItem{
-			ProductID:             productID,
-			SKU:                   product.SKU,
-			Description:           product.Name,
+			SKU:                   request.Items[index].Code,
+			Description:           request.Items[index].Description,
 			Quantity:              request.Items[index].Quantity,
 			UnitPrice:             request.Items[index].UnitPrice,
 			Discount:              request.Items[index].Discount,
 			Subtotal:              subtotal,
-			CodigoActividad:       mapping.CodigoActividad,
-			CodigoProductoSin:     mapping.CodigoProductoSin,
-			UnidadMedida:          mapping.UnidadMedida,
-			CodigoDocumentoSector: mapping.CodigoDocumentoSector,
+			CodigoActividad:       cadenaOpcional(request.Items[index].CodigoActividad),
+			CodigoProductoSin:     mustParseInt64(cadenaOpcional(request.Items[index].CodigoProductoSin)),
+			UnidadMedida:          valueOrZero(request.Items[index].UnitCode),
+			CodigoDocumentoSector: request.CodigoDocumentoSector,
 		})
 	}
 	preview.Subtotal = round2(preview.Subtotal)
@@ -346,56 +361,41 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 	return &SimplifiedInvoice{Request: request, Preview: preview}, nil
 }
 
-func (s *InvoiceRequestSimplifier) resolveCustomer(companyID string, input MinimalInvoiceCustomer, request *CreateInvoiceRequest) (InvoicePreviewCustomer, error) {
-	if s.uc.customerRepo == nil {
-		return InvoicePreviewCustomer{}, domain.NewConflictError("el catálogo de clientes no está configurado")
+func (s *InvoiceRequestSimplifier) resolveCustomer(_ string, input MinimalInvoiceCustomer, request *CreateInvoiceRequest) (InvoicePreviewCustomer, error) {
+	if strings.TrimSpace(input.ID) != "" {
+		return InvoicePreviewCustomer{}, domain.NewBadRequestError("customer.id no está permitido; envíe el snapshot completo del receptor")
 	}
-	var customer *domain.Customer
-	var err error
-	if id := strings.TrimSpace(input.ID); id != "" {
-		customer, err = s.uc.customerRepo.GetByID(id)
-		if err != nil || customer == nil {
-			return InvoicePreviewCustomer{}, domain.NewNotFoundError("cliente no encontrado")
-		}
-		if customer.CompanyId != companyID {
-			return InvoicePreviewCustomer{}, domain.NewBadRequestError("el cliente no pertenece a la empresa")
-		}
-	} else {
-		documentType, aliasErr := normalizeDocumentType(input.DocumentType)
-		if aliasErr != nil {
-			return InvoicePreviewCustomer{}, aliasErr
-		}
-		documentNumber := strings.TrimSpace(input.DocumentNumber)
-		if documentNumber == "" {
-			return InvoicePreviewCustomer{}, domain.NewBadRequestError("customer.document_number es obligatorio cuando no se envía customer.id")
-		}
-		customer, err = s.uc.customerRepo.GetByCompanyAndDocument(companyID, documentType, documentNumber)
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return InvoicePreviewCustomer{}, err
-		}
-		if customer == nil {
-			name := strings.TrimSpace(input.Name)
-			if name == "" {
-				return InvoicePreviewCustomer{}, domain.NewBadRequestError("customer.name es obligatorio para registrar un cliente nuevo")
-			}
-			request.ClientDocumentType = documentType
-			request.ClientDocumentNumber = documentNumber
-			request.ClientComplement = input.Complement
-			request.ClientName = name
-			request.ClientEmail = strings.TrimSpace(input.Email)
-			return InvoicePreviewCustomer{DocumentType: documentType, DocumentNumber: documentNumber, Complement: input.Complement, Name: name, Email: request.ClientEmail}, nil
-		}
+	documentType, err := normalizeDocumentType(input.DocumentType)
+	if err != nil {
+		return InvoicePreviewCustomer{}, err
 	}
-
-	request.CustomerId = customer.ID
-	email := ""
-	if customer.Email != nil {
-		email = *customer.Email
+	documentNumber := strings.TrimSpace(input.DocumentNumber)
+	name := strings.TrimSpace(input.Name)
+	if documentNumber == "" || name == "" {
+		return InvoicePreviewCustomer{}, domain.NewBadRequestError("customer.document_number y customer.name son obligatorios")
 	}
+	email := strings.TrimSpace(input.Email)
+	request.ClientDocumentType = documentType
+	request.ClientDocumentNumber = documentNumber
+	request.ClientComplement = input.Complement
+	request.ClientName = name
+	request.ClientEmail = email
 	return InvoicePreviewCustomer{
-		ID: customer.ID, DocumentType: customer.DocumentType, DocumentNumber: customer.DocumentNumber,
-		Complement: customer.Complement, Name: customer.Name, Email: email,
+		DocumentType: documentType, DocumentNumber: documentNumber,
+		Complement: input.Complement, Name: name, Email: email,
 	}, nil
+}
+
+func mustParseInt64(value string) int64 {
+	parsed, _ := strconv.ParseInt(value, 10, 64)
+	return parsed
+}
+
+func valueOrZero(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func normalizeDocumentType(value string) (string, error) {

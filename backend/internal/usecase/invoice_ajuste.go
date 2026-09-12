@@ -3,7 +3,6 @@ package usecase
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +56,8 @@ func (uc *InvoiceUsecase) autofillDocumentoAjusteDescuento(req *CreateInvoiceReq
 			}
 			req.Items[i].SectorData = data
 		}
+	} else if err := hydrateAdjustmentItems(req.Items, ref.Items); err != nil {
+		return nil, err
 	}
 
 	datos, err := buildDatosSectorNotaDescuento(ref, req.DatosSector, req.Items)
@@ -105,57 +106,6 @@ func datosDetalleOriginal(profile *siat.SectorProfile, data json.RawMessage) (js
 	return json.Marshal(out)
 }
 
-// A note uses the fiscal snapshot of the original line, even if the product
-// has since changed sectors or been disabled. It must not require a new product
-// mapping to the adjustment sector.
-func (uc *InvoiceUsecase) resolveAdjustmentMappings(req CreateInvoiceRequest) (map[int]domain.ProductMapping, map[int]*domain.Product, map[int]*string, map[int]string, error) {
-	ref, err := uc.invoiceRepo.GetByID(strings.TrimSpace(*req.ReferenciaFacturaId))
-	if err != nil {
-		return nil, nil, nil, nil, domain.NewNotFoundError("la factura referenciada no existe")
-	}
-	if ref.CompanyId != req.CompanyId {
-		return nil, nil, nil, nil, domain.NewBadRequestError("la factura referenciada pertenece a otra empresa")
-	}
-	resolved := make(map[int]domain.ProductMapping)
-	products := make(map[int]*domain.Product)
-	ids := make(map[int]*string)
-	codes := make(map[int]string)
-	for index, item := range req.Items {
-		var original *domain.InvoiceItem
-		for i := range ref.Items {
-			candidate := &ref.Items[i]
-			match := item.SKU != "" && candidate.Code == item.SKU
-			match = match || (item.ProductID != "" && candidate.ProductID != nil && *candidate.ProductID == item.ProductID)
-			match = match || (item.SKU == "" && item.ProductID == "" && item.Code != "" && candidate.Code == item.Code)
-			if match {
-				if original != nil && (!sameFiscalLine(original, candidate)) {
-					return nil, nil, nil, nil, domain.NewConflictError(fmt.Sprintf("el ítem %d coincide con líneas originales de distinta configuración fiscal", index+1))
-				}
-				original = candidate
-			}
-		}
-		if original == nil {
-			return nil, nil, nil, nil, domain.NewBadRequestError(fmt.Sprintf("el producto del ítem %d no pertenece a la factura referenciada", index+1))
-		}
-		if original.CodigoActividad == nil || original.CodigoProductoSin == nil || original.UnitCode == nil {
-			return nil, nil, nil, nil, domain.NewConflictError(fmt.Sprintf("el ítem %d de la factura original no tiene datos fiscales completos", index+1))
-		}
-		sin, err := strconv.ParseInt(*original.CodigoProductoSin, 10, 64)
-		if err != nil || sin <= 0 || *original.UnitCode <= 0 || strings.TrimSpace(*original.CodigoActividad) == "" {
-			return nil, nil, nil, nil, domain.NewConflictError("la factura original tiene códigos fiscales inválidos")
-		}
-		productID := ""
-		if original.ProductID != nil {
-			productID = *original.ProductID
-			ids[index] = original.ProductID
-		}
-		resolved[index] = domain.ProductMapping{ProductID: productID, CodigoDocumentoSector: req.CodigoDocumentoSector, CodigoActividad: *original.CodigoActividad, CodigoProductoSin: sin, UnidadMedida: *original.UnitCode, Active: true}
-		products[index] = &domain.Product{ID: productID, SKU: original.Code, Name: original.Description}
-		codes[index] = original.Code
-	}
-	return resolved, products, ids, codes, nil
-}
-
 func sameFiscalLine(a, b *domain.InvoiceItem) bool {
 	return cadenaOpcional(a.CodigoActividad) == cadenaOpcional(b.CodigoActividad) && cadenaOpcional(a.CodigoProductoSin) == cadenaOpcional(b.CodigoProductoSin) && ((a.UnitCode == nil && b.UnitCode == nil) || (a.UnitCode != nil && b.UnitCode != nil && *a.UnitCode == *b.UnitCode))
 }
@@ -170,9 +120,6 @@ func cloneItemsFromReferencia(items []domain.InvoiceItem) []CreateInvoiceItemReq
 			UnitPrice:   it.UnitPrice,
 			Discount:    it.Discount,
 			SectorData:  it.SectorData,
-		}
-		if it.ProductID != nil {
-			item.ProductID = *it.ProductID
 		}
 		item.CodigoActividad = it.CodigoActividad
 		item.CodigoProductoSin = it.CodigoProductoSin
@@ -238,6 +185,38 @@ func buildDatosSectorNotaDescuento(ref *domain.Invoice, existing json.RawMessage
 	}
 
 	return json.Marshal(valores)
+}
+
+// hydrateAdjustmentItems copia la identidad fiscal desde la línea original.
+// El request solo selecciona la línea por código y aporta cantidades/importes.
+func hydrateAdjustmentItems(items []CreateInvoiceItemRequest, originals []domain.InvoiceItem) error {
+	for index := range items {
+		code := strings.TrimSpace(items[index].Code)
+		if code == "" {
+			code = strings.TrimSpace(items[index].SKU)
+		}
+		var match *domain.InvoiceItem
+		for originalIndex := range originals {
+			candidate := &originals[originalIndex]
+			if candidate.Code != code {
+				continue
+			}
+			if match != nil && !sameFiscalLine(match, candidate) {
+				return domain.NewConflictError(fmt.Sprintf("el ítem %d coincide con líneas originales de distinta configuración fiscal", index+1))
+			}
+			match = candidate
+		}
+		if match == nil {
+			return domain.NewBadRequestError(fmt.Sprintf("el producto del ítem %d no pertenece a la factura referenciada", index+1))
+		}
+		items[index].Code = match.Code
+		items[index].SKU = match.Code
+		items[index].Description = match.Description
+		items[index].CodigoActividad = match.CodigoActividad
+		items[index].CodigoProductoSin = match.CodigoProductoSin
+		items[index].UnitCode = match.UnitCode
+	}
+	return nil
 }
 
 func sumItemSubtotals(items []CreateInvoiceItemRequest) float64 {

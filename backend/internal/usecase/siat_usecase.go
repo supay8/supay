@@ -163,8 +163,7 @@ func (uc *SiatUsecase) solicitudDesdeInvoice(inv *domain.Invoice, company *domai
 			}
 		}
 	}
-	// El bloque de cliente del SIAT se construye SIEMPRE desde el Customer
-	// asociado (única fuente de verdad; mismo helper que la emisión normal).
+	// El bloque de cliente del SIAT se construye desde el snapshot de la factura.
 	cliente, err := clienteFromCustomer(inv.Customer)
 	if err != nil {
 		return ports.FiscalDocument{}, err

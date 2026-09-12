@@ -243,7 +243,7 @@ func documentKey(documentType, documentNumber string) string {
 
 func (f *fakeCustomerRepo) Create(c *domain.Customer) error {
 	if c.ID == "" {
-		c.ID = "cust-" + strconv.Itoa(len(f.created)+1)
+		c.ID = "cust-" + strconv.Itoa(len(f.byID)+1)
 	}
 	f.created = append(f.created, c)
 	f.byID[c.ID] = c
@@ -265,7 +265,11 @@ func (f *fakeCustomerRepo) GetByCompanyAndDocument(_, documentType, documentNumb
 	return c, nil
 }
 func (f *fakeCustomerRepo) GetByCompanyAndFiscalIdentity(companyID, documentType, documentNumber string, complement *string, name string, email string) (*domain.Customer, error) {
-	return f.GetByCompanyAndDocument(companyID, documentType, documentNumber)
+	c, err := f.GetByCompanyAndDocument(companyID, documentType, documentNumber)
+	if err != nil || c.Name != name || cadenaOpcional(c.Complement) != cadenaOpcional(complement) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return c, nil
 }
 func (f *fakeCustomerRepo) List(string) ([]*domain.Customer, error) { return nil, nil }
 
@@ -522,7 +526,7 @@ func testInvoice() *domain.Invoice {
 
 func newTestUsecase(repo *fakeInvoiceRepo, catalog *fakeCatalogRepo, svc ports.FiscalService) *InvoiceUsecase {
 	return NewInvoiceUsecase(repo, nil, nil, nil, catalog, nil, svc, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 }
 
 type fakeDocSectorRepo struct {
@@ -1184,7 +1188,7 @@ func TestAnnulUsaCufdVigente(t *testing.T) {
 	}}
 	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{Transaccion: true, CodigoEstado: 905}}
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 
 	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
 		t.Fatalf("Annul: %v", err)
@@ -1202,7 +1206,7 @@ func TestAnnulCaeAlCufdDeEmisionSinVigente(t *testing.T) {
 	}}
 	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{Transaccion: true, CodigoEstado: 905}}
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{}, svc, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 
 	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
 		t.Fatalf("Annul: %v", err)
@@ -1221,7 +1225,7 @@ func TestRevertAnnulUsaCufdVigente(t *testing.T) {
 	_ = repo.Create(inv)
 	svc := &fakeEmissionService{docResult: &ports.FiscalDocumentResult{Transaccion: true, CodigoEstado: 907}}
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 
 	if _, err := uc.RevertAnnul(context.Background(), "inv-1"); err != nil {
 		t.Fatalf("RevertAnnul: %v", err)
@@ -1367,22 +1371,17 @@ func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
 		Direccion:     "AV. CAMACHO 123",
 	}}
 	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 	nombre := "MARIA TEST"
 	periodo := "2026-1"
 	req := CreateInvoiceRequest{
 		CompanyId:             "comp-1",
 		PointOfSaleId:         "pos-1",
-		CustomerId:            "cust-1",
+		Customer:              &CreateInvoiceInlineCustomer{DocumentType: "CI", DocumentNumber: "1234567", Name: "Juan Perez"},
 		CodigoDocumentoSector: 1,
 		NombreEstudiante:      &nombre,
 		PeriodoFacturado:      &periodo,
-		Items: []CreateInvoiceItemRequest{{
-			Code:        "P001",
-			Description: "Producto",
-			Quantity:    1,
-			UnitPrice:   100,
-		}},
+		Items:                 []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	inv, err := uc.Create(context.Background(), req)
@@ -1430,7 +1429,7 @@ func TestBuildSolicitudFacturaUsaCufdMasReciente(t *testing.T) {
 		Active:      true,
 	}}
 	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 
 	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
@@ -1454,7 +1453,7 @@ func TestBuildSolicitudFacturaCufdVencidoConVigente(t *testing.T) {
 		Active:      true,
 	}}
 	uc := NewInvoiceUsecase(newFakeInvoiceRepo(), nil, nil, nil, &fakeCatalogRepo{}, cufdRepo, nil, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 
 	req, err := uc.buildSolicitudFactura(context.Background(), inv)
 	if err != nil {
@@ -1546,7 +1545,7 @@ func TestEmitEsperaCufdAntesDeClaim(t *testing.T) {
 func TestListInvoices(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,
-		nil, nil, nil, nil, nil, nil, false, nil)
+		nil, nil, nil, nil, nil, false, nil)
 
 	aceptada := testInvoice()
 	aceptada.ID = "inv-ok"
@@ -1594,7 +1593,7 @@ func TestListInvoices(t *testing.T) {
 }
 
 // createTestUsecaseBuilder arma un InvoiceUsecase listo para tests de Create.
-func createTestUsecaseBuilder() (*InvoiceUsecase, *fakeInvoiceRepo, *fakeCustomerRepo, *fakeProductRepository) {
+func createTestUsecaseBuilder() (*InvoiceUsecase, *fakeInvoiceRepo, *fakeCustomerRepo, struct{}) {
 	repo := newFakeInvoiceRepo()
 	repo.activeCufd = &domain.Cufd{
 		ID:          "cufd-1",
@@ -1629,19 +1628,25 @@ func createTestUsecaseBuilder() (*InvoiceUsecase, *fakeInvoiceRepo, *fakeCustome
 		Direccion:       "AV. CAMACHO 123",
 		CodigoActividad: strPtr("101010"),
 	}}
-	productRepo := &fakeProductRepository{product: &domain.Product{
-		ID: "product-1", SKU: "SKU-001", Name: "Producto de prueba mapeado", Active: true,
-		Mappings: []domain.ProductMapping{{
-			ProductID: "product-1", CodigoProductoSin: 5113100, CodigoActividad: "101010",
-			CodigoDocumentoSector: siat.SectorCompraVenta, UnidadMedida: 58, Active: true, SyncedAt: time.Now(),
-		}},
-	}}
 	docSectorRepo := &fakeDocSectorRepo{items: []*domain.SiatActividadDocSector{
 		{CodigoActividad: "101010", CodigoDocumentoSector: siat.SectorCompraVenta, TipoDocumentoSector: "FCV"},
 	}}
 	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,
-		productRepo, nil, nil, docSectorRepo, nil, nil, false, nil)
-	return uc, repo, customerRepo, productRepo
+		nil, nil, docSectorRepo, nil, nil, false, nil)
+	return uc, repo, customerRepo, struct{}{}
+}
+
+func fiscalTestItem(code, description string, quantity, unitPrice float64) CreateInvoiceItemRequest {
+	activity, sinCode, unit := "101010", "5113100", 58
+	return CreateInvoiceItemRequest{
+		Code: code, Description: description, CodigoActividad: &activity,
+		CodigoProductoSin: &sinCode, UnitCode: &unit,
+		Quantity: quantity, UnitPrice: unitPrice,
+	}
+}
+
+func historicalCustomerRequest() *CreateInvoiceInlineCustomer {
+	return &CreateInvoiceInlineCustomer{DocumentType: "CI", DocumentNumber: "1234567", Name: "Juan Perez"}
 }
 
 func TestCreateCustomerInline(t *testing.T) {
@@ -1654,7 +1659,7 @@ func TestCreateCustomerInline(t *testing.T) {
 			DocumentNumber: "123456789",
 			Name:           "CLIENTE NUEVO",
 		},
-		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Items: []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	inv, err := uc.Create(context.Background(), req)
@@ -1675,7 +1680,7 @@ func TestCreateCustomerInline(t *testing.T) {
 	}
 }
 
-func TestCreateReusaCustomerInline(t *testing.T) {
+func TestCreateMismoDocumentoNombreDistintoCreaNuevaVersion(t *testing.T) {
 	uc, _, customerRepo, _ := createTestUsecaseBuilder()
 
 	req := CreateInvoiceRequest{
@@ -1685,23 +1690,21 @@ func TestCreateReusaCustomerInline(t *testing.T) {
 			DocumentNumber: "1234567",
 			Name:           "OTRO NOMBRE",
 		},
-		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Items: []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	inv, err := uc.Create(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if inv.CustomerId != "cust-1" {
-		t.Errorf("CustomerId=%q, se esperaba reusar cust-1", inv.CustomerId)
+	if inv.CustomerId == "cust-1" {
+		t.Errorf("CustomerId=%q, no debía reusar la versión con otro nombre", inv.CustomerId)
 	}
-	// El nombre del cliente registrado prevalece: no se sincroniza con el
-	// inline (el cliente es la fuente fiscal de verdad).
-	if inv.Customer.Name != "Juan Perez" {
-		t.Errorf("Customer.Name=%q, se esperaba el nombre del cliente existente", inv.Customer.Name)
+	if inv.Customer.Name != "OTRO NOMBRE" {
+		t.Errorf("Customer.Name=%q, se esperaba conservar el snapshot nuevo", inv.Customer.Name)
 	}
-	if len(customerRepo.created) != 0 {
-		t.Fatalf("no debió crear cliente; creados=%d", len(customerRepo.created))
+	if len(customerRepo.created) != 1 {
+		t.Fatalf("debió crear una nueva versión histórica; creados=%d", len(customerRepo.created))
 	}
 }
 
@@ -1710,8 +1713,8 @@ func TestCreateCompanyDerivadoDePOS(t *testing.T) {
 
 	req := CreateInvoiceRequest{
 		PointOfSaleId: "pos-1",
-		CustomerId:    "cust-1",
-		Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Customer:      historicalCustomerRequest(),
+		Items:         []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	inv, err := uc.Create(context.Background(), req)
@@ -1723,24 +1726,18 @@ func TestCreateCompanyDerivadoDePOS(t *testing.T) {
 	}
 }
 
-func TestCreateDescriptionDefaultDesdeProducto(t *testing.T) {
+func TestCreateRequiereDescripcionSnapshot(t *testing.T) {
 	uc, _, _, _ := createTestUsecaseBuilder()
 
 	req := CreateInvoiceRequest{
 		PointOfSaleId: "pos-1",
-		CustomerId:    "cust-1",
-		Items:         []CreateInvoiceItemRequest{{SKU: "SKU-001", Quantity: 1, UnitPrice: 100}},
+		Customer:      historicalCustomerRequest(),
+		Items:         []CreateInvoiceItemRequest{fiscalTestItem("SKU-001", "", 1, 100)},
 	}
 
 	inv, err := uc.Create(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if len(inv.Items) != 1 || inv.Items[0].Description != "Producto de prueba mapeado" {
-		t.Fatalf("descripción=%q, se esperaba default del producto", inv.Items[0].Description)
-	}
-	if inv.Items[0].Code != "SKU-001" {
-		t.Errorf("código=%q, se esperaba SKU-001", inv.Items[0].Code)
+	if err == nil || inv != nil {
+		t.Fatalf("se esperaba rechazar el ítem sin descripción propia: inv=%+v err=%v", inv, err)
 	}
 }
 
@@ -1749,10 +1746,10 @@ func TestCreateIdempotencia(t *testing.T) {
 
 	req := CreateInvoiceRequest{
 		PointOfSaleId:    "pos-1",
-		CustomerId:       "cust-1",
+		Customer:         historicalCustomerRequest(),
 		IdempotencyKey:   "orden-42",
 		CodigoMetodoPago: 1,
-		Items:            []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Items:            []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	inv1, err := uc.Create(context.Background(), req)
@@ -1790,9 +1787,9 @@ func TestCreateRaceIdempotencia(t *testing.T) {
 
 	req := CreateInvoiceRequest{
 		PointOfSaleId:  "pos-1",
-		CustomerId:     "cust-1",
+		Customer:       historicalCustomerRequest(),
 		IdempotencyKey: "orden-race",
-		Items:          []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Items:          []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 	ganadora := &domain.Invoice{
 		ID:             "inv-ganador",
@@ -1826,9 +1823,9 @@ func TestCreateIgnoresEmitFlag(t *testing.T) {
 
 	req := CreateInvoiceRequest{
 		PointOfSaleId: "pos-1",
-		CustomerId:    "cust-1",
+		Customer:      historicalCustomerRequest(),
 		Emit:          true,
-		Items:         []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Items:         []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	// El flag Emit es responsabilidad del handler; el usecase Create solo crea.
@@ -1852,7 +1849,7 @@ func TestCreateWithReceiver(t *testing.T) {
 			Name:           "Juan Perez",
 			Email:          strPtr("juan@email.com"),
 		},
-		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Items: []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	inv, err := uc.Create(context.Background(), req)
@@ -1894,7 +1891,7 @@ func TestCreateWithReceiverAssociatesExistingCustomer(t *testing.T) {
 			Name:           "Juan Perez", // Different name, but same document
 			Email:          strPtr("juan@email.com"),
 		},
-		Items: []CreateInvoiceItemRequest{{Code: "P001", Description: "Producto", Quantity: 1, UnitPrice: 100}},
+		Items: []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
 	}
 
 	inv, err := uc.Create(context.Background(), req)
@@ -1902,9 +1899,9 @@ func TestCreateWithReceiverAssociatesExistingCustomer(t *testing.T) {
 		t.Fatalf("Create with receiver: %v", err)
 	}
 
-	// Should associate existing customer
-	if inv.CustomerId != "cust-existing" {
-		t.Errorf("CustomerId=%q, se esperaba cust-existing", inv.CustomerId)
+	// El nombre diferente crea otra versión y preserva exactamente el request.
+	if inv.CustomerId == "cust-existing" || inv.Customer.Name != "Juan Perez" {
+		t.Errorf("snapshot/versionado inesperado: customer_id=%q customer=%+v", inv.CustomerId, inv.Customer)
 	}
 }
 
@@ -1969,6 +1966,10 @@ func TestCreateValidationExactlyOneCustomerSource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			for i := range tt.req.Items {
+				item := fiscalTestItem(tt.req.Items[i].Code, tt.req.Items[i].Description, tt.req.Items[i].Quantity, tt.req.Items[i].UnitPrice)
+				tt.req.Items[i] = item
+			}
 			_, err := uc.Create(context.Background(), tt.req)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("error=%v, wantErr=%v", err, tt.wantErr)

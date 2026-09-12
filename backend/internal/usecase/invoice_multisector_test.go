@@ -46,9 +46,10 @@ func seedOriginalInvoice(repo *fakeInvoiceRepo) string {
 	id := "original-1"
 	repo.invoices[id] = &domain.Invoice{
 		ID: id, CompanyId: "comp-1", CustomerId: "cust-1", InvoiceNumber: 42,
-		Cuf: strPtr("CUF-ORIGINAL"), IssueDate: time.Date(2026, 8, 24, 10, 0, 0, 0, siat.LaPaz),
+		Customer: domain.Customer{ID: "cust-1", CompanyId: "comp-1", DocumentType: "CI", DocumentNumber: "1234567", Name: "Juan Perez", CodigoCliente: "CI1234567"},
+		Cuf:      strPtr("CUF-ORIGINAL"), IssueDate: time.Date(2026, 8, 24, 10, 0, 0, 0, siat.LaPaz),
 		Total: 2500, Subtotal: 2500, CodigoDocumentoSector: 1, Status: domain.InvoiceAccepted,
-		Items: []domain.InvoiceItem{{ProductID: strPtr("product-1"), Code: "SKU-001", Description: "Producto original",
+		Items: []domain.InvoiceItem{{Code: "SKU-001", Description: "Producto original",
 			CodigoActividad: strPtr("101010"), CodigoProductoSin: strPtr("5113100"), UnitCode: intPtr(58),
 			Quantity: 2, UnitPrice: 1250, Subtotal: 2500}},
 	}
@@ -65,13 +66,12 @@ func TestV1PreviewAndCreateAllSDKProfiles(t *testing.T) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%d/%s/%d", p.Codigo, p.Layout, mode), func(t *testing.T) {
-				uc, repo, _, productRepo := createTestUsecaseBuilder()
+				uc, repo, _, _ := createTestUsecaseBuilder()
 				uc.modalidad = mode
 				input := minimalTestInvoice()
 				input.Sector, input.Layout = strconv.Itoa(p.Codigo), p.Layout
 				input.Data = requiredSectorData(t, p.Campos)
 				input.Items[0].Data = requiredSectorData(t, p.CamposDetalle)
-				productRepo.product.Mappings[0].CodigoDocumentoSector = p.Codigo
 				if p.EsAjuste() {
 					ref := seedOriginalInvoice(repo)
 					input.ReferenceInvoiceID = &ref
@@ -81,7 +81,6 @@ func TestV1PreviewAndCreateAllSDKProfiles(t *testing.T) {
 						delete(values, key)
 					}
 					input.Data, _ = json.Marshal(values)
-					productRepo.product.Mappings = nil // no remapping required for notes
 				}
 				if p.Codigo == 30 {
 					total := 24.0
@@ -109,9 +108,8 @@ func TestV1PreviewAndCreateAllSDKProfiles(t *testing.T) {
 }
 
 func TestV1Sector47UsesOriginalFiscalSnapshot(t *testing.T) {
-	uc, repo, _, products := createTestUsecaseBuilder()
+	uc, repo, _, _ := createTestUsecaseBuilder()
 	ref := seedOriginalInvoice(repo)
-	products.product.Mappings = nil
 	input := minimalTestInvoice()
 	input.Sector = "47"
 	input.ReferenceInvoiceID = &ref
@@ -153,13 +151,9 @@ func TestV1RejectsInvalidSectorInputsAsValidationErrors(t *testing.T) {
 		{"unknown_data", func(r *MinimalInvoiceRequest) { r.Data = json.RawMessage(`{"typo":true}`) }, "no reconocidas"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			uc, _, _, products := createTestUsecaseBuilder()
+			uc, _, _, _ := createTestUsecaseBuilder()
 			input := minimalTestInvoice()
 			tc.change(&input)
-			sector, _ := resolveSectorAlias(input.Sector)
-			if sector > 0 {
-				products.product.Mappings[0].CodigoDocumentoSector = sector
-			}
 			_, err := uc.PreviewSimplified(t.Context(), input)
 			var bad *domain.BadRequestError
 			if !errors.As(err, &bad) || !strings.Contains(err.Error(), tc.message) {

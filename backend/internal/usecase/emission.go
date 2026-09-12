@@ -695,9 +695,7 @@ func siatEstadoToDomain(codigoEstado int) (domain.InvoiceStatus, bool) {
 }
 
 // clienteFromCustomer construye el bloque ClienteFactura del SIAT desde el
-// Customer de la factura. El Customer es la única fuente de verdad de los
-// datos fiscales del receptor (inmutable tras facturar): no existe snapshot
-// alternativo. Usado por emisión normal, paquetes y contingencia.
+// snapshot embebido en la factura. Nunca consulta la dimensión customers.
 func clienteFromCustomer(c domain.Customer) (ports.FiscalCustomer, error) {
 	if strings.TrimSpace(c.DocumentNumber) == "" || strings.TrimSpace(c.Name) == "" {
 		return ports.FiscalCustomer{}, domain.NewConflictError("factura sin cliente asociado; toda factura debe referenciar un cliente")
@@ -960,8 +958,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		usuario = company.UsuarioSiat
 	}
 
-	// El bloque de cliente del SIAT se construye SIEMPRE desde el Customer
-	// asociado (única fuente de verdad; el cliente es inmutable tras facturar).
+	// El bloque de cliente del SIAT se construye desde el snapshot de la factura.
 	cliente, err := clienteFromCustomer(inv.Customer)
 	if err != nil {
 		return nil, err

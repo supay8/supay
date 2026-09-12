@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 )
 
 func TestBuildDatosSectorNotaDescuentoCompletaCampos(t *testing.T) {
@@ -110,6 +110,11 @@ func TestAutofillDocumentoAjusteDescuentoRespetaCamposProveidos(t *testing.T) {
 		InvoiceNumber: 10,
 		IssueDate:     time.Date(2026, 8, 24, 10, 0, 0, 0, siat.LaPaz),
 		Total:         100,
+		Items: []domain.InvoiceItem{{
+			Code: "X", Description: "Item", CodigoActividad: strPtr("101010"),
+			CodigoProductoSin: strPtr("5113100"), UnitCode: intPtr(58),
+			Quantity: 1, UnitPrice: 100, Subtotal: 100,
+		}},
 	}
 	uc := &InvoiceUsecase{invoiceRepo: repo}
 	refIDCopy := refID

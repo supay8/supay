@@ -9,46 +9,57 @@ import (
 )
 
 type PointOfSaleUsecase struct {
-	repo        domain.PointOfSaleRepository
-	companyRepo domain.CompanyRepository
+	repo   domain.PointOfSaleRepository
+	branch domain.BranchRepository
 }
 
-func NewPointOfSaleUsecase(repo domain.PointOfSaleRepository, companyRepo domain.CompanyRepository) *PointOfSaleUsecase {
-	return &PointOfSaleUsecase{repo: repo, companyRepo: companyRepo}
+func NewPointOfSaleUsecase(repo domain.PointOfSaleRepository, branch domain.BranchRepository) *PointOfSaleUsecase {
+	return &PointOfSaleUsecase{repo: repo, branch: branch}
 }
 
 type RegisterPointOfSaleRequest struct {
-	CompanyId      string  `json:"company_id"`
-	CodigoSucursal int     `json:"codigo_sucursal"`
+	BranchId       string  `json:"branch_id"`
+	Name           string  `json:"name"`
 	Description    string  `json:"description"`
+	TipoPuntoVenta int     `json:"tipo_punto_venta"`
 	Cuis           *string `json:"cuis,omitempty"`
 	IsActive       *bool   `json:"is_active,omitempty"`
 }
 
 type UpdatePointOfSaleRequest struct {
-	CodigoSucursal *int    `json:"codigo_sucursal,omitempty"`
+	BranchId       *string `json:"branch_id,omitempty"`
+	Name           *string `json:"name,omitempty"`
 	Description    *string `json:"description,omitempty"`
+	TipoPuntoVenta *int    `json:"tipo_punto_venta,omitempty"`
 	Cuis           *string `json:"cuis,omitempty"`
 	IsActive       *bool   `json:"is_active,omitempty"`
 }
 
 func (uc *PointOfSaleUsecase) Register(req RegisterPointOfSaleRequest) (*domain.PointOfSale, error) {
-	if req.CompanyId == "" {
-		return nil, domain.NewBadRequestError("el company_id es obligatorio")
+	if req.BranchId == "" {
+		return nil, domain.NewBadRequestError("el branch_id es obligatorio")
 	}
 	if req.Description == "" {
 		return nil, domain.NewBadRequestError("la descripción es obligatoria")
 	}
-
-	// Regla de negocio: Verificar que la empresa exista
-	if _, err := uc.companyRepo.GetByID(req.CompanyId); err != nil {
-		return nil, domain.NewNotFoundError("empresa no encontrada")
+	if req.Name == "" {
+		return nil, domain.NewBadRequestError("el nombre del POS es obligatorio")
 	}
-
+	if req.TipoPuntoVenta == 0 {
+		req.TipoPuntoVenta = 2 // default
+	}
+	// Regla de negocio: Verificar que la sucursal exista
+	branch, err := uc.branch.GetByID(req.BranchId)
+	if err != nil {
+		return nil, domain.NewNotFoundError("sucursal no encontrada")
+	}
 	pos := &domain.PointOfSale{
-		CompanyId:      req.CompanyId,
-		CodigoSucursal: req.CodigoSucursal,
+		CompanyId:      branch.CompanyID,
+		BranchId:       branch.ID,
+		TipoPuntoVenta: &req.TipoPuntoVenta,
 		Description:    req.Description,
+		Name:           req.Name,
+		CodigoSucursal: branch.CodigoSucursal,
 		Cuis:           req.Cuis,
 		IsActive:       true,
 	}
@@ -99,8 +110,21 @@ func (uc *PointOfSaleUsecase) Update(req UpdatePointOfSaleRequest, id string) (*
 	if req.Description != nil {
 		existing.Description = *req.Description
 	}
-	if req.CodigoSucursal != nil {
-		existing.CodigoSucursal = *req.CodigoSucursal
+
+	if req.BranchId != nil {
+		branch, branchErr := uc.branch.GetByID(*req.BranchId)
+		if branchErr != nil {
+			return nil, domain.NewNotFoundError("sucursal no encontrada")
+		}
+		existing.BranchId = branch.ID
+		existing.CompanyId = branch.CompanyID
+		existing.CodigoSucursal = branch.CodigoSucursal
+	}
+	if req.TipoPuntoVenta != nil {
+		existing.TipoPuntoVenta = req.TipoPuntoVenta
+	}
+	if req.Name != nil {
+		existing.Name = *req.Name
 	}
 	if req.Cuis != nil {
 		if existing.Cuis == nil || *existing.Cuis != *req.Cuis {

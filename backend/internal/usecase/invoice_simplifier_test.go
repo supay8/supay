@@ -10,7 +10,7 @@ import (
 
 func TestMinimalInvoiceRequestConservaPayloadExistente(t *testing.T) {
 	var req MinimalInvoiceRequest
-	if err := json.Unmarshal([]byte(`{"point_of_sale_id":"pos-1","customer":{"id":"cust-1"},"items":[{"sku":"SKU-001","quantity":1,"price":100}],"invoice_type":"sale","sector":"auto","data":{}}`), &req); err != nil {
+	if err := json.Unmarshal([]byte(`{"point_of_sale_id":"pos-1","customer":{"document_type":"CI","document_number":"1234567","name":"Juan Perez"},"items":[{"sku":"SKU-001","description":"Servicio","codigo_actividad":"101010","codigo_producto_sin":5113100,"unidad_medida":58,"quantity":1,"price":100}],"invoice_type":"sale","sector":"auto","data":{}}`), &req); err != nil {
 		t.Fatal(err)
 	}
 	uc, _, _, _ := createTestUsecaseBuilder()
@@ -25,22 +25,26 @@ func minimalTestInvoice() MinimalInvoiceRequest {
 		Customer: MinimalInvoiceCustomer{
 			DocumentType:   "cédula",
 			DocumentNumber: "1234567",
+			Name:           "Juan Perez",
 		},
-		Items:       []MinimalInvoiceItem{{SKU: "SKU-001", Quantity: 2, Price: 12.50, Discount: 1}},
+		Items: []MinimalInvoiceItem{{
+			SKU: "SKU-001", Description: "Producto de prueba", CodigoActividad: "101010",
+			CodigoProductoSin: 5113100, UnidadMedida: 58, Quantity: 2, Price: 12.50, Discount: 1,
+		}},
 		InvoiceType: "venta",
 		Sector:      "auto",
 	}
 }
 
-func TestInvoiceRequestSimplifierAutocompletaClienteProductoYSiat(t *testing.T) {
+func TestInvoiceRequestSimplifierConservaSnapshotsClienteProductoYSiat(t *testing.T) {
 	uc, _, _, _ := createTestUsecaseBuilder()
 	result, err := NewInvoiceRequestSimplifier(uc).Simplify(context.Background(), minimalTestInvoice())
 	if err != nil {
 		t.Fatalf("Simplify() error: %v", err)
 	}
 
-	if result.Request.CustomerId != "cust-1" || result.Preview.Customer.Name != "Juan Perez" {
-		t.Fatalf("cliente no autocompletado: request=%q preview=%+v", result.Request.CustomerId, result.Preview.Customer)
+	if result.Request.CustomerId != "" || result.Preview.Customer.Name != "Juan Perez" {
+		t.Fatalf("snapshot de cliente inesperado: request=%q preview=%+v", result.Request.CustomerId, result.Preview.Customer)
 	}
 	if result.Preview.CodigoDocumentoSector != siat.SectorCompraVenta {
 		t.Fatalf("sector=%d", result.Preview.CodigoDocumentoSector)
@@ -49,8 +53,8 @@ func TestInvoiceRequestSimplifierAutocompletaClienteProductoYSiat(t *testing.T) 
 		t.Fatalf("items=%d", len(result.Preview.Items))
 	}
 	item := result.Preview.Items[0]
-	if item.ProductID != "product-1" || item.Description != "Producto de prueba mapeado" || item.CodigoProductoSin != 5113100 || item.UnidadMedida != 58 {
-		t.Fatalf("producto/SIAT no autocompletado: %+v", item)
+	if item.Description != "Producto de prueba" || item.CodigoProductoSin != 5113100 || item.UnidadMedida != 58 {
+		t.Fatalf("snapshot de producto/SIAT no conservado: %+v", item)
 	}
 	if result.Preview.Total != 24 {
 		t.Fatalf("total=%v, se esperaba 24", result.Preview.Total)

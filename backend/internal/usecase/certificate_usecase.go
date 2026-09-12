@@ -15,7 +15,7 @@ import (
 // Solo multipart: p12_file binario + campos texto (token, p12_password, etc). No JSON base64.
 type CertificateInput struct {
 	Name        string     `json:"name"`
-	Type        string     `json:"type"` // P12
+	Type        string     `json:"type"`  // P12
 	Token       string     `json:"token"` // token delegado SIAT (se cifra)
 	P12Password string     `json:"p12_password"`
 	Modalidad   *int       `json:"modalidad,omitempty"`
@@ -138,12 +138,10 @@ func (uc *CertificateUsecase) GetActive(companyID string) (*domain.Certificate, 
 }
 
 func (uc *CertificateUsecase) Delete(id string) error {
-	cert, err := uc.certRepo.GetByID(id)
-	if err != nil {
+	// Los certificados son historial fiscal: revocar conserva tanto el registro
+	// como el material cifrado necesario para auditoría de facturas históricas.
+	if _, err := uc.certRepo.GetByID(id); err != nil {
 		return err
-	}
-	if cert.P12StorageRef != "" && uc.storage != nil {
-		_ = uc.storage.Delete(context.Background(), cert.P12StorageRef)
 	}
 	return uc.certRepo.Delete(id)
 }

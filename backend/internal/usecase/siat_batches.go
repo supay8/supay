@@ -158,7 +158,7 @@ func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domai
 				return nil, domain.NewConflictError("La factura offline " + inv.ID + " no conserva su modalidad o tipo fiscal")
 			}
 			doc = ports.FiscalDocument{
-				CodigoAmbiente: company.Ambiente.CodigoAmbiente(), CodigoSistema: company.CodigoSistema,
+				CodigoAmbiente: company.Ambiente.CodigoAmbiente(), CodigoSistema: "",
 				Nit: company.Nit, Modalidad: inv.Modalidad, NumeroFactura: int64(inv.InvoiceNumber),
 				CodigoSucursal: pos.CodigoSucursal, CodigoDocumentoSector: inv.CodigoDocumentoSector,
 				FechaEmision: inv.IssueDate, XML: *inv.Xml, Cuf: *inv.Cuf,

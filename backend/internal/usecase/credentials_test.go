@@ -118,7 +118,7 @@ func (f *fakeCredClient) Synchronize(context.Context, ports.FiscalSyncRequest, p
 }
 
 func credFixtures() (*domain.Company, *domain.PointOfSale) {
-	company := &domain.Company{ID: "c1", Nit: "1020304050", CodigoSistema: "SIS", Ambiente: domain.EnvironmentPiloto}
+	company := &domain.Company{ID: "c1", Nit: "1020304050", Ambiente: domain.EnvironmentPiloto}
 	cuis := "CUIS-1"
 	pos := &domain.PointOfSale{ID: "pos-1", CompanyId: "c1", CodigoSucursal: 0, Cuis: &cuis}
 	return company, pos

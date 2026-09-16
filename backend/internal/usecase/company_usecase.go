@@ -5,24 +5,27 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
 	"gorm.io/gorm"
 )
 
 type CompanyUsecase struct {
-	repo domain.CompanyRepository
+	repo                 domain.CompanyRepository
+	crypto               *crypto.Service
+	invalidateSiatClient func(companyID string)
 }
 
-func NewCompanyUsecase(repo domain.CompanyRepository) *CompanyUsecase {
-	return &CompanyUsecase{repo: repo}
+func NewCompanyUsecase(repo domain.CompanyRepository, cryptoSvc *crypto.Service, invalidateSiatClient func(string)) *CompanyUsecase {
+	return &CompanyUsecase{repo: repo, crypto: cryptoSvc, invalidateSiatClient: invalidateSiatClient}
 }
 
 type RegisterCompanyRequest struct {
-	Nit           string                 `json:"nit"`
-	BusinessName  string                 `json:"business_name"`
-	CodigoSistema string                 `json:"codigo_sistema"`
-	Ambiente      domain.SiatEnvironment `json:"ambiente"`
-	UsuarioSiat   string                 `json:"usuario_siat,omitempty"`
+	Nit          string                 `json:"nit"`
+	BusinessName string                 `json:"business_name"`
+	Ambiente     domain.SiatEnvironment `json:"ambiente"`
+	Modalidad    int                    `json:"modalidad,omitempty"`
+	UsuarioSiat  string                 `json:"usuario_siat,omitempty"`
 	// Datos del emisor que viajan en la cabecera de la factura. Municipio y
 	// dirección deben coincidir con el padrón del SIAT.
 	Municipio             string  `json:"municipio,omitempty"`
@@ -36,8 +39,8 @@ type RegisterCompanyRequest struct {
 type UpdateCompanyRequest struct {
 	Nit                   *string                 `json:"nit,omitempty"`
 	BusinessName          *string                 `json:"business_name,omitempty"`
-	CodigoSistema         *string                 `json:"codigo_sistema,omitempty"`
 	Ambiente              *domain.SiatEnvironment `json:"ambiente,omitempty"`
+	Modalidad             *int                    `json:"modalidad,omitempty"`
 	UsuarioSiat           *string                 `json:"usuario_siat,omitempty"`
 	Municipio             *string                 `json:"municipio,omitempty"`
 	Direccion             *string                 `json:"direccion,omitempty"`
@@ -45,6 +48,7 @@ type UpdateCompanyRequest struct {
 	CodigoActividad       *string                 `json:"codigo_actividad,omitempty"`
 	PiePagina             *string                 `json:"pie_pagina,omitempty"`
 	CertificateWebhookURL *string                 `json:"certificate_webhook_url,omitempty"`
+	TokenDelegado         *string                 `json:"token_delegado,omitempty"`
 }
 
 func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company, error) {
@@ -68,8 +72,8 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 	company := &domain.Company{
 		Nit:                   req.Nit,
 		BusinessName:          req.BusinessName,
-		CodigoSistema:         req.CodigoSistema,
 		Ambiente:              req.Ambiente,
+		Modalidad:             req.Modalidad,
 		UsuarioSiat:           req.UsuarioSiat,
 		Municipio:             req.Municipio,
 		Direccion:             req.Direccion,
@@ -85,9 +89,15 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 	if company.UsuarioSiat == "" {
 		company.UsuarioSiat = "SUPAY"
 	}
+	if company.Modalidad == 0 {
+		company.Modalidad = 1
+	}
 
 	if !validEnvironment(company.Ambiente) {
 		return nil, domain.NewBadRequestError("el ambiente debe ser PILOTO o PRODUCCION")
+	}
+	if !validModalidad(company.Modalidad) {
+		return nil, domain.NewBadRequestError("la modalidad debe ser 1 (electrónica) o 2 (computarizada)")
 	}
 	if !validWebhookURL(company.CertificateWebhookURL) {
 		return nil, domain.NewBadRequestError("certificate_webhook_url debe ser una URL HTTP(S) válida")
@@ -102,6 +112,10 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 
 func validEnvironment(a domain.SiatEnvironment) bool {
 	return a == domain.EnvironmentPiloto || a == domain.EnvironmentProduccion
+}
+
+func validModalidad(value int) bool {
+	return value == 1 || value == 2
 }
 
 func validWebhookURL(value string) bool {
@@ -134,6 +148,7 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 		return nil, domain.NewNotFoundError("empresa no encontrada")
 	}
 
+	siatConfigChanged := false
 	if req.Nit != nil {
 		if *req.Nit != existing.Nit {
 			companyWithSameNit, err := uc.repo.GetByNit(*req.Nit)
@@ -142,12 +157,10 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 			}
 		}
 		existing.Nit = *req.Nit
+		siatConfigChanged = true
 	}
 	if req.BusinessName != nil {
 		existing.BusinessName = *req.BusinessName
-	}
-	if req.CodigoSistema != nil {
-		existing.CodigoSistema = *req.CodigoSistema
 	}
 	if req.Ambiente != nil {
 		if *req.Ambiente == "" {
@@ -158,6 +171,14 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 			}
 			existing.Ambiente = *req.Ambiente
 		}
+		siatConfigChanged = true
+	}
+	if req.Modalidad != nil {
+		if !validModalidad(*req.Modalidad) {
+			return nil, domain.NewBadRequestError("la modalidad debe ser 1 (electrónica) o 2 (computarizada)")
+		}
+		existing.Modalidad = *req.Modalidad
+		siatConfigChanged = true
 	}
 	if req.UsuarioSiat != nil {
 		existing.UsuarioSiat = *req.UsuarioSiat
@@ -184,9 +205,28 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 		}
 		existing.CertificateWebhookURL = webhookURL
 	}
+	if req.TokenDelegado != nil {
+		token := strings.TrimSpace(*req.TokenDelegado)
+		if token == "" {
+			existing.EncryptedTokenDelegado = ""
+		} else {
+			if uc.crypto == nil {
+				return nil, domain.NewConflictError("cifrado no configurado: defina ENCRYPTION_KEY")
+			}
+			encrypted, err := uc.crypto.EncryptString(token)
+			if err != nil {
+				return nil, err
+			}
+			existing.EncryptedTokenDelegado = encrypted
+		}
+		siatConfigChanged = true
+	}
 
 	if err := uc.repo.Update(existing); err != nil {
 		return nil, err
+	}
+	if siatConfigChanged && uc.invalidateSiatClient != nil {
+		uc.invalidateSiatClient(existing.ID)
 	}
 
 	return existing, nil

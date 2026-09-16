@@ -11,30 +11,30 @@ import (
 	"github.com/brandsrx/supay/internal/storage"
 )
 
-// CertificateInput es el payload para configurar credenciales fiscales por empresa vía multipart/form-data.
-// Solo multipart: p12_file binario + campos texto (token, p12_password, etc). No JSON base64.
+// CertificateInput contiene únicamente el material de firma digital recibido
+// vía multipart/form-data. La configuración fiscal vive en el tenant.
 type CertificateInput struct {
-	Name        string     `json:"name"`
-	Type        string     `json:"type"`  // P12
-	Token       string     `json:"token"` // token delegado SIAT (se cifra)
-	P12Password string     `json:"p12_password"`
-	Modalidad   *int       `json:"modalidad,omitempty"`
-	Ambiente    *string    `json:"ambiente,omitempty"` // PILOTO | PRODUCCION
-	NotBefore   *time.Time `json:"not_before,omitempty"`
-	NotAfter    *time.Time `json:"not_after,omitempty"`
+	Name        string `json:"name"`
+	Type        string `json:"type"` // P12
+	P12Password string `json:"p12_password"`
 	// P12Bytes son los bytes planos del .p12 recibidos via multipart p12_file (no JSON)
 	P12Bytes []byte `json:"-"`
 }
 
 type CertificateUsecase struct {
-	certRepo    domain.CertificateRepository
-	companyRepo domain.CompanyRepository
-	crypto      *crypto.Service
-	storage     storage.CertStorage
+	certRepo             domain.CertificateRepository
+	companyRepo          domain.CompanyRepository
+	crypto               *crypto.Service
+	storage              storage.CertStorage
+	invalidateSiatClient func(companyID string)
 }
 
-func NewCertificateUsecase(certRepo domain.CertificateRepository, companyRepo domain.CompanyRepository, cryptoSvc *crypto.Service, storage storage.CertStorage) *CertificateUsecase {
-	return &CertificateUsecase{certRepo: certRepo, companyRepo: companyRepo, crypto: cryptoSvc, storage: storage}
+func NewCertificateUsecase(certRepo domain.CertificateRepository, companyRepo domain.CompanyRepository, cryptoSvc *crypto.Service, storage storage.CertStorage, invalidators ...func(string)) *CertificateUsecase {
+	uc := &CertificateUsecase{certRepo: certRepo, companyRepo: companyRepo, crypto: cryptoSvc, storage: storage}
+	if len(invalidators) > 0 {
+		uc.invalidateSiatClient = invalidators[0]
+	}
+	return uc
 }
 
 // NewCertificateUsecaseWithPath legado para tests con path directo (crea Local storage).
@@ -47,9 +47,6 @@ func (uc *CertificateUsecase) Create(companyID string, in CertificateInput) (*do
 	if strings.TrimSpace(companyID) == "" {
 		return nil, domain.NewBadRequestError("company_id es obligatorio")
 	}
-	if strings.TrimSpace(in.Token) == "" {
-		return nil, domain.NewBadRequestError("token delegado es obligatorio")
-	}
 	if len(in.P12Bytes) == 0 {
 		return nil, domain.NewBadRequestError("p12_file es obligatorio (multipart/form-data, campo p12_file)")
 	}
@@ -59,16 +56,12 @@ func (uc *CertificateUsecase) Create(companyID string, in CertificateInput) (*do
 	if uc.crypto == nil {
 		return nil, domain.NewConflictError("cifrado no configurado: defina ENCRYPTION_KEY")
 	}
-	company, err := uc.companyRepo.GetByID(companyID)
-	if err != nil {
+	if _, err := uc.companyRepo.GetByID(companyID); err != nil {
 		return nil, domain.NewNotFoundError("empresa no encontrada")
-	}
-	encToken, err := uc.crypto.EncryptString(strings.TrimSpace(in.Token))
-	if err != nil {
-		return nil, fmt.Errorf("no se pudo cifrar token: %w", err)
 	}
 	encPass := ""
 	if strings.TrimSpace(in.P12Password) != "" {
+		var err error
 		encPass, err = uc.crypto.EncryptString(strings.TrimSpace(in.P12Password))
 		if err != nil {
 			return nil, fmt.Errorf("no se pudo cifrar password P12: %w", err)
@@ -90,20 +83,10 @@ func (uc *CertificateUsecase) Create(companyID string, in CertificateInput) (*do
 		Status:               domain.CertificateActive,
 		NotBefore:            now,
 		NotAfter:             now.Add(365 * 24 * time.Hour),
-		EncryptedToken:       encToken,
 		EncryptedP12Password: encPass,
-		Modalidad:            in.Modalidad,
-		Ambiente:             in.Ambiente,
-		Nit:                  company.Nit,
 	}
 	if in.Type != "" {
 		cert.Type = strings.ToUpper(strings.TrimSpace(in.Type))
-	}
-	if in.NotBefore != nil {
-		cert.NotBefore = *in.NotBefore
-	}
-	if in.NotAfter != nil {
-		cert.NotAfter = *in.NotAfter
 	}
 	if cert.Name == "" {
 		short := companyID
@@ -126,6 +109,9 @@ func (uc *CertificateUsecase) Create(companyID string, in CertificateInput) (*do
 	if err := uc.certRepo.Update(cert); err != nil {
 		return nil, err
 	}
+	if uc.invalidateSiatClient != nil {
+		uc.invalidateSiatClient(companyID)
+	}
 	return cert, nil
 }
 
@@ -140,8 +126,15 @@ func (uc *CertificateUsecase) GetActive(companyID string) (*domain.Certificate, 
 func (uc *CertificateUsecase) Delete(id string) error {
 	// Los certificados son historial fiscal: revocar conserva tanto el registro
 	// como el material cifrado necesario para auditoría de facturas históricas.
-	if _, err := uc.certRepo.GetByID(id); err != nil {
+	cert, err := uc.certRepo.GetByID(id)
+	if err != nil {
 		return err
 	}
-	return uc.certRepo.Delete(id)
+	if err := uc.certRepo.Delete(id); err != nil {
+		return err
+	}
+	if uc.invalidateSiatClient != nil {
+		uc.invalidateSiatClient(cert.CompanyId)
+	}
+	return nil
 }

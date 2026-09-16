@@ -479,7 +479,6 @@ func testInvoice() *domain.Invoice {
 			ID:              "comp-1",
 			Nit:             "9971522011",
 			BusinessName:    "EMPRESA PILOTO SRL",
-			CodigoSistema:   "228452C38ED8739408AB6",
 			Ambiente:        domain.EnvironmentPiloto,
 			Municipio:       "LA PAZ",
 			Direccion:       "AV. CAMACHO 123",
@@ -1362,13 +1361,12 @@ func TestCreatePurgeaCamposEducativosFueraDeSector11(t *testing.T) {
 		Name:           "Juan Perez",
 	})
 	companyRepo := &fakeCompanyRepo{company: domain.Company{
-		ID:            "comp-1",
-		Nit:           "9971522011",
-		BusinessName:  "EMPRESA PILOTO SRL",
-		CodigoSistema: "228452C38ED8739408AB6",
-		Ambiente:      domain.EnvironmentPiloto,
-		Municipio:     "LA PAZ",
-		Direccion:     "AV. CAMACHO 123",
+		ID:           "comp-1",
+		Nit:          "9971522011",
+		BusinessName: "EMPRESA PILOTO SRL",
+		Ambiente:     domain.EnvironmentPiloto,
+		Municipio:    "LA PAZ",
+		Direccion:    "AV. CAMACHO 123",
 	}}
 	uc := NewInvoiceUsecase(repo, customerRepo, companyRepo, posRepo, &fakeCatalogRepo{}, nil, nil, siat.ModalidadElectronica,
 		nil, nil, nil, nil, nil, false, nil)
@@ -1622,7 +1620,6 @@ func createTestUsecaseBuilder() (*InvoiceUsecase, *fakeInvoiceRepo, *fakeCustome
 		ID:              "comp-1",
 		Nit:             "9971522011",
 		BusinessName:    "EMPRESA PILOTO SRL",
-		CodigoSistema:   "228452C38ED8739408AB6",
 		Ambiente:        domain.EnvironmentPiloto,
 		Municipio:       "LA PAZ",
 		Direccion:       "AV. CAMACHO 123",

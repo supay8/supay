@@ -173,8 +173,8 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 	company := &domain.Company{
 		Nit:                   req.Nit,
 		BusinessName:          req.BusinessName,
-		CodigoSistema:         req.CodigoSistema,
 		Ambiente:              req.Ambiente,
+		Modalidad:             req.Modalidad,
 		UsuarioSiat:           req.UsuarioSiat,
 		Municipio:             req.Municipio,
 		Direccion:             req.Direccion,
@@ -190,9 +190,15 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 	if company.UsuarioSiat == "" {
 		company.UsuarioSiat = "SUPAY"
 	}
+	if company.Modalidad == 0 {
+		company.Modalidad = 1
+	}
 
 	if company.Ambiente != domain.EnvironmentPiloto && company.Ambiente != domain.EnvironmentProduccion {
 		return BootstrapCompanyResponse{}, domain.NewBadRequestError("el ambiente debe ser PILOTO o PRODUCCION")
+	}
+	if !validModalidad(company.Modalidad) {
+		return BootstrapCompanyResponse{}, domain.NewBadRequestError("la modalidad debe ser 1 (electrónica) o 2 (computarizada)")
 	}
 	if !validWebhookURL(company.CertificateWebhookURL) {
 		return BootstrapCompanyResponse{}, domain.NewBadRequestError("certificate_webhook_url debe ser una URL HTTP(S) válida")

@@ -42,7 +42,7 @@ func (f *webhookCompanyRepo) Delete(string) error { return nil }
 
 func TestCompanyUpdateConfiguresCertificateWebhook(t *testing.T) {
 	repo := &webhookCompanyRepo{company: &domain.Company{ID: "tenant-1", Nit: "123", Ambiente: domain.EnvironmentPiloto}}
-	service := NewCompanyUsecase(repo)
+	service := NewCompanyUsecase(repo, nil, nil)
 	webhookURL := "https://tenant.example.test/supay-alerts"
 
 	company, err := service.Update(UpdateCompanyRequest{CertificateWebhookURL: &webhookURL}, "tenant-1")
@@ -56,7 +56,7 @@ func TestCompanyUpdateConfiguresCertificateWebhook(t *testing.T) {
 
 func TestCompanyRejectsInvalidCertificateWebhook(t *testing.T) {
 	repo := &webhookCompanyRepo{company: &domain.Company{ID: "tenant-1", Nit: "123", Ambiente: domain.EnvironmentPiloto}}
-	service := NewCompanyUsecase(repo)
+	service := NewCompanyUsecase(repo, nil, nil)
 	webhookURL := "file:///etc/passwd"
 
 	_, err := service.Update(UpdateCompanyRequest{CertificateWebhookURL: &webhookURL}, "tenant-1")

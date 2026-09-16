@@ -1,8 +1,11 @@
 package usecase
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
 	"gorm.io/gorm"
 )
@@ -10,6 +13,38 @@ import (
 type phase12CompanyRepo struct {
 	items map[string]*domain.Company
 	err   error
+}
+
+func TestCompanyUpdateEncryptsDelegatedTokenAndInvalidatesSIATClient(t *testing.T) {
+	repo := &phase12CompanyRepo{items: map[string]*domain.Company{
+		"company-1": {ID: "company-1", Nit: "123", Ambiente: domain.EnvironmentPiloto},
+	}}
+	cryptoSvc := crypto.MustNew("test-master-key-12345678901234567890123456789012")
+	invalidated := ""
+	uc := NewCompanyUsecase(repo, cryptoSvc, func(companyID string) { invalidated = companyID })
+	token := "token-delegado-real"
+
+	updated, err := uc.Update(UpdateCompanyRequest{TokenDelegado: &token}, "company-1")
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.EncryptedTokenDelegado == "" || updated.EncryptedTokenDelegado == token {
+		t.Fatalf("el token no fue cifrado: %q", updated.EncryptedTokenDelegado)
+	}
+	plain, err := cryptoSvc.DecryptString(updated.EncryptedTokenDelegado)
+	if err != nil || plain != token {
+		t.Fatalf("token cifrado inválido: plain=%q err=%v", plain, err)
+	}
+	if invalidated != "company-1" {
+		t.Fatalf("cliente SIAT no invalidado: %q", invalidated)
+	}
+	payload, err := json.Marshal(updated)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(payload), token) || strings.Contains(string(payload), updated.EncryptedTokenDelegado) {
+		t.Fatalf("la respuesta expuso el token delegado: %s", payload)
+	}
 }
 
 func (r *phase12CompanyRepo) Create(value *domain.Company) error {
@@ -128,8 +163,8 @@ func (r *phase12POSRepo) Delete(string) error                                { r
 
 func TestCompanyUsecaseLifecycleAndValidation(t *testing.T) {
 	repo := &phase12CompanyRepo{items: map[string]*domain.Company{}}
-	uc := NewCompanyUsecase(repo)
-	for _, request := range []RegisterCompanyRequest{{}, {Nit: "1"}, {Nit: "1", BusinessName: "ACME", Ambiente: "INVALID"}, {Nit: "1", BusinessName: "ACME", CertificateWebhookURL: "ftp://bad"}} {
+	uc := NewCompanyUsecase(repo, nil, nil)
+	for _, request := range []RegisterCompanyRequest{{}, {Nit: "1"}, {Nit: "1", BusinessName: "ACME", Ambiente: "INVALID"}, {Nit: "1", BusinessName: "ACME", Modalidad: 3}, {Nit: "1", BusinessName: "ACME", CertificateWebhookURL: "ftp://bad"}} {
 		if _, err := uc.Register(request); err == nil {
 			t.Fatalf("se esperaba error para %+v", request)
 		}
@@ -144,10 +179,10 @@ func TestCompanyUsecaseLifecycleAndValidation(t *testing.T) {
 	if got, err := uc.GetByNit("123"); err != nil || got.ID != company.ID {
 		t.Fatalf("GetByNit=%+v err=%v", got, err)
 	}
-	name, system, municipality, address, phone, activity, footer, webhook := "Nueva", "SYS", "La Paz", "Calle", "700", "101010", "pie", "https://example.org/hook"
-	env := domain.EnvironmentProduccion
-	updated, err := uc.Update(UpdateCompanyRequest{BusinessName: &name, CodigoSistema: &system, Ambiente: &env, Municipio: &municipality, Direccion: &address, Telefono: &phone, CodigoActividad: &activity, PiePagina: &footer, CertificateWebhookURL: &webhook}, company.ID)
-	if err != nil || updated.BusinessName != name || updated.Ambiente != env || updated.CertificateWebhookURL != webhook {
+	name, municipality, address, phone, activity, footer, webhook := "Nueva", "La Paz", "Calle", "700", "101010", "pie", "https://example.org/hook"
+	env, modalidad := domain.EnvironmentProduccion, 2
+	updated, err := uc.Update(UpdateCompanyRequest{BusinessName: &name, Ambiente: &env, Modalidad: &modalidad, Municipio: &municipality, Direccion: &address, Telefono: &phone, CodigoActividad: &activity, PiePagina: &footer, CertificateWebhookURL: &webhook}, company.ID)
+	if err != nil || updated.BusinessName != name || updated.Ambiente != env || updated.Modalidad != modalidad || updated.CertificateWebhookURL != webhook {
 		t.Fatalf("Update=%+v err=%v", updated, err)
 	}
 	if err := uc.Delete(company.ID); err != nil {

@@ -313,15 +313,17 @@ func (c *Container) SiatService() *siat.Service {
 	return c.siatService
 }
 
-// FiscalService devuelve el adaptador SIAT real si está configurado; en
-// desarrollo/CI o cuando faltan credenciales legacy retorna el sandbox
-// determinístico para que la aplicación pueda arrancar y testearse sin el
-// SIAT real.
+// FiscalService devuelve el sandbox únicamente cuando SIAT_SANDBOX=true. En
+// cualquier otro caso, la falta de credenciales reales se representa con nil
+// para que el provider devuelva un error y nunca CUIS/CUFD falsos.
 func (c *Container) FiscalService() ports.FiscalService {
+	if c.cfg.SiatSandbox {
+		return sandbox.NewFiscalService()
+	}
 	if svc := c.SiatService(); svc != nil {
 		return siat.NewFiscalAdapter(svc)
 	}
-	return sandbox.NewFiscalService()
+	return nil
 }
 
 func (c *Container) PdfService() *pdf.Service {
@@ -389,7 +391,11 @@ func (c *Container) MaintenanceService() *usecase.MaintenanceService {
 
 func (c *Container) CompanyUsecase() *usecase.CompanyUsecase {
 	if c.companyUsecase == nil {
-		c.companyUsecase = usecase.NewCompanyUsecase(c.CompanyRepo())
+		c.companyUsecase = usecase.NewCompanyUsecase(c.CompanyRepo(), c.CryptoService(), func(companyID string) {
+			if c.siatProvider != nil {
+				c.siatProvider.Invalidate(companyID)
+			}
+		})
 	}
 	return c.companyUsecase
 }
@@ -481,6 +487,11 @@ func (c *Container) CertificateUsecase() *usecase.CertificateUsecase {
 	if c.certificateUsecase == nil {
 		c.certificateUsecase = usecase.NewCertificateUsecase(
 			c.CertificateRepo(), c.CompanyRepo(), c.CryptoService(), c.CertStorage(),
+			func(companyID string) {
+				if c.siatProvider != nil {
+					c.siatProvider.Invalidate(companyID)
+				}
+			},
 		)
 	}
 	return c.certificateUsecase

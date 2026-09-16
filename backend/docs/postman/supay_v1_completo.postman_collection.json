@@ -135,7 +135,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"nit\": \"1234567012\",\n  \"business_name\": \"Demo SRL\",\n  \"codigo_sistema\": \"ABC123\",\n  \"ambiente\": \"PILOTO\",\n  \"municipio\": \"La Paz\",\n  \"direccion\": \"Av. Test 123\",\n  \"telefono\": \"2-123456\"\n}",
+              "raw": "{\n  \"nit\": \"1234567012\",\n  \"business_name\": \"Demo SRL\",\n  \"ambiente\": \"PILOTO\",\n  \"municipio\": \"La Paz\",\n  \"direccion\": \"Av. Test 123\",\n  \"telefono\": \"2-123456\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -178,7 +178,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"nit\": \"1234567012\",\n  \"business_name\": \"Demo SRL\",\n  \"codigo_sistema\": \"SYS1\",\n  \"ambiente\": \"PILOTO\",\n  \"municipio\": \"La Paz\",\n  \"direccion\": \"Av. X\",\n  \"telefono\": \"2-123456\",\n  \"codigo_actividad\": \"47110\"\n}",
+              "raw": "{\n  \"nit\": \"1234567012\",\n  \"business_name\": \"Demo SRL\",\n  \"ambiente\": \"PILOTO\",\n  \"modalidad\": 1,\n  \"municipio\": \"La Paz\",\n  \"direccion\": \"Av. X\",\n  \"telefono\": \"2-123456\",\n  \"codigo_actividad\": \"47110\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -250,7 +250,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"business_name\": \"Nuevo SRL\",\n  \"telefono\": \"77700000\"\n}",
+              "raw": "{\n  \"business_name\": \"Nuevo SRL\",\n  \"telefono\": \"77700000\",\n  \"token_delegado\": \"token-siat-del-tenant\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1775,11 +1775,6 @@
                   "src": []
                 },
                 {
-                  "key": "token",
-                  "type": "text",
-                  "value": "delegado123"
-                },
-                {
                   "key": "name",
                   "type": "text",
                   "value": "principal"
@@ -1790,23 +1785,13 @@
                   "value": "P12"
                 },
                 {
-                  "key": "modalidad",
-                  "type": "text",
-                  "value": "1"
-                },
-                {
-                  "key": "ambiente",
-                  "type": "text",
-                  "value": "PILOTO"
-                },
-                {
                   "key": "p12_password",
                   "type": "text",
                   "value": ""
                 }
               ]
             },
-            "description": "201. multipart: p12_file binario .p12/.pfx <=5MB + token/token_delegado."
+            "description": "201. multipart: p12_file binario .p12/.pfx <=5MB y p12_password opcional. El token delegado se configura con PATCH /companies/{id}."
           },
           "response": []
         },

@@ -167,31 +167,28 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 		return nil, fmt.Errorf("siat provider: SIAT_CODIGO_SISTEMA no configurado")
 	}
 
-	// Certificado activo (si existe) aporta token/p12 cifrados y overrides modalidad/ambiente
+	// El token delegado pertenece al tenant y se almacena cifrado en
+	// tenant_configs. El certificado activo aporta únicamente el material P12.
+	if strings.TrimSpace(company.EncryptedTokenDelegado) == "" {
+		return nil, fmt.Errorf("siat provider: empresa %s no tiene token delegado configurado (actualice PATCH /companies/%s)", companyID, companyID)
+	}
+	if p.crypto == nil {
+		return nil, fmt.Errorf("siat provider: crypto no configurado para descifrar token delegado")
+	}
+	token, err := p.crypto.DecryptString(company.EncryptedTokenDelegado)
+	if err != nil {
+		return nil, fmt.Errorf("siat provider: no se pudo descifrar token delegado: %w", err)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("siat provider: empresa %s no tiene token delegado configurado", companyID)
+	}
+
 	var cert *domain.Certificate
 	if p.certRepo != nil {
 		if c, err := p.certRepo.GetActiveByCompany(companyID); err == nil && c != nil {
 			cert = c
 		}
-	}
-
-	// Resolver token delegado: prioriza cert cifrado, fallback a vacío (error)
-	var token string
-	if cert != nil && strings.TrimSpace(cert.EncryptedToken) != "" {
-		if p.crypto == nil {
-			return nil, fmt.Errorf("siat provider: crypto no configurado pero certificado tiene token cifrado")
-		}
-		plain, err := p.crypto.DecryptString(cert.EncryptedToken)
-		if err != nil {
-			return nil, fmt.Errorf("siat provider: no se pudo descifrar token delegado: %w", err)
-		}
-		token = strings.TrimSpace(plain)
-	}
-	if token == "" {
-		// Sin token por empresa: no se puede emitir en electrónica. Se permite
-		// construir servicio sin token solo para operaciones que no requieren firma?
-		// Por ahora exigir token.
-		return nil, fmt.Errorf("siat provider: empresa %s no tiene token delegado configurado (configure via certificates)", companyID)
 	}
 
 	// Resolver P12: descifrar password y cargar bytes desde storage ref o cert
@@ -240,29 +237,13 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 		}
 	}
 
-	// Ambiente y modalidad: cert override > company > infra default
+	// Ambiente y modalidad pertenecen al tenant; el certificado no los redefine.
 	codigoAmbiente := company.Ambiente.CodigoAmbiente()
-	if cert != nil && cert.Ambiente != nil && strings.TrimSpace(*cert.Ambiente) != "" {
-		if strings.EqualFold(strings.TrimSpace(*cert.Ambiente), "PRODUCCION") {
-			codigoAmbiente = 1
-		} else {
-			codigoAmbiente = 2
-		}
-	} else if p.infra.CodigoAmbiente == 1 || p.infra.CodigoAmbiente == 2 {
+	if p.infra.CodigoAmbiente == 1 || p.infra.CodigoAmbiente == 2 {
 		// si company ambiente es vacío (no debería), usar infra
 		if codigoAmbiente == 0 {
 			codigoAmbiente = p.infra.CodigoAmbiente
 		}
-	}
-
-	modalidad := company.Modalidad
-	if modalidad == 0 {
-		modalidad = 1
-	}
-	if cert != nil && cert.Modalidad != nil && *cert.Modalidad != 0 {
-		modalidad = *cert.Modalidad
-	} else if p.infra.Modalidad != 0 && modalidad == 0 {
-		modalidad = p.infra.Modalidad
 	}
 
 	nitInt, err := strconv.ParseInt(strings.TrimSpace(company.Nit), 10, 64)
@@ -282,9 +263,6 @@ func (p *provider) buildServiceForCompany(ctx context.Context, companyID string)
 		CertP12Bytes:   p12Bytes,
 		CertP12Pass:    p12Pass,
 	}
-	// Nota: modalidad no va en siat.Config global, se maneja por request en usecase
-	_ = modalidad
-
 	svc, err := NewService(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("siat provider: no se pudo crear siat.Service para empresa %s: %w", companyID, err)

@@ -119,8 +119,8 @@ CREATE TABLE tenants (
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(nit)
 );
--- Nota: ambiente, codigo_sistema y modalidad viven en tenant_configs para tener
--- una única fuente de verdad operativa por tenant.
+-- Nota: ambiente, modalidad y token delegado viven en tenant_configs. El
+-- código de sistema identifica a Supay y se configura globalmente.
 CREATE INDEX idx_tenants_nit ON tenants(nit);
 ```
 
@@ -132,10 +132,8 @@ Configuración operativa y límites por tenant. Separada de `tenants` para no bl
 CREATE TABLE tenant_configs (
     tenant_id uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
     ambiente varchar(20) NOT NULL DEFAULT 'PILOTO' CHECK (ambiente IN ('PILOTO','PRODUCCION')),
-    codigo_sistema varchar(50) NOT NULL,
     codigo_modalidad int NOT NULL DEFAULT 1 CHECK (codigo_modalidad IN (1,2)),
-    token_siat text,                       -- token de autorización SIAT (cifrado)
-    api_token text,                        -- token auxiliar si aplica (cifrado)
+    token_delegado text NOT NULL DEFAULT '', -- token SIAT cifrado
     max_invoices_monthly int NOT NULL DEFAULT 1000,
     max_points_of_sale int NOT NULL DEFAULT 5,
     max_api_keys int NOT NULL DEFAULT 10,
@@ -870,9 +868,8 @@ POST /tenants
 {
   "nit": "123456789",
   "business_name": "Mi Empresa",
-  "codigo_sistema": "...",
   "ambiente": "PILOTO",
-  "codigo_modalidad": 1
+  "modalidad": 1
 }
 
 # Respuesta incluye API key de administrador
@@ -880,7 +877,7 @@ POST /tenants
 
 El endpoint crea `tenants` (identidad) y `tenant_configs` (configuración operativa) en la misma transacción. Fuente de verdad:
 - `tenants`: NIT, razón social, datos de contacto.
-- `tenant_configs`: ambiente, código de sistema, modalidad, tokens, límites.
+- `tenant_configs`: ambiente, modalidad, token delegado cifrado y límites.
 
 Luego el tenant:
 1. Crea sucursal.

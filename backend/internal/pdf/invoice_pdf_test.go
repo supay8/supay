@@ -118,7 +118,6 @@ func sampleInvoice() *models.Invoice {
 			ID:              "company-1",
 			Nit:             "102965402",
 			BusinessName:    "Supay SRL",
-			CodigoSistema:   "SUPAY-1",
 			Municipio:       "La Paz",
 			Direccion:       "Av. Camacho 123",
 			Telefono:        "2444444",

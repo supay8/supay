@@ -50,7 +50,7 @@ func TestSiatBatchResponseLimitsCompanyAndPointOfSaleData(t *testing.T) {
 	result := &usecase.PaqueteResultado{
 		Company: &domain.Company{
 			ID: "comp-1", Nit: "123456789", BusinessName: "Emisor",
-			CodigoSistema: "system-code", UsuarioSiat: "private-user",
+			UsuarioSiat:           "private-user",
 			CertificateWebhookURL: "https://example.test/certificate?token=private-token",
 		},
 		PointOfSale: &domain.PointOfSale{

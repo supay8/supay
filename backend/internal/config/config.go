@@ -18,6 +18,10 @@ type Config struct {
 	// Deprecated: no usar en código nuevo; preferir SiatInfra.
 	SIAT          siat.Config `json:"-"`
 	SiatModalidad int         `json:"-"`
+	// SiatSandbox habilita respuestas fiscales deterministas únicamente cuando
+	// se solicita de forma explícita. Nunca debe activarse como fallback ante
+	// credenciales SIAT faltantes o inválidas.
+	SiatSandbox bool
 
 	// SiatInfra contiene solo parámetros de infraestructura compartida.
 	SiatInfra     SiatInfraConfig
@@ -216,6 +220,7 @@ func Load() Config {
 		Port:                 getEnv("PORT", "8081"),
 		SIAT:                 siatConfig,
 		SiatModalidad:        modalidad,
+		SiatSandbox:          parseBoolEnv("SIAT_SANDBOX", false),
 		SiatInfra:            siatInfra,
 		APIKey:               strings.TrimSpace(os.Getenv("API_KEY")),
 		EncryptionKey:        encryptionKey,

@@ -6,11 +6,11 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	appconfig "github.com/brandsrx/supay/internal/config"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/repository/database"
 	"github.com/brandsrx/supay/internal/repository/postgres"
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/joho/godotenv"
 )
 
@@ -38,10 +38,9 @@ func main() {
 	company, err := companyRepo.GetByNit(nit)
 	if err != nil {
 		company = &domain.Company{
-			Nit:           nit,
-			BusinessName:  "Supay Seed Company",
-			CodigoSistema: cfg.SIAT.CodigoSistema,
-			Ambiente:      ambiente,
+			Nit:          nit,
+			BusinessName: "Supay Seed Company",
+			Ambiente:     ambiente,
 		}
 		if err := companyRepo.Create(company); err != nil {
 			log.Fatalf("Error creando company: %v", err)

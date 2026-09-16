@@ -94,23 +94,21 @@ func TestProviderDecryptAndBuildService(t *testing.T) {
 	ref, _ := mem.Put(context.Background(), key, []byte(encP12))
 
 	company := domain.Company{
-		ID:            "comp-1",
-		Nit:           "123456789",
-		CodigoSistema: "SYS123456",
-		Ambiente:      domain.EnvironmentPiloto,
-		Modalidad:     1,
-		BusinessName:  "Test Company",
-		Municipio:     "LA PAZ",
-		Direccion:     "AV TEST 123",
+		ID:                     "comp-1",
+		Nit:                    "123456789",
+		Ambiente:               domain.EnvironmentPiloto,
+		Modalidad:              1,
+		BusinessName:           "Test Company",
+		Municipio:              "LA PAZ",
+		Direccion:              "AV TEST 123",
+		EncryptedTokenDelegado: encToken,
 	}
 	cert := &domain.Certificate{
 		ID:                   "cert-123",
 		CompanyId:            "comp-1",
 		Status:               domain.CertificateActive,
-		EncryptedToken:       encToken,
 		EncryptedP12Password: encPass,
 		P12StorageRef:        ref,
-		Nit:                  company.Nit,
 	}
 
 	companyRepo := &fakeCompanyRepo{company: company}
@@ -163,10 +161,10 @@ func TestProviderRejectsEncryptedP12WithWrongKey(t *testing.T) {
 
 	mem := newTestMemoryStorage()
 	ref, _ := mem.Put(context.Background(), "certs/comp-1/cert-123.p12.enc", []byte(encP12))
-	company := domain.Company{ID: "comp-1", Nit: "123456789", Ambiente: domain.EnvironmentPiloto, Modalidad: 1}
+	company := domain.Company{ID: "comp-1", Nit: "123456789", Ambiente: domain.EnvironmentPiloto, Modalidad: 1, EncryptedTokenDelegado: encToken}
 	cert := &domain.Certificate{
 		ID: "cert-123", CompanyId: "comp-1", Status: domain.CertificateActive,
-		EncryptedToken: encToken, P12StorageRef: ref,
+		P12StorageRef: ref,
 	}
 	provider := NewSiatClientProviderWithStorage(
 		&fakeCompanyRepo{company: company},
@@ -207,8 +205,8 @@ func TestBuildCredentialSignPreservesNonPaddingTrailingData(t *testing.T) {
 func TestProviderMissingTokenError(t *testing.T) {
 	cr := crypto.MustNew("test-master-key-12345678901234567890123456789012")
 	mem := newTestMemoryStorage()
-	company := domain.Company{ID: "comp-1", Nit: "123", CodigoSistema: "SYS", Ambiente: domain.EnvironmentPiloto, Modalidad: 1}
-	cert := &domain.Certificate{ID: "cert-123", CompanyId: "comp-1", Status: domain.CertificateActive, EncryptedToken: ""}
+	company := domain.Company{ID: "comp-1", Nit: "123", Ambiente: domain.EnvironmentPiloto, Modalidad: 1}
+	cert := &domain.Certificate{ID: "cert-123", CompanyId: "comp-1", Status: domain.CertificateActive}
 	provider := NewSiatClientProviderWithStorage(&fakeCompanyRepo{company: company}, &fakeCertRepo{cert: cert}, cr, mem, ProviderInfra{BaseURL: "https://example.com", CodigoAmbiente: 2, CodigoSistema: "SYS"})
 	_, err := provider.GetForCompany(context.Background(), "comp-1")
 	if err == nil {
@@ -221,11 +219,10 @@ func TestProviderLocalWithoutStorageFallback(t *testing.T) {
 	cr := crypto.MustNew("test-master-key-12345678901234567890123456789012")
 	p12B64 := base64.StdEncoding.EncodeToString([]byte("plain-p12"))
 	encToken, _ := cr.EncryptString("TOKEN123")
-	company := domain.Company{ID: "comp-1", Nit: "123456789", CodigoSistema: "SYS123", Ambiente: domain.EnvironmentPiloto, Modalidad: 1}
+	company := domain.Company{ID: "comp-1", Nit: "123456789", Ambiente: domain.EnvironmentPiloto, Modalidad: 1, EncryptedTokenDelegado: encToken}
 	cert := &domain.Certificate{
 		ID: "cert-123", CompanyId: "comp-1", Status: domain.CertificateActive,
-		EncryptedToken: encToken,
-		P12StorageRef:  p12B64, // direct base64, no storage
+		P12StorageRef: p12B64, // direct base64, no storage
 	}
 	provider := NewSiatClientProvider(&fakeCompanyRepo{company: company}, &fakeCertRepo{cert: cert}, cr, ProviderInfra{BaseURL: "https://example.com", CodigoAmbiente: 2, CodigoSistema: "SYS123"})
 	svc, err := provider.GetForCompany(context.Background(), "comp-1")

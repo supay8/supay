@@ -3,7 +3,6 @@ package certificate
 import (
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
@@ -24,7 +23,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	if companyID == "" {
 		companyID = r.URL.Query().Get("company_id")
 	}
-	// Solo multipart/form-data (no JSON base64) - p12_file binario + campos texto
+	// Solo multipart/form-data: material de firma P12 y su password.
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -54,26 +53,11 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "p12_file vacío")
 		return
 	}
-	// Campos texto
-	token := strings.TrimSpace(r.FormValue("token"))
-	if token == "" {
-		token = strings.TrimSpace(r.FormValue("token_delegado"))
-	}
 	in := usecase.CertificateInput{
 		Name:        strings.TrimSpace(r.FormValue("name")),
 		Type:        strings.TrimSpace(r.FormValue("type")),
-		Token:       token,
 		P12Password: strings.TrimSpace(r.FormValue("p12_password")),
 		P12Bytes:    p12Bytes,
-	}
-	if v := strings.TrimSpace(r.FormValue("modalidad")); v != "" {
-		if iv, err := strconv.Atoi(v); err == nil {
-			in.Modalidad = &iv
-		}
-	}
-	if v := strings.TrimSpace(r.FormValue("ambiente")); v != "" {
-		uv := strings.ToUpper(v)
-		in.Ambiente = &uv
 	}
 	cert, err := h.uc.Create(companyID, in)
 	if err != nil {

@@ -5,6 +5,7 @@ graphify-out
 # environment
 .env
 .env.*
+!.env.example
 
 # build
 dist

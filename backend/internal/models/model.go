@@ -73,7 +73,6 @@ type Company struct {
 	ID              string          `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Nit             string          `gorm:"type:varchar(20);uniqueIndex;not null"`
 	BusinessName    string          `gorm:"type:varchar(150);not null"`
-	CodigoSistema   string          `gorm:"-"`
 	Ambiente        SiatEnvironment `gorm:"-"`
 	Modalidad       int             `gorm:"-"`
 	Municipio       string          `gorm:"type:varchar(100);not null;default:''"`
@@ -97,10 +96,8 @@ func (Company) TableName() string { return "tenants" }
 type TenantConfig struct {
 	TenantID           string          `gorm:"column:tenant_id;type:uuid;primaryKey"`
 	Ambiente           SiatEnvironment `gorm:"type:varchar(20);not null;default:'PILOTO'"`
-	CodigoSistema      string          `gorm:"type:varchar(100);default:''"`
 	CodigoModalidad    int             `gorm:"not null;default:1"`
-	TokenSiat          *string         `gorm:"type:text"`
-	APIToken           *string         `gorm:"column:api_token;type:text"`
+	TokenDelegado      string          `gorm:"column:token_delegado;type:text;not null;default:''"`
 	MaxInvoicesMonthly int             `gorm:"not null;default:1000"`
 	MaxPointsOfSale    int             `gorm:"not null;default:5"`
 	MaxAPIKeys         int             `gorm:"column:max_api_keys;not null;default:10"`
@@ -540,16 +537,12 @@ type Certificate struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 
-	// Credenciales fiscales por empresa (cifradas AES-GCM, nunca texto plano)
-	EncryptedToken       string  `gorm:"type:text;not null;default:''"`
+	// Material de firma cifrado AES-GCM, nunca texto plano.
 	EncryptedP12Password string  `gorm:"type:text;not null;default:''"`
 	EncryptedBlob        []byte  `gorm:"column:encrypted_blob;type:bytea"`
 	EncryptedPassword    *string `gorm:"column:encrypted_password;type:text"`
 	SerialNumber         *string `gorm:"column:serial_number;type:varchar(100)"`
 	P12StorageRef        string  `gorm:"type:text;not null;default:''"`
-	Modalidad            *int    `gorm:"type:int"`
-	Ambiente             *string `gorm:"type:varchar(20)"`
-	Nit                  string  `gorm:"type:varchar(20);not null;default:''"`
 	IsActive             bool    `gorm:"column:is_active;not null;default:true"`
 	UploadedAt           time.Time
 

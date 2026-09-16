@@ -32,12 +32,8 @@ func (r *PostgresCertificateRepository) Create(c *domain.Certificate) error {
 		SiatUserCode:         c.SiatUserCode,
 		ConfigPath:           c.ConfigPath,
 		RenewedFrom:          c.RenewedFrom,
-		EncryptedToken:       c.EncryptedToken,
 		EncryptedP12Password: c.EncryptedP12Password,
 		P12StorageRef:        c.P12StorageRef,
-		Modalidad:            c.Modalidad,
-		Ambiente:             c.Ambiente,
-		Nit:                  c.Nit,
 		IsActive:             c.Status == domain.CertificateActive,
 		UploadedAt:           time.Now(),
 		CreatedAt:            time.Now(),
@@ -108,12 +104,8 @@ func (r *PostgresCertificateRepository) Update(c *domain.Certificate) error {
 		SiatUserCode:         c.SiatUserCode,
 		ConfigPath:           c.ConfigPath,
 		RenewedFrom:          c.RenewedFrom,
-		EncryptedToken:       c.EncryptedToken,
 		EncryptedP12Password: c.EncryptedP12Password,
 		P12StorageRef:        c.P12StorageRef,
-		Modalidad:            c.Modalidad,
-		Ambiente:             c.Ambiente,
-		Nit:                  c.Nit,
 		IsActive:             c.Status == domain.CertificateActive,
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
@@ -151,12 +143,8 @@ func toDomainCertificate(m *models.Certificate) *domain.Certificate {
 		RenewedFrom:          m.RenewedFrom,
 		CreatedAt:            m.CreatedAt,
 		UpdatedAt:            m.UpdatedAt,
-		EncryptedToken:       m.EncryptedToken,
 		EncryptedP12Password: m.EncryptedP12Password,
 		P12StorageRef:        m.P12StorageRef,
-		Modalidad:            m.Modalidad,
-		Ambiente:             m.Ambiente,
-		Nit:                  m.Nit,
 	}
 	return c
 }

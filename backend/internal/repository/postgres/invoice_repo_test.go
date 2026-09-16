@@ -53,10 +53,9 @@ type repoFixture struct {
 func seedFixture(t *testing.T, db *gorm.DB) repoFixture {
 	t.Helper()
 	company := &domain.Company{
-		Nit:           fmt.Sprintf("%d", time.Now().UnixNano()%10000000000),
-		BusinessName:  "Empresa Test",
-		CodigoSistema: "SYS-TEST",
-		Ambiente:      domain.EnvironmentPiloto,
+		Nit:          fmt.Sprintf("%d", time.Now().UnixNano()%10000000000),
+		BusinessName: "Empresa Test",
+		Ambiente:     domain.EnvironmentPiloto,
 	}
 	if company.Nit == "" {
 		t.Fatal("nit vacío")

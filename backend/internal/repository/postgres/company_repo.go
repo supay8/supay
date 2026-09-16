@@ -39,8 +39,11 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 		return err
 	}
 	config := models.TenantConfig{
-		TenantID: tenant.ID,
-		Ambiente: models.SiatEnvironment(c.Ambiente), CodigoModalidad: modalidad, Settings: settings,
+		TenantID:        tenant.ID,
+		Ambiente:        models.SiatEnvironment(c.Ambiente),
+		CodigoModalidad: modalidad,
+		TokenDelegado:   c.EncryptedTokenDelegado,
+		Settings:        settings,
 	}
 
 	if err := r.db.Transaction(func(tx *gorm.DB) error {
@@ -82,7 +85,6 @@ func (r *PostgresCompanyRepository) withTenantConfig(tenant *models.Company) (*d
 	if err := r.db.Where("tenant_id = ?", tenant.ID).First(&config).Error; err != nil {
 		return nil, err
 	}
-	tenant.CodigoSistema = config.CodigoSistema
 	tenant.Ambiente = config.Ambiente
 	tenant.Modalidad = config.CodigoModalidad
 	tenant.Config = config
@@ -90,30 +92,28 @@ func (r *PostgresCompanyRepository) withTenantConfig(tenant *models.Company) (*d
 }
 
 func toDomainCompany(dbModel *models.Company) *domain.Company {
-	codigoSistema := dbModel.CodigoSistema
 	ambiente := dbModel.Ambiente
 	modalidad := dbModel.Modalidad
 	if dbModel.Config.TenantID != "" {
-		codigoSistema = dbModel.Config.CodigoSistema
 		ambiente = dbModel.Config.Ambiente
 		modalidad = dbModel.Config.CodigoModalidad
 	}
 	return &domain.Company{
-		ID:                    dbModel.ID,
-		Nit:                   dbModel.Nit,
-		BusinessName:          dbModel.BusinessName,
-		CodigoSistema:         codigoSistema,
-		Ambiente:              domain.SiatEnvironment(ambiente),
-		Modalidad:             modalidad,
-		Municipio:             dbModel.Municipio,
-		Direccion:             dbModel.Direccion,
-		Telefono:              dbModel.Telefono,
-		CodigoActividad:       dbModel.CodigoActividad,
-		PiePagina:             dbModel.PiePagina,
-		UsuarioSiat:           dbModel.UsuarioSiat,
-		CertificateWebhookURL: certificateWebhookURL(json.RawMessage(dbModel.Config.Settings)),
-		CreatedAt:             dbModel.CreatedAt,
-		UpdatedAt:             dbModel.UpdatedAt,
+		ID:                     dbModel.ID,
+		Nit:                    dbModel.Nit,
+		BusinessName:           dbModel.BusinessName,
+		Ambiente:               domain.SiatEnvironment(ambiente),
+		Modalidad:              modalidad,
+		Municipio:              dbModel.Municipio,
+		Direccion:              dbModel.Direccion,
+		Telefono:               dbModel.Telefono,
+		CodigoActividad:        dbModel.CodigoActividad,
+		PiePagina:              dbModel.PiePagina,
+		UsuarioSiat:            dbModel.UsuarioSiat,
+		CertificateWebhookURL:  certificateWebhookURL(json.RawMessage(dbModel.Config.Settings)),
+		EncryptedTokenDelegado: dbModel.Config.TokenDelegado,
+		CreatedAt:              dbModel.CreatedAt,
+		UpdatedAt:              dbModel.UpdatedAt,
 	}
 }
 
@@ -149,9 +149,9 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 			return err
 		}
 		return tx.Model(&models.TenantConfig{}).Where("tenant_id = ?", c.ID).Updates(map[string]any{
-			"codigo_sistema":   c.CodigoSistema,
 			"ambiente":         models.SiatEnvironment(c.Ambiente),
 			"codigo_modalidad": modalidad,
+			"token_delegado":   c.EncryptedTokenDelegado,
 			"settings":         settings,
 			"updated_at":       gorm.Expr("now()"),
 		}).Error

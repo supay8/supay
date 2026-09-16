@@ -13,7 +13,7 @@ import (
 func crearCompanyYPos(t *testing.T, db *gorm.DB) (string, string) {
 	t.Helper()
 	cid, pid := uuid.NewString(), uuid.NewString()
-	if err := db.Create(&models.Company{ID: cid, Nit: uuid.NewString()[:20], BusinessName: "TEST", CodigoSistema: "SYS"}).Error; err != nil {
+	if err := db.Create(&models.Company{ID: cid, Nit: uuid.NewString()[:20], BusinessName: "TEST"}).Error; err != nil {
 		t.Fatalf("company: %v", err)
 	}
 	if err := db.Create(&models.PointOfSale{ID: pid, CompanyId: cid, CodigoSucursal: 0, CodigoPuntoVenta: 1, Description: "PV"}).Error; err != nil {

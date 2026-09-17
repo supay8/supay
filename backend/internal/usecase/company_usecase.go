@@ -241,4 +241,5 @@ func (uc *CompanyUsecase) Delete(id string) error {
 
 	// Eliminar la empresa de la base de datos
 	return uc.repo.Delete(id)
+
 }

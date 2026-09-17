@@ -194,6 +194,6 @@ func tenantSettingsWithCertificateWebhook(raw datatypes.JSON, webhookURL string)
 }
 
 func (r *PostgresCompanyRepository) Delete(id string) error {
-	return r.db.Model(&models.Company{}).Where("id = ? AND is_active = true").
+	return r.db.Model(&models.Company{}).Where("id = ? AND is_active = true", id).
 		Update("is_active", false).Error
 }

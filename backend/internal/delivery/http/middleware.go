@@ -148,7 +148,6 @@ func newTokenBucket(rate, burst int) *tokenBucket {
 		lastRefill: time.Now(),
 	}
 }
-
 func (tb *tokenBucket) take(rate, burst int) bool {
 	now := time.Now()
 	elapsed := now.Sub(tb.lastRefill).Seconds()

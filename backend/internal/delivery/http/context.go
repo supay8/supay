@@ -1,6 +1,8 @@
 package http
 
-import "context"
+import (
+	"context"
+)
 
 // contextKey es un tipo privado para evitar colisiones con otros paquetes.
 type contextKey int

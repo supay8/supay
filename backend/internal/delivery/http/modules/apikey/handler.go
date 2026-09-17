@@ -23,6 +23,12 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.WriteErrorBody(w, http.StatusUnauthorized, deliveryHttp.CodeUnauthorized, "no autorizado: falta company_id en contexto")
 		return
 	}
+	companyIDCurrent := chi.URLParam(r, "id")
+
+	if companyIDCurrent != companyID {
+		deliveryHttp.WriteErrorBody(w, http.StatusUnauthorized, deliveryHttp.CodeUnauthorized, "no autorizado: el company_id en la URL no coincide con el del contexto")
+		return
+	}
 
 	var req usecase.CreateApiKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

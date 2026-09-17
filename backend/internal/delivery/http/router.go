@@ -106,7 +106,7 @@ func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup,
 		v1.Method(http.MethodGet, "/metrics", metrics.Handler())
 		v1.Group(func(internal chi.Router) {
 			internal.Use(InternalBootstrapMiddleware(cfg.BackendSecret))
-			internal.With(RateLimitIP(10/60, 10, 5*time.Minute)).Post("/internal/companies", companyCreateHandler)
+			internal.With(RateLimitIP(10, 60, 5*time.Minute)).Post("/internal/companies", companyCreateHandler)
 		})
 		registerTenantRoutes(v1, modules, lookup, true)
 	})

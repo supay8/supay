@@ -2,6 +2,7 @@ package company
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
@@ -63,6 +64,8 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.usecase.Delete(id); err != nil {
+		log.Println("---------------- biendo el error---------------")
+		log.Println(err)
 		deliveryHttp.RespondError(w, err)
 		return
 	}

@@ -56,7 +56,12 @@ const LotesPage = lazy(() =>
 const ComprasPage = lazy(() =>
   import("@/pages/operation-pages").then((m) => ({ default: m.ComprasPage }))
 )
-
+const LoginPage = lazy(() =>
+  import("@/pages/login-page").then((m) => ({ default: m.default }))
+)
+const SignupPage = lazy(() =>
+  import("@/pages/signup-page").then((m) => ({ default: m.default }))
+)
 function RouteLoader() {
   return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -73,6 +78,8 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/login" element={page(<LoginPage />)} />
+        <Route path="/signup" element={page(<SignupPage />)} />
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/invoices" replace />} />
           <Route path="/setup" element={page(<SetupPage />)} />
@@ -82,6 +89,7 @@ export function App() {
           <Route path="/products" element={page(<ProductsPage />)} />
           <Route path="/company" element={page(<CompanyPage />)} />
           <Route path="/company/branches" element={page(<BranchesPage />)} />
+         
           <Route
             path="/company/points-of-sale"
             element={page(<PointsOfSalePage />)}
@@ -109,6 +117,7 @@ export function App() {
             }
           />
         </Route>
+    
       </Routes>
     </BrowserRouter>
   )

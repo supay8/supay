@@ -50,6 +50,13 @@ const LotesPage = React.lazy(() =>
 const ComprasPage = React.lazy(() =>
   import("@/pages/operation-pages").then((m) => ({ default: m.ComprasPage }))
 )
+const SignupPage = React.lazy(() =>
+  import("./pages/signup-page").then((m) => ({ default: m.SignupPage }))
+)
+
+const LoginPage = React.lazy(() =>
+  import("./pages/login-page").then((m) => ({ default: m.default }))
+)
 
 function RouteLoader() {
   return (
@@ -66,6 +73,8 @@ function page(node: React.ReactNode) {
 export function DashboardRoutes({ extraRoutes }: { extraRoutes?: DashboardRoute[] }) {
   return (
     <Routes>
+      <Route path="/login" element={page(<LoginPage />)} />
+      <Route path="/signup" element={page(<SignupPage />)} />
       <Route element={<AppShell />}>
         <Route path="/" element={<Navigate to="/invoices" replace />} />
         <Route path="/setup" element={page(<SetupPage />)} />

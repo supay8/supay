@@ -52,6 +52,21 @@ type UpdateCompanyRequest struct {
 }
 
 func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company, error) {
+	company, err := uc.prepareRegistration(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := uc.repo.Create(company); err != nil {
+		return nil, err
+	}
+
+	return company, nil
+}
+
+// prepareRegistration comparte las reglas de alta entre el bootstrap interno y
+// la creación de empresas desde una sesión JWT.
+func (uc *CompanyUsecase) prepareRegistration(req RegisterCompanyRequest) (*domain.Company, error) {
 	if req.Nit == "" {
 		return nil, domain.NewBadRequestError("el nit es obligatorio")
 	}
@@ -103,10 +118,6 @@ func (uc *CompanyUsecase) Register(req RegisterCompanyRequest) (*domain.Company,
 		return nil, domain.NewBadRequestError("certificate_webhook_url debe ser una URL HTTP(S) válida")
 	}
 
-	if err := uc.repo.Create(company); err != nil {
-		return nil, err
-	}
-
 	return company, nil
 }
 
@@ -135,6 +146,14 @@ func (uc *CompanyUsecase) GetByNit(nit string) (*domain.Company, error) {
 		return nil, err
 	}
 	return company, nil
+}
+
+func (uc *CompanyUsecase) GetByID(id string) (*domain.Company, error) {
+	company, err := uc.repo.GetByID(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domain.NewNotFoundError("empresa no encontrada")
+	}
+	return company, err
 }
 
 func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.Company, error) {

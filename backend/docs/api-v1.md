@@ -5,8 +5,68 @@ publicarán en una nueva versión de ruta. Las rutas históricas sin versión se
 mantienen temporalmente por compatibilidad, pero no forman parte del contrato
 estable.
 
-Todas las rutas de negocio requieren `X-API-Key`. Las operaciones de creación
-aceptan `Idempotency-Key` (máximo 100 caracteres).
+Las rutas de negocio aceptan dos mecanismos de autenticación:
+
+- Integraciones: `X-API-Key`, vinculada directamente a una empresa.
+- Frontend: `Authorization: Bearer <jwt>` junto con `X-Company-ID` para elegir
+  una de las empresas a las que pertenece el usuario.
+
+Las operaciones de creación aceptan `Idempotency-Key` (máximo 100 caracteres).
+
+## Autenticación del frontend
+
+El usuario es una identidad independiente de las empresas. El JWT solo contiene
+la identidad del usuario; la membresía de `X-Company-ID` se valida contra la base
+de datos en cada request. Así una misma cuenta puede administrar múltiples
+empresas sin emitir un token diferente para cada una.
+
+### `POST /v1/auth/signup`
+
+```json
+{
+  "name": "Ada Lovelace",
+  "email": "ada@example.com",
+  "password": "una-clave-segura"
+}
+```
+
+Crea el usuario y devuelve `201 Created` con `user`, `access_token`,
+`token_type: "Bearer"` y `expires_at`.
+
+### `POST /v1/auth/login`
+
+Acepta `email` y `password`; devuelve el mismo payload de sesión que signup.
+Credenciales incorrectas siempre responden `401 UNAUTHORIZED` con un mensaje
+genérico. El logout es local: el frontend elimina el token almacenado.
+
+### Endpoints de cuenta
+
+Requieren únicamente `Authorization: Bearer <jwt>`:
+
+- `GET /v1/auth/me`: usuario autenticado.
+- `GET /v1/auth/companies`: empresas y rol del usuario.
+- `POST /v1/auth/companies`: crea una empresa y asigna al usuario como `owner`.
+
+Después de seleccionar una empresa, el frontend debe añadir
+`X-Company-ID: <uuid>` a las rutas que no incluyen la empresa en su URL. En
+rutas explícitas `/companies/{id}/...`, el backend toma el tenant de `{id}` y
+solo exige el Bearer token. En ambos casos valida la membresía y rechaza con
+`403` cualquier empresa ajena.
+
+Por ejemplo, inmediatamente después de crear una empresa el usuario puede crear
+su primera API key sin presentar otra API key:
+
+```http
+POST /v1/companies/{companyId}/api-keys
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{"name":"integración principal"}
+```
+
+Cada API key pertenece a una sola empresa. El JWT del usuario es la credencial
+que le permite administrar varias empresas y generar una key distinta para cada
+integración o tenant.
 
 ## Facturas: contrato mínimo
 

@@ -17,6 +17,9 @@ func main() {
 	log.Println("Iniciando Supay API...")
 
 	cfg := appconfig.Load()
+	if err := cfg.ValidateAuth(); err != nil {
+		log.Fatalf("Configuración de autenticación inválida: %v", err)
+	}
 	db := database.ConnectDB()
 
 	if os.Getenv("AUTO_MIGRATE") == "true" {
@@ -26,8 +29,8 @@ func main() {
 		}
 		log.Println("Migraciones completadas.")
 	}
-	if os.Getenv("BACKEND_SECRET") == "false" {
-		log.Fatalf("BACKEND_SECRET required")
+	if cfg.BackendSecret == "" {
+		log.Fatalf("BACKEND_SECRET es obligatorio para proteger los endpoints internos")
 	}
 
 	container := app.NewContainer(cfg, db)

@@ -2,7 +2,6 @@ package company
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
@@ -25,7 +24,18 @@ func (h *handler) getByNit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	company, err := h.usecase.GetByNit(nit)
+	var company any
+	var err error
+	if companyID, ok := deliveryHttp.CompanyIDFromContext(r.Context()); ok {
+		current, getErr := h.usecase.GetByID(companyID)
+		if getErr == nil && current.Nit != nit {
+			deliveryHttp.WriteErrorBody(w, http.StatusForbidden, deliveryHttp.CodeForbidden, "el NIT no pertenece a la empresa autenticada")
+			return
+		}
+		company, err = current, getErr
+	} else {
+		company, err = h.usecase.GetByNit(nit)
+	}
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return
@@ -37,6 +47,10 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
+		return
+	}
+	if companyID, ok := deliveryHttp.CompanyIDFromContext(r.Context()); ok && companyID != id {
+		deliveryHttp.WriteErrorBody(w, http.StatusForbidden, deliveryHttp.CodeForbidden, "no puede modificar otra empresa")
 		return
 	}
 
@@ -62,10 +76,12 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
 		return
 	}
+	if companyID, ok := deliveryHttp.CompanyIDFromContext(r.Context()); ok && companyID != id {
+		deliveryHttp.WriteErrorBody(w, http.StatusForbidden, deliveryHttp.CodeForbidden, "no puede eliminar otra empresa")
+		return
+	}
 
 	if err := h.usecase.Delete(id); err != nil {
-		log.Println("---------------- biendo el error---------------")
-		log.Println(err)
 		deliveryHttp.RespondError(w, err)
 		return
 	}

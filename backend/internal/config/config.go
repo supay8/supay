@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -26,9 +27,14 @@ type Config struct {
 	// SiatInfra contiene solo parámetros de infraestructura compartida.
 	SiatInfra     SiatInfraConfig
 	BackendSecret string
-	// APIKey protege la API HTTP: todas las rutas (excepto /health) exigen el
-	// header X-API-Key con este valor. Vacío deshabilita la protección.
+	// APIKey se conserva para compatibilidad de configuración. Las API keys de
+	// tenants se generan y validan contra la tabla api_keys.
 	APIKey string
+	// JWT autentica usuarios del frontend. La empresa activa no se incluye en
+	// el token; se autoriza por membresía en cada petición.
+	JWTSecret    string
+	JWTIssuer    string
+	JWTAccessTTL time.Duration
 	// EncryptionKey es la llave maestra AES-GCM para cifrar tokens y P12 por empresa.
 	EncryptionKey        string
 	DeploymentMode       string // selfhosted | cloud
@@ -223,6 +229,9 @@ func Load() Config {
 		SiatSandbox:          parseBoolEnv("SIAT_SANDBOX", false),
 		SiatInfra:            siatInfra,
 		APIKey:               strings.TrimSpace(os.Getenv("API_KEY")),
+		JWTSecret:            strings.TrimSpace(os.Getenv("JWT_SECRET")),
+		JWTIssuer:            getEnv("JWT_ISSUER", "supay-selfhosted"),
+		JWTAccessTTL:         parseDuration(getEnv("JWT_ACCESS_TTL", "24h"), 24*time.Hour),
 		EncryptionKey:        encryptionKey,
 		DeploymentMode:       deploymentMode,
 		StorageDriver:        storageDriver,
@@ -233,6 +242,13 @@ func Load() Config {
 		Maintenance:          maintenance,
 		Queue:                queue,
 	}
+}
+
+func (c Config) ValidateAuth() error {
+	if len(c.JWTSecret) < 32 {
+		return fmt.Errorf("JWT_SECRET es obligatorio y debe tener al menos 32 caracteres")
+	}
+	return nil
 }
 
 func parseDeploymentMode(raw, legacySelfHosted string) string {

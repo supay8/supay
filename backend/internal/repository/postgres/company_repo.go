@@ -19,6 +19,20 @@ func NewPostgresCompanyRepository(db *gorm.DB) domain.CompanyRepository {
 }
 
 func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
+	if err := r.db.Transaction(func(tx *gorm.DB) error {
+		return createCompany(tx, c)
+	}); err != nil {
+		if isUniqueViolation(err) {
+			return domain.ErrCompanyNitConflict
+		}
+		return err
+	}
+	return nil
+}
+
+// createCompany persiste tenant + configuración usando la transacción recibida.
+// auth_repo también lo usa para crear atómicamente la membresía owner.
+func createCompany(db *gorm.DB, c *domain.Company) error {
 	modalidad := c.Modalidad
 	if modalidad == 0 {
 		modalidad = 1
@@ -46,15 +60,10 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 		Settings:        settings,
 	}
 
-	if err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&tenant).Error; err != nil {
-			return err
-		}
-		return tx.Create(&config).Error
-	}); err != nil {
-		if isUniqueViolation(err) {
-			return domain.ErrCompanyNitConflict
-		}
+	if err := db.Create(&tenant).Error; err != nil {
+		return err
+	}
+	if err := db.Create(&config).Error; err != nil {
 		return err
 	}
 

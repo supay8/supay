@@ -9,12 +9,13 @@ import (
 	"github.com/brandsrx/supay/internal/adapters/notification"
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/adapters/siat/sandbox"
-	"github.com/brandsrx/supay/internal/config"
+	authn "github.com/brandsrx/supay/internal/auth"
 	appconfig "github.com/brandsrx/supay/internal/config"
 	"github.com/brandsrx/supay/internal/crypto"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	deliveryModules "github.com/brandsrx/supay/internal/delivery/http/modules"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/apikey"
+	authModule "github.com/brandsrx/supay/internal/delivery/http/modules/auth"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/branch"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/catalog"
 	"github.com/brandsrx/supay/internal/delivery/http/modules/certificate"
@@ -42,6 +43,7 @@ type Container struct {
 	// Repositorios
 	companyRepo                domain.CompanyRepository
 	apiKeyRepo                 *postgres.PostgresApiKeyRepository
+	authRepo                   *postgres.PostgresAuthRepository
 	pointOfSaleRepo            domain.PointOfSaleRepository
 	cufdRepo                   domain.CufdRepository
 	contingencyRepo            domain.ContingencyEventRepository
@@ -70,10 +72,12 @@ type Container struct {
 	siatService  *siat.Service
 	pdfService   *pdf.Service
 	notifier     ports.Notifier
+	jwtManager   *authn.JWTManager
 
 	// Usecases
 	companyUsecase     *usecase.CompanyUsecase
 	apiKeyUsecase      *usecase.ApiKeyUsecase
+	authUsecase        *usecase.AuthUsecase
 	pointOfSaleUsecase *usecase.PointOfSaleUsecase
 	branchUsecase      *usecase.BranchUsecase
 	customerUsecase    *usecase.CustomerUsecase
@@ -108,6 +112,20 @@ func (c *Container) ApiKeyRepo() *postgres.PostgresApiKeyRepository {
 		c.apiKeyRepo = postgres.NewPostgresApiKeyRepository(c.db)
 	}
 	return c.apiKeyRepo
+}
+
+func (c *Container) AuthRepo() *postgres.PostgresAuthRepository {
+	if c.authRepo == nil {
+		c.authRepo = postgres.NewPostgresAuthRepository(c.db)
+	}
+	return c.authRepo
+}
+
+func (c *Container) JWTManager() *authn.JWTManager {
+	if c.jwtManager == nil {
+		c.jwtManager = authn.NewJWTManager(c.cfg.JWTSecret, c.cfg.JWTIssuer, c.cfg.JWTAccessTTL)
+	}
+	return c.jwtManager
 }
 
 func (c *Container) PointOfSaleRepo() domain.PointOfSaleRepository {
@@ -407,6 +425,13 @@ func (c *Container) ApiKeyUsecase() *usecase.ApiKeyUsecase {
 	return c.apiKeyUsecase
 }
 
+func (c *Container) AuthUsecase() *usecase.AuthUsecase {
+	if c.authUsecase == nil {
+		c.authUsecase = usecase.NewAuthUsecase(c.AuthRepo(), c.CompanyUsecase(), c.JWTManager())
+	}
+	return c.authUsecase
+}
+
 func (c *Container) PointOfSaleUsecase() *usecase.PointOfSaleUsecase {
 	if c.pointOfSaleUsecase == nil {
 		c.pointOfSaleUsecase = usecase.NewPointOfSaleUsecase(c.PointOfSaleRepo(), c.BranchRepo())
@@ -515,11 +540,14 @@ func (c *Container) Modules() []deliveryModules.Module {
 }
 
 func (c *Container) Router() http.Handler {
-	config := config.Load()
 	if c.router == nil {
 		deliveryHttp.SetVerifyAPIKey(postgres.VerifyKey)
 		companyCreateHandler := c.companyCreateHandler()
-		c.router = deliveryHttp.NewRouter(config, c.Modules(), c.ApiKeyRepo(), companyCreateHandler)
+		c.router = deliveryHttp.NewRouter(c.cfg, c.Modules(), c.ApiKeyRepo(), companyCreateHandler, deliveryHttp.AuthOptions{
+			Routes:      authModule.NewModule(c.AuthUsecase()),
+			Tokens:      c.JWTManager(),
+			Memberships: c.AuthRepo(),
+		})
 	}
 	return c.router
 }

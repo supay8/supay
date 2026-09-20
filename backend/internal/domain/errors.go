@@ -20,3 +20,15 @@ type ConflictError struct{ Message string }
 func (e *ConflictError) Error() string { return e.Message }
 
 func NewConflictError(msg string) error { return &ConflictError{Message: msg} }
+
+type UnauthorizedError struct{ Message string }
+
+func (e *UnauthorizedError) Error() string { return e.Message }
+
+func NewUnauthorizedError(msg string) error { return &UnauthorizedError{Message: msg} }
+
+type ForbiddenError struct{ Message string }
+
+func (e *ForbiddenError) Error() string { return e.Message }
+
+func NewForbiddenError(msg string) error { return &ForbiddenError{Message: msg} }

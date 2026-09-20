@@ -21,6 +21,14 @@ type ApiKeyLookup interface {
 	TouchLastUsed(id string) error
 }
 
+type AccessTokenVerifier interface {
+	VerifyAccessToken(raw string) (userID string, err error)
+}
+
+type CompanyMembershipLookup interface {
+	HasCompanyAccess(userID, companyID string) (bool, error)
+}
+
 func InternalBootstrapMiddleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +79,113 @@ func TenantMiddleware(lookup ApiKeyLookup) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// UserMiddleware autentica una sesión humana sin exigir todavía una empresa.
+// Se usa en /auth/me y /auth/companies.
+func UserMiddleware(verifier AccessTokenVerifier) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userID, ok := authenticatedUserID(r, verifier)
+			if !ok {
+				writeErrorBody(w, http.StatusUnauthorized, errorBody{
+					Code: CodeUnauthorized, Message: "sesión inválida o expirada",
+				})
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(WithUserID(r.Context(), userID)))
+		})
+	}
+}
+
+// TenantAccessMiddleware conserva X-API-Key para integraciones y añade el flujo
+// del frontend: Bearer JWT + X-Company-ID. El JWT identifica al usuario y la
+// membresía en base de datos autoriza el tenant en cada petición.
+func TenantAccessMiddleware(lookup ApiKeyLookup, verifier AccessTokenVerifier, memberships CompanyMembershipLookup) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if provided := strings.TrimSpace(r.Header.Get(apiKeyHeader)); provided != "" {
+				companyID, ok := resolveTenant(provided, lookup)
+				if !ok {
+					writeErrorBody(w, http.StatusUnauthorized, errorBody{Code: CodeUnauthorized, Message: "API key inválida o inactiva"})
+					return
+				}
+				if !companyPathMatches(r.URL.Path, companyID) {
+					writeErrorBody(w, http.StatusForbidden, errorBody{Code: CodeForbidden, Message: "la empresa de la ruta no coincide con la credencial"})
+					return
+				}
+				ctx := WithCompanyID(r.Context(), companyID)
+				ctx = siat.WithCompanyID(ctx, companyID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			userID, ok := authenticatedUserID(r, verifier)
+			if !ok {
+				writeErrorBody(w, http.StatusUnauthorized, errorBody{Code: CodeUnauthorized, Message: "envíe Authorization: Bearer <token> o X-API-Key"})
+				return
+			}
+			companyID := strings.TrimSpace(r.Header.Get("X-Company-ID"))
+			pathCompanyID, hasPathCompany := companyIDFromPath(r.URL.Path)
+			if companyID == "" && hasPathCompany {
+				// En rutas explícitas como /companies/{id}/api-keys la URL ya
+				// selecciona el tenant. Esto permite crear la primera API key
+				// usando únicamente el JWT del usuario.
+				companyID = pathCompanyID
+			}
+			if companyID == "" {
+				writeErrorBody(w, http.StatusBadRequest, errorBody{Code: CodeValidation, Message: "falta el header X-Company-ID"})
+				return
+			}
+			allowed, err := memberships.HasCompanyAccess(userID, companyID)
+			if err != nil {
+				writeErrorBody(w, http.StatusInternalServerError, errorBody{Code: CodeInternal, Message: "error interno del servidor"})
+				return
+			}
+			if !allowed || !companyPathMatches(r.URL.Path, companyID) {
+				writeErrorBody(w, http.StatusForbidden, errorBody{Code: CodeForbidden, Message: "el usuario no tiene acceso a esta empresa"})
+				return
+			}
+
+			ctx := WithUserID(r.Context(), userID)
+			ctx = WithCompanyID(ctx, companyID)
+			ctx = siat.WithCompanyID(ctx, companyID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func authenticatedUserID(r *http.Request, verifier AccessTokenVerifier) (string, bool) {
+	if verifier == nil {
+		return "", false
+	}
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	parts := strings.Fields(authorization)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	userID, err := verifier.VerifyAccessToken(parts[1])
+	return userID, err == nil && userID != ""
+}
+
+// companyIDFromPath obtiene el tenant cuando la ruta ya lo declara de forma
+// explícita, por ejemplo /companies/{tenantID}/api-keys.
+func companyIDFromPath(path string) (string, bool) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i, part := range parts {
+		if part == "companies" && i+1 < len(parts) {
+			companyID := strings.TrimSpace(parts[i+1])
+			return companyID, companyID != ""
+		}
+	}
+	return "", false
+}
+
+// companyPathMatches impide que una credencial del tenant A opere endpoints
+// explícitos /companies/{tenantB}/... conservados por compatibilidad.
+func companyPathMatches(path, companyID string) bool {
+	pathCompanyID, ok := companyIDFromPath(path)
+	return !ok || pathCompanyID == companyID
 }
 
 // resolveTenant busca la API key en la tabla api_keys por prefijo y verifica

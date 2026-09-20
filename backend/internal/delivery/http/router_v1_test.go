@@ -59,6 +59,70 @@ func (companyRouteTestModule) RegisterRoutes(r chi.Router) {
 	r.Delete("/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 }
 
+type authRoutesTest struct{}
+
+func (authRoutesTest) RegisterPublicRoutes(r chi.Router) {
+	r.Post("/login", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+}
+
+func (authRoutesTest) RegisterProtectedRoutes(r chi.Router) {
+	r.Get("/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+}
+
+func TestRouterExponeAuthPublicoYProtegido(t *testing.T) {
+	router := NewRouter(config.Config{}, nil, nil, nil, AuthOptions{
+		Routes: authRoutesTest{}, Tokens: fakeTokenVerifier{userID: "user-1"},
+	})
+
+	login := httptest.NewRecorder()
+	router.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/v1/auth/login", nil))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status=%d", login.Code)
+	}
+
+	unauthorized := httptest.NewRecorder()
+	router.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/auth/me", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("me sin token status=%d", unauthorized.Code)
+	}
+
+	meRequest := httptest.NewRequest(http.MethodGet, "/v1/auth/me", nil)
+	meRequest.Header.Set("Authorization", "Bearer valid")
+	me := httptest.NewRecorder()
+	router.ServeHTTP(me, meRequest)
+	if me.Code != http.StatusNoContent {
+		t.Fatalf("me status=%d body=%s", me.Code, me.Body.String())
+	}
+}
+
+type apiKeyManagementTestModule struct{}
+
+func (apiKeyManagementTestModule) PathPrefix() string { return "/companies/{id}/api-keys" }
+func (apiKeyManagementTestModule) RegisterRoutes(r chi.Router) {
+	r.Post("/", func(w http.ResponseWriter, request *http.Request) {
+		companyID, ok := CompanyIDFromContext(request.Context())
+		if !ok || companyID != chi.URLParam(request, "id") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+}
+
+func TestJWTCanCreateFirstAPIKeyWithoutAPIKeyOrCompanyHeader(t *testing.T) {
+	router := NewRouter(config.Config{}, []modules.Module{apiKeyManagementTestModule{}}, nil, nil, AuthOptions{
+		Tokens:      fakeTokenVerifier{userID: "user-1"},
+		Memberships: fakeMembershipLookup{allowed: true},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/companies/company-1/api-keys", nil)
+	req.Header.Set("Authorization", "Bearer valid")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRouterSoloPermiteCrearCompanyDesdeBootstrapInterno(t *testing.T) {
 	router := NewRouter(config.Config{}, []modules.Module{companyRouteTestModule{}}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)

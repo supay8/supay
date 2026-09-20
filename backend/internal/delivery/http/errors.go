@@ -23,6 +23,7 @@ const (
 	CodeNotFound        = "NOT_FOUND"
 	CodeConflict        = "CONFLICT"
 	CodeUnauthorized    = "UNAUTHORIZED"
+	CodeForbidden       = "FORBIDDEN"
 	CodeSiatRejected    = "SIAT_REJECTED"
 	CodeSiatUnavailable = "SIAT_UNAVAILABLE"
 	CodeInternal        = "INTERNAL"
@@ -92,9 +93,15 @@ func classifyError(err error) (int, errorBody) {
 
 	var badRequest *domain.BadRequestError
 	var notFound *domain.NotFoundError
+	var unauthorized *domain.UnauthorizedError
+	var forbidden *domain.ForbiddenError
 	switch {
 	case isConflict(err):
 		return http.StatusConflict, errorBody{Code: CodeConflict, Message: err.Error()}
+	case errors.As(err, &unauthorized):
+		return http.StatusUnauthorized, errorBody{Code: CodeUnauthorized, Message: err.Error()}
+	case errors.As(err, &forbidden):
+		return http.StatusForbidden, errorBody{Code: CodeForbidden, Message: err.Error()}
 	case errors.As(err, &badRequest):
 		return http.StatusBadRequest, errorBody{Code: CodeValidation, Message: err.Error()}
 	case errors.As(err, &notFound), errors.Is(err, gorm.ErrRecordNotFound):
@@ -126,8 +133,11 @@ func enrichError(status int, body errorBody) errorBody {
 		}
 		body.Action = "Corrija el payload y vuelva a enviar la solicitud."
 	case CodeUnauthorized:
-		body.Suggestions = []string{"Envíe una credencial vigente en el header X-API-Key."}
+		body.Suggestions = []string{"Envíe un Bearer token vigente o una API key válida."}
 		body.Action = "Corrija la autenticación y repita la solicitud."
+	case CodeForbidden:
+		body.Suggestions = []string{"Seleccione una empresa asociada al usuario autenticado."}
+		body.Action = "Corrija X-Company-ID y vuelva a intentar."
 	case CodeNotFound:
 		body.Suggestions = []string{
 			"Verifique que el identificador exista y pertenezca a la empresa autenticada.",

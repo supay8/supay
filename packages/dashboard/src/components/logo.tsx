@@ -9,7 +9,7 @@ interface PrimaryIconProps extends SVGProps<SVGSVGElement> {
 
 export const LogoSupay = ({
   size = 64,
-  color = '#3b82f6',
+  color = '#e11d48',
   ...props
 }: PrimaryIconProps) => {
   return (

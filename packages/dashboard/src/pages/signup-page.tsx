@@ -1,3 +1,4 @@
+import { LogoSupay } from "@/components/logo"
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 
@@ -25,9 +26,7 @@ export function SignupPage() {
 
       <div className="relative z-10 w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center">
-          <div className="bg-surface border-border text-foreground mb-4 flex size-10 items-center justify-center rounded-lg border font-mono text-lg font-bold shadow-sm">
-            S
-          </div>
+           <LogoSupay size={50} className="shrink-0 text-primary"  />
           <h1 className="text-foreground text-xl font-medium tracking-tight">
             Crear cuenta en Supay
           </h1>

@@ -1,3 +1,4 @@
+import { LogoSupay } from '@/components/logo';
 import React, { useState } from 'react';
 
 export default function LoginPage() {
@@ -28,9 +29,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm relative z-10">
         {/* Encabezado / Logo marca */}
         <div className="flex flex-col items-center mb-8">
-          <div className="h-10 w-10 rounded-lg bg-surface border border-border flex items-center justify-center text-foreground font-mono font-bold text-lg mb-4 shadow-sm">
-            S
-          </div>
+             <LogoSupay size={50} className="shrink-0 text-primary"  />
           <h1 className="text-xl font-medium tracking-tight text-foreground">
             Acceder a Supay
           </h1>

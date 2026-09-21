@@ -26,4 +26,15 @@ export default defineConfig([
       'react-hooks/set-state-in-effect': 'off',
     },
   },
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['@supay/dashboard/src/**', '**/packages/dashboard/src/**'],
+          message: 'Import from the public @supay/dashboard API.',
+        }],
+      }],
+    },
+  },
 ])

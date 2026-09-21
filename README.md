@@ -148,7 +148,7 @@ flowchart LR
 * **Payload mínimo** — `POST /v1/invoices/preview|emit` resuelve `sku`→SIN, `customer` por identidad fiscal, infiere códigos y valida sectores sin tocar el SIAT
 * **Errores que enseñan** — `code` + `field` + `sugerencias` + `acción` (`internal/delivery/http/errors.go`)
 * **Observabilidad** — métricas Prometheus (`/metrics`), logs JSON con request ID y redacción de PII, dashboards Grafana provisionados (`backend/deploy/observability`)
-* **Storage pluggable** — `none` (on-demand), `local` (disco) y `r2` (Cloudflare R2) — ver `docs` y `.env`
+* **Archivos fiscales** — XML y PDF en volumen local o bucket R2 privado, elegidos con `STORAGE_DRIVER`; descargas autenticadas hacen streaming y comprueban la empresa.
 * **Tests** — unitarios + integración (PostgreSQL vía `TEST_DATABASE_URL`) + contrato sandbox SIAT + concurrencia/cola/rate limiting (`go test ./...`)
 
 ---
@@ -232,10 +232,21 @@ SIAT_CODIGO_SISTEMA=tu-codigo-sistema
 SIAT_BASE_URL=https://pilotosiatservicios.impuestos.gob.bo/v2
 # Storage / deploy
 DEPLOYMENT_MODE=selfhosted   # selfhosted | cloud
-STORAGE_DRIVER=local         # none | local | r2 (selfhosted fuerza local)
-STORAGE_PATH=./storage/pdfs
+STORAGE_DRIVER=local         # local | r2
+STORAGE_LOCAL_PATH=./data/files
+STORAGE_SIGNING_SECRET=un-secreto-aleatorio-de-al-menos-32-caracteres
+STORAGE_PRESIGN_TTL=5m
+# STORAGE_PUBLIC_URL=https://api.example.com (para enlaces locales absolutos)
+# Si STORAGE_DRIVER=r2: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
+# R2_SECRET_ACCESS_KEY, R2_BUCKET; R2_ENDPOINT es opcional.
 AUTO_MIGRATE=true
 ```
+
+`GET /v1/invoices/{id}/xml` y `/pdf` requieren pertenecer a la empresa de la factura; una factura ajena devuelve 404. Los enlaces temporales locales apuntan a `/storage/download` y expiran por defecto en cinco minutos. R2 usa URLs prefirmadas de S3. No registre estas URLs en logs. El bucket R2 debe ser privado.
+
+En Self-Hosted, `docker-compose.yml` monta el volumen `filedata` en `/app/data/files`. Respalde el volumen junto con PostgreSQL; por ejemplo, detenga la API y copie el contenido de `filedata` a su sistema de backups antes de reanudarla. Restaurar solo la base de datos deja metadatos sin archivos. Para probar el contrato S3 localmente: `docker compose --profile storage-test up -d minio minio-init` y después `MINIO_ENDPOINT=http://localhost:9000 MINIO_ACCESS_KEY=minioadmin MINIO_SECRET_KEY=minioadmin MINIO_BUCKET=supay-test go test ./internal/storage -run TestMinIO`. MinIO no reproduce todas las particularidades de R2. La prueba real solo se activa con `R2_INTEGRATION_TEST=1` y las variables `R2_*`.
+
+Con Compose, edite `backend/.env` (que define `STORAGE_LOCAL_PATH=/app/data/files`); para R2 cambie allí `STORAGE_DRIVER=r2` y complete las credenciales. El servicio `api` no reemplaza esas variables.
 
 > `ENCRYPTION_KEY` cifra tokens y P12 en reposo (AES-GCM). Sin ella la API arranca pero advierte y el multi-tenant seguro queda deshabilitado.
 

@@ -98,6 +98,23 @@ export function InvoiceDetailSheet({
     },
   })
 
+  const siatVerifyMutation = useMutation({
+    mutationFn: () => host.getSiatStatus(invoiceId!),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["invoices", invoiceId] })
+      const msg =
+        data && typeof data === "object" && "estado" in data
+          ? String((data as Record<string, unknown>)["estado"])
+          : "Estado actualizado desde el SIAT"
+      toast.success(msg)
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof ApiError ? error.message : "No se pudo verificar ante el SIAT"
+      )
+    },
+  })
+
   const invoice: Invoice | undefined = detail.data
 
   function copyCuf(cuf: string) {
@@ -249,6 +266,27 @@ export function InvoiceDetailSheet({
                           Motivo de anulación registrado ante el SIAT.
                         </p>
                       )}
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {host.getInvoiceXmlUrl && invoice.cuf && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          render={<a href={host.getInvoiceXmlUrl(invoice.id)} download />}
+                        >
+                          <Download data-icon="inline-start" />
+                          XML firmado
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={siatVerifyMutation.isPending}
+                        onClick={() => siatVerifyMutation.mutate()}
+                      >
+                        {siatVerifyMutation.isPending && <Spinner data-icon="inline-start" />}
+                        Verificar en SIAT
+                      </Button>
+                    </div>
                   </TabsContent>
                 </ScrollArea>
               </Tabs>

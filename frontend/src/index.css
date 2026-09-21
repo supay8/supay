@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../packages/dashboard/src";
 
 /* ============================================================
    Supay — Design tokens

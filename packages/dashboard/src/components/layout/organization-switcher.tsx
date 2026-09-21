@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom"
-import { Building2, Check, ChevronsUpDown, Plus } from "lucide-react"
+import { Check, ChevronsUpDown, Plus } from "lucide-react"
 
 import { useAuth } from "../../auth-context"
 import { Badge } from "../../components/ui/badge"
@@ -73,13 +73,6 @@ export function OrganizationSwitcher() {
         })}
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem
-            onClick={() => navigate("/company")}
-            className="gap-2.5"
-          >
-            <Building2 className="size-4" />
-            Configuración de la empresa
-          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => navigate("/companies")}
             className="gap-2.5"

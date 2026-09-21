@@ -139,18 +139,18 @@ export function CompanyPage() {
 
           <FormSection
             title="Certificado digital"
-            description="Se administra durante la configuración inicial."
+            description="Firma .p12 de la empresa. Se gestiona en Seguridad."
           >
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-muted-foreground">
-                Administrado en Conexión SIAT
+                Un activo por NIT. Solo se muestran metadatos.
               </span>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate("/company/siat")}
+                onClick={() => navigate("/company/certificates")}
               >
-                Ver conexión
+                Gestionar certificado
               </Button>
             </div>
           </FormSection>

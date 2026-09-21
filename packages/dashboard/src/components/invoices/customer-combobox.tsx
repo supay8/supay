@@ -1,10 +1,7 @@
 import { useState } from "react"
 import { useDashboardHost } from "../../host-context"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { Check, ChevronsUpDown, UserPlus } from "lucide-react"
-import { toast } from "sonner"
-
-import { ApiError } from "../../host"
 import { useAuth } from "../../auth-context"
 import type { Customer } from "../../lib/types"
 import { Button } from "../../components/ui/button"
@@ -51,37 +48,29 @@ function QuickCustomerDialog({
   onOpenChange: (open: boolean) => void
   onCreated: (customer: Customer) => void
 }) {
-  const host = useDashboardHost()
   const { activeCompany } = useAuth()
   const companyId = activeCompany?.company.id ?? ""
   const [name, setName] = useState("")
   const [documentType, setDocumentType] = useState("CI")
   const [documentNumber, setDocumentNumber] = useState("")
-  const queryClient = useQueryClient()
 
-  const mutation = useMutation({
-    mutationFn: () =>
-      host.createCustomer({
-        company_id: companyId,
-        name: name.trim(),
-        document_type: documentType,
-        document_number: documentNumber.trim(),
-      }),
-    onSuccess: (customer) => {
-      queryClient.invalidateQueries({ queryKey: ["customers"] })
-      toast.success(`Cliente ${customer.name} creado`)
-      onCreated(customer)
-      onOpenChange(false)
-      setName("")
-      setDocumentType("CI")
-      setDocumentNumber("")
-    },
-    onError: (error) => {
-      toast.error(
-        error instanceof ApiError ? error.message : "No se pudo crear el cliente"
-      )
-    },
-  })
+  // Sin POST /customers en backend: se devuelve un cliente transitorio que
+  // viaja dentro del payload v1 (POST /v1/invoices/preview|emit) y el backend
+  // lo crea o reutiliza al facturar. Prefijo manual: lo detecta invoice-new.
+  function handleUse() {
+    onCreated({
+      id: `manual-${crypto.randomUUID()}`,
+      company_id: companyId,
+      document_type: documentType,
+      document_number: documentNumber.trim(),
+      name: name.trim(),
+      created_at: new Date(0).toISOString(),
+    })
+    onOpenChange(false)
+    setName("")
+    setDocumentType("CI")
+    setDocumentNumber("")
+  }
 
   const valid = name.trim() !== "" && documentNumber.trim() !== ""
 
@@ -91,7 +80,7 @@ function QuickCustomerDialog({
         <DialogHeader>
           <DialogTitle>Cliente nuevo</DialogTitle>
           <DialogDescription>
-            Mínimo para facturar: nombre y documento.
+            Se usará en esta factura; el backend lo registra al emitir.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">
@@ -136,11 +125,8 @@ function QuickCustomerDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button
-            disabled={!valid || mutation.isPending}
-            onClick={() => mutation.mutate()}
-          >
-            Crear cliente
+          <Button disabled={!valid} onClick={handleUse}>
+            Usar en esta factura
           </Button>
         </DialogFooter>
       </DialogContent>

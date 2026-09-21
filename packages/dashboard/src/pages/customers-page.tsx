@@ -1,23 +1,13 @@
-import { useState } from "react"
 import { useDashboardHost } from "../host-context"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus } from "lucide-react"
-import { toast } from "sonner"
+import { useQuery } from "@tanstack/react-query"
+import { useNavigate } from "react-router-dom"
 
-import { ApiError } from "../host"
 import { useAuth } from "../auth-context"
 import { formatDateTime } from "../lib/format"
 import type { Customer } from "../lib/types"
 import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert"
 import { Button } from "../components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../components/ui/dialog"
 import {
   Empty,
   EmptyContent,
@@ -25,15 +15,6 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "../components/ui/empty"
-import { Input } from "../components/ui/input"
-import { Label } from "../components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select"
 import { Skeleton } from "../components/ui/skeleton"
 import {
   Table,
@@ -44,17 +25,16 @@ import {
   TableRow,
 } from "../components/ui/table"
 
-const DOCUMENT_TYPES = ["CI", "NIT", "CE", "PASAPORTE", "OTRO"]
-
+/**
+ * Historial de receptores (solo lectura).
+ * El backend no expone POST /customers: los clientes se crean implícito
+ * al emitir (POST /v1/invoices[/emit] con objeto `customer`).
+ */
 export function CustomersPage() {
   const host = useDashboardHost()
   const { activeCompany } = useAuth()
   const companyId = activeCompany?.company.id ?? ""
-  const queryClient = useQueryClient()
-  const [createOpen, setCreateOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [documentType, setDocumentType] = useState("CI")
-  const [documentNumber, setDocumentNumber] = useState("")
+  const navigate = useNavigate()
 
   const customersQuery = useQuery({
     queryKey: ["customers", companyId],
@@ -63,48 +43,27 @@ export function CustomersPage() {
     enabled: companyId !== "",
   })
 
-  const createMutation = useMutation({
-    mutationFn: () =>
-      host.createCustomer({
-        company_id: companyId,
-        name: name.trim(),
-        document_type: documentType,
-        document_number: documentNumber.trim(),
-      }),
-    onSuccess: (customer) => {
-      queryClient.invalidateQueries({ queryKey: ["customers"] })
-      toast.success(`Cliente ${customer.name} creado`)
-      setCreateOpen(false)
-      setName("")
-      setDocumentNumber("")
-    },
-    onError: (error) =>
-      toast.error(
-        error instanceof ApiError ? error.message : "No se pudo crear el cliente"
-      ),
-  })
-
   const customers = customersQuery.data?.items ?? []
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Clientes"
-        description="Se crean solos al facturar; acá los administrás."
+        description="Historial de receptores. Se crean solos al facturar."
         actions={
-          <Button
-            size="sm"
-            onClick={() => {
-              setName("")
-              setDocumentNumber("")
-              setCreateOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Nuevo cliente
+          <Button size="sm" onClick={() => navigate("/invoices/new")}>
+            Facturar a un cliente nuevo
           </Button>
         }
       />
+
+      <Alert>
+        <AlertTitle>Sin alta manual</AlertTitle>
+        <AlertDescription>
+          El backend crea o reutiliza al cliente desde la factura
+          (por NIT/CI o por <code>customer.id</code>). No hay endpoint de creación directa.
+        </AlertDescription>
+      </Alert>
 
       {customersQuery.isPending && (
         <div className="flex flex-col gap-2 rounded-lg border p-4">
@@ -132,8 +91,8 @@ export function CustomersPage() {
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                Crear uno manualmente
+              <Button size="sm" onClick={() => navigate("/invoices/new")}>
+                Emitir primera factura
               </Button>
             </EmptyContent>
           </Empty>
@@ -169,66 +128,6 @@ export function CustomersPage() {
             </Table>
           </div>
         ))}
-
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Nuevo cliente</DialogTitle>
-            <DialogDescription>Nombre y documento, lo mínimo.</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cust-name">Nombre o razón social *</Label>
-              <Input
-                id="cust-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoFocus
-              />
-            </div>
-            <div className="grid grid-cols-[110px_1fr] gap-2">
-              <div className="flex flex-col gap-1.5">
-                <Label>Tipo</Label>
-                <Select value={documentType} onValueChange={(v) => setDocumentType(v ?? "CI")}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DOCUMENT_TYPES.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="cust-doc">N° de documento *</Label>
-                <Input
-                  id="cust-doc"
-                  value={documentNumber}
-                  onChange={(e) => setDocumentNumber(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreateOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={
-                name.trim() === "" ||
-                documentNumber.trim() === "" ||
-                createMutation.isPending
-              }
-              onClick={() => createMutation.mutate()}
-            >
-              Crear cliente
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

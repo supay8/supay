@@ -1,7 +1,7 @@
 # dependencies
 node_modules
 .pnpm-store
-graphify-out
+/graphify-out
 # environment
 .env
 .env.*
@@ -19,6 +19,7 @@ dist
 .vscode
 .idea
 
+/storage/
 # OS
 .DS_Store
 

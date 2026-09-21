@@ -5,8 +5,10 @@ import {
   FileText,
   KeyRound,
   Layers,
+  LayoutDashboard,
   Package,
   Plug,
+  ShieldCheck,
   ShoppingCart,
   Store,
   Users,
@@ -28,6 +30,11 @@ export interface NavSection {
 
 export const NAV_SECTIONS: NavSection[] = [
   {
+    label: "General",
+    flat: true,
+    items: [{ label: "Panel", to: "/dashboard", icon: LayoutDashboard }],
+  },
+  {
     label: "Facturación",
     flat: true,
     items: [
@@ -45,6 +52,13 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Puntos de venta", to: "/company/points-of-sale", icon: Store },
       { label: "Actividad económica", to: "/company/sectors", icon: Layers },
       { label: "Conexión SIAT", to: "/company/siat", icon: Plug },
+    ],
+  },
+  {
+    label: "Seguridad",
+    flat: false,
+    items: [
+      { label: "Certificado digital", to: "/company/certificates", icon: ShieldCheck },
       { label: "API keys", to: "/company/api-keys", icon: KeyRound },
     ],
   },
@@ -97,7 +111,7 @@ export function findActiveNav(pathname: string, sections: NavSection[] = NAV_SEC
   }
 
   for (const section of sections) {
-    if (!section.flat && pathname.startsWith(section.label === "Mi empresa" ? "/company" : "/operation")) {
+    if (!section.flat && pathname.startsWith(section.label === "Operación" ? "/operation" : "/company")) {
       const item = section.items.find((i) => pathname.startsWith(i.to))
       return { parent: section.label, child: item?.label ?? "" }
     }

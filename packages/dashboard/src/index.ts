@@ -3,7 +3,7 @@
 export { SupayDashboard } from "./dashboard"
 export type { SupayDashboardProps, DashboardRoute } from "./dashboard"
 
-export type { DashboardHost, HostError, ApiError, ProductMappingInput, AuthUser, AuthResult, UserCompany, CreateMyCompanyInput } from "./host"
+export type { DashboardHost, HostError, ApiError, ProductMappingInput, AuthUser, AuthResult, UserCompany, CreateMyCompanyInput, ApiKeyItem, CreateApiKeyResponse, CertificateItem, UploadCertificateInput, AuthHost, CompanyAdminHost, InvoiceHost, CatalogHost, SiatOpsHost } from "./host"
 export { ApiError as HostErrorAlias } from "./host"
 
 export type { DashboardConfig, DashboardMode } from "./config"
@@ -33,6 +33,16 @@ export type {
   InvoiceItem,
   SectorInfo,
   SectorFieldInfo,
+  SectorPerfil,
+  SinProduct,
+  CatalogReadiness,
+  EmissionBootstrap,
+  InvoicePreview,
+  V1InvoiceInput,
+  V1CustomerInput,
+  V1ItemInput,
+  SiatOperationResult,
+  BatchSendInput,
   Paginated,
   InvoiceListParams,
   DraftInput,

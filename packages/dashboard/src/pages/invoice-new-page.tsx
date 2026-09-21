@@ -20,8 +20,10 @@ import type {
   Customer,
   DraftItemInput,
   Invoice,
+  InvoicePreview,
   Product,
   SectorFieldInfo,
+  V1InvoiceInput,
 } from "../lib/types"
 import { CustomerCombobox } from "../components/invoices/customer-combobox"
 import { ProductCombobox } from "../components/invoices/product-combobox"
@@ -174,6 +176,7 @@ export function InvoiceNewPage() {
   const [resultInvoice, setResultInvoice] = useState<Invoice | null>(null)
   const [rejectedMessages, setRejectedMessages] = useState<string>("")
   const [unavailableOpen, setUnavailableOpen] = useState(false)
+  const [preview, setPreview] = useState<InvoicePreview | null>(null)
 
   const posQuery = useQuery({
     queryKey: ["point-of-sales", companyId],
@@ -183,8 +186,8 @@ export function InvoiceNewPage() {
   })
 
   const sectoresQuery = useQuery({
-    queryKey: ["sectores"],
-    queryFn: () => host.listSectores(),
+    queryKey: ["sectores", companyId],
+    queryFn: () => host.listSectores(companyId || undefined),
     staleTime: 5 * 60_000,
   })
 
@@ -282,9 +285,61 @@ export function InvoiceNewPage() {
     setSectorValues({})
     setFieldErrors({})
     setRejectedMessages("")
+    setPreview(null)
     setResultInvoice(null)
     setPhase("idle")
   }
+
+  /** Payload v1 simplificado (POST /v1/invoices/preview|emit). */
+  function buildV1Payload(): V1InvoiceInput {
+    const sectorData = Object.fromEntries(
+      Object.entries(sectorValues).filter(([, v]) => v.trim() !== "")
+    )
+    return {
+      point_of_sale_id: effectivePos,
+      customer: customer!.id.startsWith("manual-")
+        ? {
+            document_type: customer!.document_type,
+            document_number: customer!.document_number,
+            name: customer!.name,
+          }
+        : { id: customer!.id },
+      items: items.map((i) => ({
+        sku: i.code,
+        quantity: parseNum(i.quantity),
+        price: parseNum(i.unitPrice),
+        discount: parseNum(i.discount),
+        data: undefined,
+      })),
+      sector: effectiveSector ? String(effectiveSector.codigo) : "auto",
+      data: sectorData,
+      payment: { method_code: Number(metodoPago), currency_code: Number(moneda) },
+    }
+  }
+
+  const previewMutation = useMutation({
+    mutationFn: async () => {
+      if (!host.previewInvoice) {
+        throw new ApiError(405, "NOT_SUPPORTED", "Este backend no expone POST /v1/invoices/preview")
+      }
+      return host.previewInvoice(buildV1Payload())
+    },
+    onSuccess: (data) => {
+      setPreview(data)
+      setFieldErrors({})
+      toast.success("Validación OK: podés emitir")
+    },
+    onError: (error) => {
+      setPreview(null)
+      if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
+        const details = error.details ?? {}
+        setFieldErrors(details)
+        focusFirstError(details)
+        return
+      }
+      toast.error(error instanceof ApiError ? error.message : "Falló la validación previa")
+    },
+  })
 
   function handleResult(result: {
     status: Phase
@@ -305,6 +360,11 @@ export function InvoiceNewPage() {
 
   const emitMutation = useMutation({
     mutationFn: async () => {
+      // Clientes transitorios (manual-*) o payload v1: emisión atómica.
+      if (customer!.id.startsWith("manual-") && host.emitInvoiceDirect) {
+        const emitted = await host.emitInvoiceDirect(buildV1Payload())
+        return { status: "accepted" as const, invoice: emitted }
+      }
       const payload = {
         customer_id: customer!.id,
         point_of_sale_id: effectivePos,
@@ -625,7 +685,14 @@ export function InvoiceNewPage() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <Label>Ítems</Label>
-          <ProductCombobox onSelectProduct={addProductLine} onFreeLine={addFreeLine} />
+          <div className="flex items-center gap-2">
+            {preview != null && preview.total !== undefined && (
+              <span className="text-muted-foreground text-xs tabular-nums">
+                Preview: {formatCurrency(preview.total)} ✓
+              </span>
+            )}
+            <ProductCombobox onSelectProduct={addProductLine} onFreeLine={addFreeLine} />
+          </div>
         </div>
 
         {fieldErrors["items"] && (
@@ -749,6 +816,15 @@ export function InvoiceNewPage() {
               Total {formatCurrency(totals.total)}
             </span>
           </div>
+          <Button
+            variant="outline"
+            size="lg"
+            disabled={!canEmit || previewMutation.isPending}
+            onClick={() => previewMutation.mutate()}
+          >
+            {previewMutation.isPending && <Spinner data-icon="inline-start" />}
+            Validar
+          </Button>
           <Button
             size="lg"
             disabled={!canEmit || emitMutation.isPending}

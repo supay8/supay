@@ -23,8 +23,6 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@frontend/*": ["./src/*"],
-      "@dashboard/*": ["../packages/dashboard/src/*"],
       "@supay/dashboard": ["../packages/dashboard/src/index.ts"],
       "@supay/dashboard/*": ["../packages/dashboard/src/*"]
     }

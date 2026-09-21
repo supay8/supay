@@ -14,7 +14,7 @@ const frontendSrc = path.resolve(
   "./src"
 )
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     react(),
     tailwindcss(),
@@ -26,7 +26,7 @@ export default defineConfig({
       "@": frontendSrc,
 
       // dashboard package
-      "@supay/dashboard": dashboardSrc,
+      ...(command === "serve" ? { "@supay/dashboard": dashboardSrc } : {}),
     },
 
     // Muy recomendable en monorepos con React
@@ -48,4 +48,4 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ["@supay/dashboard"],
   },
-})
+}))

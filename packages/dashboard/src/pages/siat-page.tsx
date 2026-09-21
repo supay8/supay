@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
+import { useNavigate } from "react-router-dom"
 import { useDashboardHost } from "../host-context"
 import { useAuth } from "../auth-context"
 import { toast } from "sonner"
@@ -35,6 +36,7 @@ function Tech({ term }: { term: string }) {
 
 export function SiatConnectionPage() {
   const host = useDashboardHost()
+  const navigate = useNavigate()
   const { activeCompany } = useAuth()
   const companyId = activeCompany?.company.id ?? ""
   const company = activeCompany?.company ?? null
@@ -61,6 +63,38 @@ export function SiatConnectionPage() {
           ? `${error.message} Podés reintentar con seguridad.`
           : "No se pudo verificar"
       ),
+  })
+
+  const readinessQuery = useQuery({
+    queryKey: ["catalog-readiness", companyId, posQuery.data?.items[0]?.id],
+    queryFn: () =>
+      host.getCatalogReadiness
+        ? host.getCatalogReadiness(companyId, posQuery.data?.items[0]?.id)
+        : Promise.resolve(null),
+    enabled: companyId !== "" && (posQuery.data?.items.length ?? 0) > 0,
+    staleTime: 60_000,
+  })
+
+  function opsFor(posId: string) {
+    return {
+      cuis: () => host.requestCuis?.(posId) ?? Promise.reject(new Error("No soportado")),
+      cufd: () => host.requestCufd?.(posId) ?? Promise.reject(new Error("No soportado")),
+      sync: () => host.sincronizar?.(posId) ?? Promise.reject(new Error("No soportado")),
+    }
+  }
+
+  const granularMutation = useMutation({
+    mutationFn: async ({ kind, posId }: { kind: "cuis" | "cufd" | "sync"; posId: string }) => {
+      const ops = opsFor(posId)
+      return ops[kind]()
+    },
+    onSuccess: (res) => {
+      toast.success(res.reception_code ? `OK: ${res.reception_code}` : "Operación completada")
+      posQuery.refetch()
+      readinessQuery.refetch()
+    },
+    onError: (error) =>
+      toast.error(error instanceof ApiError ? error.message : "Falló la operación SIAT"),
   })
 
   const posList = posQuery.data?.items ?? []
@@ -96,6 +130,18 @@ export function SiatConnectionPage() {
       )}
 
       <FormSection title="Checklist de conexión">
+        {readinessQuery.data != null && (
+          <p className="mb-3 text-xs">
+            Readiness:{" "}
+            {readinessQuery.data.ready ? (
+              <span className="text-success font-medium">listo para emitir</span>
+            ) : (
+              <span className="font-medium text-warning">
+                falta: {(readinessQuery.data.missing ?? []).join(", ") || "ver detalle"}
+              </span>
+            )}
+          </p>
+        )}
         {posQuery.isPending && (
           <div className="flex flex-col gap-3">
             {[...Array(4)].map((_, i) => (
@@ -148,6 +194,64 @@ export function SiatConnectionPage() {
             </li>
           </ul>
         )}
+      </FormSection>
+
+      <FormSection
+        title="Operaciones por etapa"
+        description="Reintentos granulares sin repetir el setup completo."
+      >
+        <div className="flex flex-col gap-2">
+          {(posQuery.data?.items ?? []).slice(0, 3).map((p) => (
+            <div key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground min-w-40 flex-1">{p.description}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={granularMutation.isPending}
+                onClick={() => granularMutation.mutate({ kind: "cuis", posId: p.id })}
+              >
+                CUIS
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={granularMutation.isPending}
+                onClick={() => granularMutation.mutate({ kind: "cufd", posId: p.id })}
+              >
+                CUFD
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={granularMutation.isPending}
+                onClick={() => granularMutation.mutate({ kind: "sync", posId: p.id })}
+              >
+                Sincronizar
+              </Button>
+            </div>
+          ))}
+          {(posQuery.data?.items ?? []).length === 0 && (
+            <p className="text-muted-foreground text-sm">Sin puntos de venta.</p>
+          )}
+        </div>
+      </FormSection>
+
+      <FormSection
+        title="Certificado digital"
+        description="La firma .p12 se gestiona en Seguridad (un activo por NIT)."
+      >
+        <div className="flex items-center justify-between gap-4 text-sm">
+          <span className="text-muted-foreground">
+            Subí o renová el certificado sin salir del flujo SIAT.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/company/certificates")}
+          >
+            Gestionar certificado
+          </Button>
+        </div>
       </FormSection>
 
       <p className="text-muted-foreground text-xs">

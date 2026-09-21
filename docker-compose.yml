@@ -1,8 +1,7 @@
 # Supay — docker-compose único con profiles ["selfhosted","cloud"]
-# selfhosted: BYO infra, PDF en disco (STORAGE_DRIVER=local por defecto).
+# selfhosted: BYO infra, XML/PDF en volumen local (STORAGE_DRIVER=local por defecto).
 #   docker compose --profile selfhosted up
-#   On-demand sin disco: STORAGE_DRIVER=none
-# cloud: infra administrada (R2 + DB gestionada), STORAGE_DRIVER=r2 por defecto
+# cloud: infra administrada (R2 + DB gestionada), usar STORAGE_DRIVER=r2
 #   DEPLOYMENT_MODE=cloud docker compose --profile cloud up
 
 services:
@@ -35,15 +34,6 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-supay}?sslmode=disable
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-selfhosted}
-      STORAGE_DRIVER: ${STORAGE_DRIVER:-}
-      STORAGE_PATH: ${STORAGE_PATH:-}
-      # R2 solo en cloud
-      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
-      R2_BUCKET: ${R2_BUCKET:-}
-      R2_ENDPOINT: ${R2_ENDPOINT:-}
-      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
     ports:
       - "${PORT:-8081}:8081"
     depends_on:
@@ -51,6 +41,29 @@ services:
         condition: service_healthy
     volumes:
       - ./storage:/app/storage
+      - filedata:/app/data/files
+
+  minio:
+    image: quay.io/minio/minio:latest
+    profiles: ["storage-test"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    profiles: ["storage-test"]
+    depends_on: [minio]
+    entrypoint: ["/bin/sh"]
+    command: ["-c", "until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done; mc mb --ignore-existing local/supay-test"]
 
 volumes:
   pgdata:
+  filedata:
+  miniodata:

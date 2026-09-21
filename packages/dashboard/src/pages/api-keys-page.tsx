@@ -80,7 +80,7 @@ export function ApiKeysPage() {
     },
   })
 
-  const keys = keysQuery.data ?? []
+  const keys = Array.isArray(keysQuery.data) ? keysQuery.data : []
 
   async function copySecret() {
     if (!created) return

@@ -23,8 +23,8 @@ export function SectorsPage() {
 
   const company = activeCompany?.company ?? null
   const sectoresQuery = useQuery({
-    queryKey: ["sectores"],
-    queryFn: () => host.listSectores(),
+    queryKey: ["sectores", company?.id],
+    queryFn: () => host.listSectores(company?.id),
     staleTime: 5 * 60_000,
   })
 

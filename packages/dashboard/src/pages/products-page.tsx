@@ -1,25 +1,12 @@
 import { useState } from "react"
 import { useDashboardHost } from "../host-context"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus } from "lucide-react"
-import { toast } from "sonner"
+import { useQuery } from "@tanstack/react-query"
 
-import { ApiError } from "../host"
 import { useAuth } from "../auth-context"
-import type { Product } from "../lib/types"
 import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
-import { Button } from "../components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../components/ui/dialog"
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert"
 import {
   Empty,
-  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
@@ -36,41 +23,36 @@ import {
   TableRow,
 } from "../components/ui/table"
 
+/**
+ * Catálogo SIN sincronizado (solo lectura).
+ * El backend no expone CRUD local de productos: la fuente de verdad es
+ * GET /v1/companies/{id}/catalogs/productos-sin (sincronizado desde SIAT).
+ * Patrón Adapter: listSinProducts devuelve el contrato real; la tabla lo muestra.
+ */
 export function ProductsPage() {
   const host = useDashboardHost()
   const { activeCompany } = useAuth()
   const companyId = activeCompany?.company.id ?? ""
-  const queryClient = useQueryClient()
-  const [createOpen, setCreateOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [sku, setSku] = useState("")
+  const [search, setSearch] = useState("")
+  const [debounced, setDebounced] = useState("")
+
+  function handleSearch(value: string) {
+    setSearch(value)
+    window.clearTimeout((handleSearch as unknown as { t?: number }).t)
+    ;(handleSearch as unknown as { t?: number }).t = window.setTimeout(() => {
+      setDebounced(value.trim())
+    }, 350)
+  }
 
   const productsQuery = useQuery({
-    queryKey: ["products", companyId],
-    queryFn: () => host.listProducts(companyId),
+    queryKey: ["sin-products", companyId, debounced],
+    queryFn: () =>
+      host.listSinProducts
+        ? host.listSinProducts(companyId, debounced || undefined, 50)
+        : Promise.resolve({ items: [], total: 0, limit: 50, offset: 0 }),
     retry: false,
     enabled: companyId !== "",
-  })
-
-  const createMutation = useMutation({
-    mutationFn: () =>
-      host.createProduct({
-        company_id: companyId,
-        name: name.trim(),
-        sku: sku.trim(),
-        active: true,
-      }),
-    onSuccess: (product) => {
-      queryClient.invalidateQueries({ queryKey: ["products"] })
-      toast.success(`Producto ${product.name} creado`)
-      setCreateOpen(false)
-      setName("")
-      setSku("")
-    },
-    onError: (error) =>
-      toast.error(
-        error instanceof ApiError ? error.message : "No se pudo crear el producto"
-      ),
+    staleTime: 60_000,
   })
 
   const products = productsQuery.data?.items ?? []
@@ -78,22 +60,27 @@ export function ProductsPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Productos"
-        description="Tu catálogo local; la correspondencia SIAT evita rechazos por codificación."
-        actions={
-          <Button
-            size="sm"
-            onClick={() => {
-              setName("")
-              setSku("")
-              setCreateOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Nuevo producto
-          </Button>
-        }
+        title="Productos SIN"
+        description="Catálogo oficial sincronizado desde el SIAT. Sin alta manual."
       />
+
+      <Alert>
+        <AlertTitle>Fuente SIAT, no inventario local</AlertTitle>
+        <AlertDescription>
+          Los códigos, actividades y unidades vienen de la sincronización
+          (<code>POST /v1/siat/sincronizar</code>). Al facturar se resuelven por SKU.
+        </AlertDescription>
+      </Alert>
+
+      <div className="flex max-w-md flex-col gap-1.5">
+        <Label htmlFor="sin-search">Buscar en catálogo</Label>
+        <Input
+          id="sin-search"
+          placeholder="Descripción o código…"
+          value={search}
+          onChange={(e) => handleSearch(e.target.value)}
+        />
+      </div>
 
       {productsQuery.isPending && (
         <div className="flex flex-col gap-2 rounded-lg border p-4">
@@ -115,17 +102,11 @@ export function ProductsPage() {
         (products.length === 0 ? (
           <Empty className="rounded-lg border border-dashed">
             <EmptyHeader>
-              <EmptyTitle>Catálogo vacío</EmptyTitle>
+              <EmptyTitle>Sin resultados</EmptyTitle>
               <EmptyDescription>
-                Podés facturar igual con líneas libres, pero el catálogo acelera
-                la emisión.
+                Sincronizá catálogos en Conexión SIAT y volvé a buscar.
               </EmptyDescription>
             </EmptyHeader>
-            <EmptyContent>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                Crear producto
-              </Button>
-            </EmptyContent>
           </Empty>
         ) : (
           <div className="overflow-hidden rounded-lg border">
@@ -133,82 +114,32 @@ export function ProductsPage() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
-                    Producto
+                    Descripción
                   </TableHead>
                   <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
-                    Código
+                    Código SIN
                   </TableHead>
                   <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
-                    Correspondencia SIAT
+                    Actividad
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {products.map((p: Product) => {
-                  const mapping = p.mappings?.find((m) => m.is_default) ?? p.mappings?.[0]
-                  return (
-                    <TableRow key={p.id}>
-                      <TableCell className="font-medium">{p.name}</TableCell>
-                      <TableCell className="text-muted-foreground font-mono text-xs">
-                        {p.sku}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-xs">
-                        {mapping
-                          ? `SIN ${mapping.codigo_producto_sin} · act. ${mapping.codigo_actividad}`
-                          : "sin mapeo — se asigna al sincronizar"}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                {products.map((p, i) => (
+                  <TableRow key={p.id ?? `${p.codigo}-${i}`}>
+                    <TableCell className="font-medium">{p.descripcion}</TableCell>
+                    <TableCell className="text-muted-foreground font-mono text-xs">
+                      {p.codigo}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {p.codigo_actividad ?? "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
         ))}
-
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Nuevo producto</DialogTitle>
-            <DialogDescription>
-              La correspondencia de códigos SIAT se completa al sincronizar
-              catálogos.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="prod-name">Nombre *</Label>
-              <Input
-                id="prod-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoFocus
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="prod-sku">Código interno *</Label>
-              <Input
-                id="prod-sku"
-                value={sku}
-                onChange={(e) => setSku(e.target.value)}
-                placeholder="PROD-001"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreateOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={
-                name.trim() === "" || sku.trim() === "" || createMutation.isPending
-              }
-              onClick={() => createMutation.mutate()}
-            >
-              Crear producto
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

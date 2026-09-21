@@ -5,18 +5,21 @@
   "type": "module",
   "private": false,
   "exports": {
-    ".": "./src/index.ts",
-    "./styles.css": "./src/styles.css"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
   },
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
-  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": ["*.css"],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json && cp src/styles.css dist/styles.css",
     "lint": "eslint ."
   },
   "peerDependencies": {
@@ -27,14 +30,11 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
-    "@fontsource-variable/geist": "^5.3.0",
-    "@fontsource-variable/geist-mono": "^5.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.4.0",
     "lucide-react": "^1.33.0",
-    "next-themes": "^0.4.6",
     "react-day-picker": "^10.0.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.6.0"
@@ -42,6 +42,7 @@
   "devDependencies": {
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "eslint": "^10",
     "typescript": "~6"
   }
 }

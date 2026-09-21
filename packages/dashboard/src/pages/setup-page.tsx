@@ -120,14 +120,15 @@ export function SetupPage() {
   const [posId, setPosId] = useState<string | null>(null)
 
   const [sectorCodigo, setSectorCodigo] = useState<number | null>(null)
-  const [certName, setCertName] = useState("")
+  const [certFile, setCertFile] = useState<File | null>(null)
+  const [certPassword, setCertPassword] = useState("")
   const [connectPhase, setConnectPhase] = useState<
     "idle" | "connecting" | "success" | "error"
   >("idle")
 
   const sectoresQuery = useQuery({
-    queryKey: ["sectores"],
-    queryFn: () => host.listSectores(),
+    queryKey: ["sectores", companyId],
+    queryFn: () => host.listSectores(companyId ?? undefined),
     staleTime: 5 * 60_000,
   })
 
@@ -206,7 +207,17 @@ export function SetupPage() {
   })
 
   const connectMutation = useMutation({
-    mutationFn: () => host.setupPointOfSale(posId!),
+    mutationFn: async () => {
+      if (!companyId) throw new Error("Falta la empresa: volvé al paso 1")
+      if (!posId) throw new Error("Falta el punto de venta: volvé al paso 2")
+      if (certFile) {
+        await host.uploadCertificate(companyId, {
+          file: certFile,
+          password: certPassword,
+        })
+      }
+      return host.setupPointOfSale(posId)
+    },
     onSuccess: () => setConnectPhase("success"),
     onError: (error) => {
       setConnectPhase("error")
@@ -220,7 +231,18 @@ export function SetupPage() {
   const step2Valid =
     companyId !== null && branchName.trim() !== "" && posDescription.trim() !== ""
   const step3Valid = sectorCodigo !== null
-  const step4Valid = certName !== ""
+  const certFileError = (() => {
+    if (!certFile) return "Seleccioná el .p12"
+    const lower = certFile.name.toLowerCase()
+    if (!lower.endsWith(".p12") && !lower.endsWith(".pfx"))
+      return "El archivo debe ser .p12 o .pfx"
+    if (certFile.size > 5 << 20) return "El archivo excede 5MB"
+    if (certFile.size === 0) return "El archivo está vacío"
+    return null
+  })()
+  const step4Valid =
+    certFile !== null && certPassword.trim() !== "" && certFileError === null
+  const certName = certFile?.name ?? ""
 
   function handleConnect() {
     setConnectPhase("connecting")
@@ -416,7 +438,7 @@ export function SetupPage() {
               type="file"
               accept=".p12,.pfx"
               className="hidden"
-              onChange={(e) => setCertName(e.target.files?.[0]?.name ?? "")}
+              onChange={(e) => setCertFile(e.target.files?.[0] ?? null)}
             />
             {certName ? (
               <span className="font-mono text-xs">{certName}</span>
@@ -431,6 +453,24 @@ export function SetupPage() {
               </>
             )}
           </label>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="setup-cert-pass">Contraseña del .p12 *</Label>
+            <Input
+              id="setup-cert-pass"
+              type="password"
+              value={certPassword}
+              onChange={(e) => setCertPassword(e.target.value)}
+              autoComplete="off"
+              placeholder="La que te dio Impuestos"
+            />
+          </div>
+          {certFile && certFileError && (
+            <p className="text-destructive text-xs">{certFileError}</p>
+          )}
+          <p className="text-muted-foreground text-xs">
+            Se sube cifrado a Seguridad &gt; Certificado digital (un activo por
+            NIT) antes de conectar con SIAT.
+          </p>
 
           <ul className="flex flex-col gap-2 border-t pt-4 text-sm">
             <li className="flex justify-between gap-2">

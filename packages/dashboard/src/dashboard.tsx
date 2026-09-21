@@ -6,6 +6,7 @@ import type { DashboardConfig } from "./config"
 import type { NavSection } from "./lib/nav-config"
 import { NAV_SECTIONS, mergeNavSections } from "./lib/nav-config"
 import { DashboardHostProvider } from "./host-context"
+import { AuthProvider } from "./auth-context"
 import { DashboardExtensionsProvider } from "./dashboard-context"
 import { DashboardProviders } from "./providers"
 import { DashboardRoutes, type DashboardRoute } from "./routing"
@@ -55,6 +56,7 @@ export function SupayDashboard({
 
   const content = (
     <DashboardHostProvider host={host}>
+      <AuthProvider>
       <DashboardExtensionsProvider
         value={{
           config: dashboardConfig,
@@ -73,6 +75,7 @@ export function SupayDashboard({
           )}
         </DashboardProviders>
       </DashboardExtensionsProvider>
+      </AuthProvider>
     </DashboardHostProvider>
   )
 

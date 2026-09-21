@@ -43,6 +43,7 @@ export interface PointOfSale {
   branch_id?: string | null
   codigo_sucursal: number
   codigo_punto_venta: number
+  name?: string | null
   description: string
   cuis?: string | null
   cuis_created_at?: string | null

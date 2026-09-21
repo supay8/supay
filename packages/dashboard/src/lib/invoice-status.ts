@@ -1,4 +1,4 @@
-import type { InvoiceStatus } from "@/lib/types"
+import type { InvoiceStatus } from "../lib/types"
 
 export const TRANSIENT_STATUSES: InvoiceStatus[] = ["PENDING", "SENDING"]
 

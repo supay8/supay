@@ -3,7 +3,7 @@
 export { SupayDashboard } from "./dashboard"
 export type { SupayDashboardProps, DashboardRoute } from "./dashboard"
 
-export type { DashboardHost, HostError, ApiError, ProductMappingInput } from "./host"
+export type { DashboardHost, HostError, ApiError, ProductMappingInput, AuthUser, AuthResult, UserCompany, CreateMyCompanyInput } from "./host"
 export { ApiError as HostErrorAlias } from "./host"
 
 export type { DashboardConfig, DashboardMode } from "./config"
@@ -12,6 +12,7 @@ export type { NavSection, NavItem, ActiveNav } from "./lib/nav-config"
 export { NAV_SECTIONS, mergeNavSections, findActiveNav } from "./lib/nav-config"
 
 export { DashboardHostProvider, useDashboardHost } from "./host-context"
+export { AuthProvider, useAuth } from "./auth-context"
 export { DashboardExtensionsProvider, useDashboardExtensions } from "./dashboard-context"
 
 export { createSelfHostedHost } from "./hosts/self-hosted"

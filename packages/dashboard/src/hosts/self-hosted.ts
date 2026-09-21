@@ -10,12 +10,13 @@ import type {
 	Product,
 	SectorInfo,
 } from "../lib/types"
-import { HostError, type DashboardHost, type ProductMappingInput } from "../host"
+import { HostError, type AuthResult, type AuthUser, type CreateMyCompanyInput, type DashboardHost, type ProductMappingInput, type UserCompany } from "../host"
 
 type QueryParams = Record<string, string | number | undefined>
 
 const API_KEY_STORAGE_KEY = "supay_api_key"
 const COMPANY_ID_STORAGE_KEY = "supay_company_id"
+const ACCESS_TOKEN_STORAGE_KEY = "supay_access_token"
 
 function buildUrl(baseUrl: string, path: string, query?: QueryParams): string {
 	const url = new URL(path, baseUrl)
@@ -75,13 +76,30 @@ function getStoredCompanyId(): string {
 }
 
 function setStoredCompanyId(id: string): void {
-	if (typeof window !== "undefined") {
-		if (id) {
-			localStorage.setItem(COMPANY_ID_STORAGE_KEY, id)
-		} else {
-			localStorage.removeItem(COMPANY_ID_STORAGE_KEY)
-		}
-	}
+  if (typeof window !== "undefined") {
+    if (id) {
+      localStorage.setItem(COMPANY_ID_STORAGE_KEY, id)
+    } else {
+      localStorage.removeItem(COMPANY_ID_STORAGE_KEY)
+    }
+  }
+}
+
+function getStoredAccessToken(): string {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) ?? ""
+  }
+  return ""
+}
+
+function setStoredAccessToken(token: string): void {
+  if (typeof window !== "undefined") {
+    if (token) {
+      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token)
+    } else {
+      localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
+    }
+  }
 }
 
 export function createSelfHostedHost(options: SelfHostedHostOptions = {}): DashboardHost {
@@ -89,25 +107,52 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
 	const initialApiKey = options.apiKey ?? (typeof window !== "undefined" ? getStoredApiKey() : "")
 	const fetchImpl = options.fetchImpl ?? fetch
 
-	let apiKey = initialApiKey
+  let apiKey = initialApiKey
+  let accessToken =
+    typeof window !== "undefined" ? getStoredAccessToken() : ""
+  let activeCompanyId =
+    typeof window !== "undefined" ? getStoredCompanyId() : ""
 
-	function setApiKey(newKey: string): void {
-		apiKey = newKey
-		setStoredApiKey(newKey)
-	}
+  function setApiKey(newKey: string): void {
+    apiKey = newKey
+    setStoredApiKey(newKey)
+  }
 
-	function getApiKey(): string {
-		return apiKey
-	}
+  function getApiKey(): string {
+    return apiKey
+  }
 
-	async function request<T>(
-		path: string,
-		opts: { method?: string; body?: unknown; query?: QueryParams } = {}
-	): Promise<T> {
-		const headers: Record<string, string> = {}
-		if (opts.body !== undefined) headers["Content-Type"] = "application/json"
-		const currentApiKey = getApiKey()
-		if (currentApiKey) headers["X-API-Key"] = currentApiKey
+  function setAccessToken(token: string): void {
+    accessToken = token
+    setStoredAccessToken(token)
+  }
+
+  function getAccessToken(): string {
+    return accessToken
+  }
+
+  function setActiveCompanyId(id: string): void {
+    activeCompanyId = id
+    setStoredCompanyId(id)
+  }
+
+  function getActiveCompanyId(): string {
+    return activeCompanyId
+  }
+
+  async function request<T>(
+    path: string,
+    opts: { method?: string; body?: unknown; query?: QueryParams } = {}
+  ): Promise<T> {
+    const headers: Record<string, string> = {}
+    if (opts.body !== undefined) headers["Content-Type"] = "application/json"
+    const currentApiKey = getApiKey()
+    if (currentApiKey) headers["X-API-Key"] = currentApiKey
+    const currentToken = getAccessToken()
+    if (currentToken) headers["Authorization"] = `Bearer ${currentToken}`
+    // TenantAccessMiddleware exige X-Company-ID cuando se usa JWT sin API key
+    const currentCompanyId = getActiveCompanyId()
+    if (currentCompanyId) headers["X-Company-ID"] = currentCompanyId
 
 		const response = await fetchImpl(buildUrl(baseUrl, path, opts.query), {
 			method: opts.method ?? "GET",
@@ -138,16 +183,43 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
 		return (await response.json()) as T
 	}
 
-	return {
-		// Company
-		getCompany: (id) => request<Company>(`/companies/${id}`),
+  return {
+    // Auth (sesión humana, JWT Bearer)
+    signup: async (name: string, email: string, password: string) => {
+      const result = await requestWithoutAuth<AuthResult>("/auth/signup", {
+        method: "POST",
+        body: { name, email, password },
+      })
+      setAccessToken(result.access_token)
+      return result
+    },
+    login: async (email: string, password: string) => {
+      const result = await requestWithoutAuth<AuthResult>("/auth/login", {
+        method: "POST",
+        body: { email, password },
+      })
+      setAccessToken(result.access_token)
+      return result
+    },
+    getCurrentUser: () => request<AuthUser>("/auth/me"),
+    listMyCompanies: async () => {
+      const res = await request<Paginated<UserCompany>>("/auth/companies")
+      return res.items ?? []
+    },
+    createMyCompany: (payload: CreateMyCompanyInput) =>
+      request<Company>("/auth/companies", { method: "POST", body: payload }),
+    logout: () => {
+      setAccessToken("")
+    },
+
+    // Company
 		getCompanyByNit: (nit) => request<Company>("/companies", { query: { nit } }),
 		createCompany: (payload) => request<Company>("/companies", { method: "POST", body: payload }),
 		updateCompany: (id, payload) => request<Company>(`/companies/${id}`, { method: "PATCH", body: payload }),
-		setupCompany: (companyId, payload) =>
-			request<Record<string, unknown>>(`/companies/${companyId}/setup`, {
+		setupPointOfSale: (pointOfSaleId) =>
+			request<Record<string, unknown>>(`/siat/setup/${pointOfSaleId}`, {
 				method: "POST",
-				body: payload,
+				body: { point_of_sale_id: pointOfSaleId },
 			}),
 
 		// API Keys
@@ -165,12 +237,12 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
 
 		// Points of sale
 		listPointsOfSale: (companyId) =>
-			request<Paginated<PointOfSale>>("/point-of-sale", { query: { company_id: companyId } }),
-		getPointOfSale: (id) => request<PointOfSale>(`/point-of-sale/${id}`),
-		createPointOfSale: (payload) => request<PointOfSale>("/point-of-sale", { method: "POST", body: payload }),
+			request<Paginated<PointOfSale>>("/point-of-sales", { query: { company_id: companyId } }),
+		getPointOfSale: (id) => request<PointOfSale>(`/point-of-sales/${id}`),
+		createPointOfSale: (payload) => request<PointOfSale>("/point-of-sales", { method: "POST", body: payload }),
 		updatePointOfSale: (id, payload) =>
-			request<PointOfSale>(`/point-of-sale/${id}`, { method: "PATCH", body: payload }),
-		deletePointOfSale: (id) => request<void>(`/point-of-sale/${id}`, { method: "DELETE" }),
+			request<PointOfSale>(`/point-of-sales/${id}`, { method: "PATCH", body: payload }),
+		deletePointOfSale: (id) => request<void>(`/point-of-sales/${id}`, { method: "DELETE" }),
 
 		// Customers
 		listCustomers: (companyId) =>
@@ -216,6 +288,8 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
 		getApiKey,
 		setStoredCompanyId,
 		getStoredCompanyId,
+		setActiveCompanyId,
+		getActiveCompanyId,
 	}
 }
 

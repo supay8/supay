@@ -3,6 +3,7 @@ import {
   Boxes,
   Building2,
   FileText,
+  KeyRound,
   Layers,
   Package,
   Plug,
@@ -44,6 +45,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Puntos de venta", to: "/company/points-of-sale", icon: Store },
       { label: "Actividad económica", to: "/company/sectors", icon: Layers },
       { label: "Conexión SIAT", to: "/company/siat", icon: Plug },
+      { label: "API keys", to: "/company/api-keys", icon: KeyRound },
     ],
   },
   {

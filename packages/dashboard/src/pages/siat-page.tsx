@@ -1,18 +1,18 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
+import { useAuth } from "../auth-context"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import { formatDateTime } from "@/lib/format"
-import { FormSection, PageHeader, QueryErrorState } from "@/components/shared/page-parts"
+import { ApiError } from "../host"
+import { formatDateTime } from "../lib/format"
+import { FormSection, PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
+} from "../components/ui/tooltip"
+import { Button } from "../components/ui/button"
+import { Skeleton } from "../components/ui/skeleton"
 
 function Tech({ term }: { term: string }) {
   const map: Record<string, string> = {
@@ -35,20 +35,22 @@ function Tech({ term }: { term: string }) {
 
 export function SiatConnectionPage() {
   const host = useDashboardHost()
-  const companyQuery = useQuery({
-    queryKey: ["company", PLACEHOLDER_COMPANY_ID],
-    queryFn: () => host.getCompany(PLACEHOLDER_COMPANY_ID),
-    retry: false,
-  })
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
+  const company = activeCompany?.company ?? null
   const posQuery = useQuery({
-    queryKey: ["point-of-sale"],
-    queryFn: () => host.listPointsOfSale(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["point-of-sales", companyId],
+    queryFn: () => host.listPointsOfSale(companyId),
     retry: false,
+    enabled: companyId !== "",
   })
 
   const checkMutation = useMutation({
-    mutationFn: () =>
-      host.setupCompany(PLACEHOLDER_COMPANY_ID, {}),
+    mutationFn: async () => {
+      const first = posQuery.data?.items[0]
+      if (!first) throw new Error("Sin puntos de venta para verificar")
+      return host.setupPointOfSale(first.id)
+    },
     onSuccess: () => {
       toast.success("Conexión verificada")
       posQuery.refetch()
@@ -61,7 +63,6 @@ export function SiatConnectionPage() {
       ),
   })
 
-  const company = companyQuery.data
   const posList = posQuery.data?.items ?? []
   const connected = posList.filter((p) => p.cuis).length
   const lastCuis = posList
@@ -87,15 +88,15 @@ export function SiatConnectionPage() {
         }
       />
 
-      {companyQuery.isError && (
+      {posQuery.isError && (
         <QueryErrorState
-          error={companyQuery.error}
-          onRetry={() => companyQuery.refetch()}
+          error={posQuery.error}
+          onRetry={() => posQuery.refetch()}
         />
       )}
 
       <FormSection title="Checklist de conexión">
-        {(companyQuery.isPending || posQuery.isPending) && (
+        {posQuery.isPending && (
           <div className="flex flex-col gap-3">
             {[...Array(4)].map((_, i) => (
               <Skeleton key={i} className="h-5 w-full" />

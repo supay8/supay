@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
 import {
@@ -13,23 +13,23 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import { formatCurrency } from "@/lib/format"
+import { ApiError } from "../host"
+import { useAuth } from "../auth-context"
+import { formatCurrency } from "../lib/format"
 import type {
   Customer,
   DraftItemInput,
   Invoice,
   Product,
   SectorFieldInfo,
-} from "@/lib/types"
-import { CustomerCombobox } from "@/components/invoices/customer-combobox"
-import { ProductCombobox } from "@/components/invoices/product-combobox"
+} from "../lib/types"
+import { CustomerCombobox } from "../components/invoices/customer-combobox"
+import { ProductCombobox } from "../components/invoices/product-combobox"
 import {
   Alert,
   AlertDescription,
   AlertTitle,
-} from "@/components/ui/alert"
+} from "../components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,19 +39,19 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "../components/ui/alert-dialog"
+import { Button } from "../components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Spinner } from "@/components/ui/spinner"
+} from "../components/ui/select"
+import { Spinner } from "../components/ui/spinner"
 import {
   Table,
   TableBody,
@@ -59,8 +59,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { cn } from "@/lib/utils"
+} from "../components/ui/table"
+import { cn } from "../lib/utils"
 
 interface ItemRow {
   key: string
@@ -156,6 +156,8 @@ function SectorInput({
 
 export function InvoiceNewPage() {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -174,9 +176,10 @@ export function InvoiceNewPage() {
   const [unavailableOpen, setUnavailableOpen] = useState(false)
 
   const posQuery = useQuery({
-    queryKey: ["point-of-sale"],
-    queryFn: () => host.listPointsOfSale(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["point-of-sales", companyId],
+    queryFn: () => host.listPointsOfSale(companyId),
     staleTime: 60_000,
+    enabled: companyId !== "",
   })
 
   const sectoresQuery = useQuery({

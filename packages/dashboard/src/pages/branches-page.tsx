@@ -1,13 +1,13 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import type { Branch } from "@/lib/types"
-import { PageHeader, QueryErrorState } from "@/components/shared/page-parts"
+import { ApiError } from "../host"
+import { useAuth } from "../auth-context"
+import type { Branch } from "../lib/types"
+import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,8 +17,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
+} from "../components/ui/alert-dialog"
+import { Button } from "../components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -26,17 +26,17 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "../components/ui/dialog"
 import {
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
-} from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Skeleton } from "@/components/ui/skeleton"
+} from "../components/ui/empty"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
+import { Skeleton } from "../components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -44,10 +44,12 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "../components/ui/table"
 
 export function BranchesPage() {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Branch | null>(null)
@@ -56,9 +58,10 @@ export function BranchesPage() {
   const [deleting, setDeleting] = useState<Branch | null>(null)
 
   const branchesQuery = useQuery({
-    queryKey: ["branches"],
-    queryFn: () => host.listBranches(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["branches", companyId],
+    queryFn: () => host.listBranches(companyId),
     retry: false,
+    enabled: companyId !== "",
   })
 
   function openCreate() {
@@ -78,7 +81,7 @@ export function BranchesPage() {
   const saveMutation = useMutation({
     mutationFn: () => {
       const payload = {
-        company_id: PLACEHOLDER_COMPANY_ID,
+        company_id: companyId,
         name: name.trim(),
         address: address.trim(),
       }

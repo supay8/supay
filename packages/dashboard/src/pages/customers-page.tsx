@@ -1,15 +1,15 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import { formatDateTime } from "@/lib/format"
-import type { Customer } from "@/lib/types"
-import { PageHeader, QueryErrorState } from "@/components/shared/page-parts"
-import { Button } from "@/components/ui/button"
+import { ApiError } from "../host"
+import { useAuth } from "../auth-context"
+import { formatDateTime } from "../lib/format"
+import type { Customer } from "../lib/types"
+import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
+import { Button } from "../components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -17,24 +17,24 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "../components/ui/dialog"
 import {
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
-} from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "../components/ui/empty"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
+} from "../components/ui/select"
+import { Skeleton } from "../components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -42,12 +42,14 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "../components/ui/table"
 
 const DOCUMENT_TYPES = ["CI", "NIT", "CE", "PASAPORTE", "OTRO"]
 
 export function CustomersPage() {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState("")
@@ -55,15 +57,16 @@ export function CustomersPage() {
   const [documentNumber, setDocumentNumber] = useState("")
 
   const customersQuery = useQuery({
-    queryKey: ["customers"],
-    queryFn: () => host.listCustomers(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["customers", companyId],
+    queryFn: () => host.listCustomers(companyId),
     retry: false,
+    enabled: companyId !== "",
   })
 
   const createMutation = useMutation({
     mutationFn: () =>
       host.createCustomer({
-        company_id: PLACEHOLDER_COMPANY_ID,
+        company_id: companyId,
         name: name.trim(),
         document_type: documentType,
         document_number: documentNumber.trim(),

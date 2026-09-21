@@ -1,18 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
 import { useNavigate } from "react-router-dom"
 import { TriangleAlert } from "lucide-react"
 
 
-import { formatCurrency, formatDateTime } from "@/lib/format"
-import { FormSection, PageHeader, QueryErrorState } from "@/components/shared/page-parts"
+import { formatCurrency, formatDateTime } from "../lib/format"
+import { FormSection, PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
+} from "../components/ui/tooltip"
+import { Button } from "../components/ui/button"
+import { Skeleton } from "../components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -20,7 +20,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "../components/ui/table"
 
 export function ContingenciaPage() {
   const host = useDashboardHost()

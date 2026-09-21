@@ -1,14 +1,14 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import { formatDateTime } from "@/lib/format"
-import type { PointOfSale } from "@/lib/types"
-import { PageHeader, QueryErrorState } from "@/components/shared/page-parts"
+import { ApiError } from "../host"
+import { useAuth } from "../auth-context"
+import { formatDateTime } from "../lib/format"
+import type { PointOfSale } from "../lib/types"
+import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -17,8 +17,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
+} from "../components/ui/alert-dialog"
+import { Button } from "../components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -26,31 +26,31 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "../components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "../components/ui/dropdown-menu"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "../components/ui/select"
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
+} from "../components/ui/sheet"
+import { Skeleton } from "../components/ui/skeleton"
+import { Spinner } from "../components/ui/spinner"
+import { Switch } from "../components/ui/switch"
 
 function HealthBadge({ pos }: { pos: PointOfSale }) {
   return pos.cuis ? (
@@ -68,6 +68,8 @@ function HealthBadge({ pos }: { pos: PointOfSale }) {
 
 export function PointsOfSalePage() {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
   const [branchIdForNew, setBranchIdForNew] = useState<string>("")
@@ -76,18 +78,20 @@ export function PointsOfSalePage() {
   const [reconnectingId, setReconnectingId] = useState<string | null>(null)
 
   const branchesQuery = useQuery({
-    queryKey: ["branches"],
-    queryFn: () => host.listBranches(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["branches", companyId],
+    queryFn: () => host.listBranches(companyId),
     retry: false,
+    enabled: companyId !== "",
   })
   const posQuery = useQuery({
-    queryKey: ["point-of-sale"],
-    queryFn: () => host.listPointsOfSale(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["point-of-sales", companyId],
+    queryFn: () => host.listPointsOfSale(companyId),
     retry: false,
+    enabled: companyId !== "",
   })
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ["point-of-sale"] })
+    queryClient.invalidateQueries({ queryKey: ["point-of-sales"] })
     queryClient.invalidateQueries({ queryKey: ["invoices"] })
   }
 
@@ -102,8 +106,7 @@ export function PointsOfSalePage() {
   })
 
   const reconnectMutation = useMutation({
-    mutationFn: (id: string) =>
-      host.setupCompany(PLACEHOLDER_COMPANY_ID, { point_of_sale_id: id }),
+    mutationFn: (id: string) => host.setupPointOfSale(id),
     onSuccess: () => {
       invalidate()
       setReconnectingId(null)
@@ -122,8 +125,8 @@ export function PointsOfSalePage() {
   const createMutation = useMutation({
     mutationFn: () =>
       host.createPointOfSale({
-        company_id: PLACEHOLDER_COMPANY_ID,
         branch_id: branchIdForNew || undefined,
+        name: description.trim(),
         description: description.trim(),
         is_active: true,
       }),

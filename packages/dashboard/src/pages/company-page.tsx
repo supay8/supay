@@ -1,19 +1,21 @@
-import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { useDashboardHost } from "../host-context"
+import { useAuth } from "../auth-context"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import type { Company } from "@/lib/types"
-import { FormSection, PageHeader, QueryErrorState } from "@/components/shared/page-parts"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Skeleton } from "@/components/ui/skeleton"
+import { ApiError } from "../host"
+import type { Company } from "../lib/types"
+import { FormSection, PageHeader } from "../components/shared/page-parts"
+import { Button } from "../components/ui/button"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
 
 export function CompanyPage() {
   const host = useDashboardHost()
+  const navigate = useNavigate()
+  const { activeCompany, refreshCompanies } = useAuth()
   const queryClient = useQueryClient()
   const [businessName, setBusinessName] = useState("")
   const [nit, setNit] = useState("")
@@ -22,34 +24,30 @@ export function CompanyPage() {
   const [telefono, setTelefono] = useState("")
   const [snapshot, setSnapshot] = useState<Company | null>(null)
 
-  const companyQuery = useQuery({
-    queryKey: ["company", PLACEHOLDER_COMPANY_ID],
-    queryFn: () => host.getCompany(PLACEHOLDER_COMPANY_ID),
-    retry: false,
-    staleTime: 60_000,
-  })
+  const company = activeCompany?.company ?? null
 
-  const company = companyQuery.data
-
-  if (company && snapshot !== company) {
-    setSnapshot(company)
-    setBusinessName(company.business_name)
-    setNit(company.nit)
-    setMunicipio(company.municipio ?? "")
-    setDireccion(company.direccion ?? "")
-    setTelefono(company.telefono ?? "")
-  }
+  useEffect(() => {
+    if (company && snapshot !== company) {
+      setSnapshot(company)
+      setBusinessName(company.business_name)
+      setNit(company.nit)
+      setMunicipio(company.municipio ?? "")
+      setDireccion(company.direccion ?? "")
+      setTelefono(company.telefono ?? "")
+    }
+  }, [company, snapshot])
 
   const saveMutation = useMutation({
     mutationFn: () =>
-      host.updateCompany(PLACEHOLDER_COMPANY_ID, {
+      host.updateCompany(company!.id, {
         business_name: businessName.trim(),
         nit: nit.trim(),
         municipio: municipio.trim() || undefined,
         direccion: direccion.trim() || undefined,
         telefono: telefono.trim() || undefined,
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await refreshCompanies()
       queryClient.invalidateQueries({ queryKey: ["company"] })
       toast.success("Datos de la empresa actualizados")
     },
@@ -60,7 +58,7 @@ export function CompanyPage() {
   })
 
   const dirty =
-    company !== undefined &&
+    company !== null &&
     (businessName !== company.business_name ||
       nit !== company.nit ||
       municipio !== (company.municipio ?? "") ||
@@ -73,21 +71,6 @@ export function CompanyPage() {
         title="Datos fiscales"
         description="Identidad de tu empresa ante el SIAT."
       />
-
-      {companyQuery.isPending && (
-        <div className="flex flex-col gap-3 rounded-lg border p-5">
-          {[...Array(5)].map((_, i) => (
-            <Skeleton key={i} className="h-9 w-full" />
-          ))}
-        </div>
-      )}
-
-      {companyQuery.isError && (
-        <QueryErrorState
-          error={companyQuery.error}
-          onRetry={() => companyQuery.refetch()}
-        />
-      )}
 
       {company && (
         <>
@@ -141,6 +124,20 @@ export function CompanyPage() {
           </FormSection>
 
           <FormSection
+            title="API keys"
+            description="Claves para integrar tu ERP o POS con esta empresa."
+          >
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="text-muted-foreground">
+                Crea y revoca claves de acceso.
+              </span>
+              <Button variant="outline" size="sm" onClick={() => navigate("/company/api-keys")}>
+                Gestionar keys
+              </Button>
+            </div>
+          </FormSection>
+
+          <FormSection
             title="Certificado digital"
             description="Se administra durante la configuración inicial."
           >
@@ -151,7 +148,7 @@ export function CompanyPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => window.location.assign("/company/siat")}
+                onClick={() => navigate("/company/siat")}
               >
                 Ver conexión
               </Button>

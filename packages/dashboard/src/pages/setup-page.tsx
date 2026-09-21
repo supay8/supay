@@ -1,23 +1,24 @@
 import { useEffect, useMemo, useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
+import { useAuth } from "../auth-context"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { Check, FileKey2, LoaderCircle } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import type { Company, SectorInfo } from "@/lib/types"
+import { ApiError } from "../host"
+import type { Company, SectorInfo } from "../lib/types"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Spinner } from "@/components/ui/spinner"
-import { cn } from "@/lib/utils"
+} from "../components/ui/tooltip"
+import { Badge } from "../components/ui/badge"
+import { Button } from "../components/ui/button"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
+import { Spinner } from "../components/ui/spinner"
+import { cn } from "../lib/utils"
 
 const STEPS = [
   { short: "Empresa", title: "Datos de la empresa" },
@@ -101,18 +102,21 @@ function Stepper({
 
 export function SetupPage() {
   const host = useDashboardHost()
+  const { activeCompany, createCompany } = useAuth()
   const navigate = useNavigate()
   const [step, setStep] = useState(0)
 
-  const [businessName, setBusinessName] = useState("")
-  const [nit, setNit] = useState("")
-  const [municipio, setMunicipio] = useState("")
-  const [direccion, setDireccion] = useState("")
-  const [telefono, setTelefono] = useState("")
+  const [businessName, setBusinessName] = useState(activeCompany?.company.business_name ?? "")
+  const [nit, setNit] = useState(activeCompany?.company.nit ?? "")
+  const [municipio, setMunicipio] = useState(activeCompany?.company.municipio ?? "")
+  const [direccion, setDireccion] = useState(activeCompany?.company.direccion ?? "")
+  const [telefono, setTelefono] = useState(activeCompany?.company.telefono ?? "")
 
   const [branchName, setBranchName] = useState("Casa Matriz")
   const [posDescription, setPosDescription] = useState("Caja 1")
-  const [companyId, setCompanyId] = useState<string | null>(null)
+  const [companyId, setCompanyId] = useState<string | null>(
+    activeCompany?.company.id ?? null
+  )
   const [posId, setPosId] = useState<string | null>(null)
 
   const [sectorCodigo, setSectorCodigo] = useState<number | null>(null)
@@ -142,16 +146,25 @@ export function SetupPage() {
 
   const companyMutation = useMutation({
     mutationFn: async (): Promise<Company> => {
-      const payload = {
-        business_name: businessName.trim(),
+      // Con CompanyGate siempre hay empresa activa: se actualiza ese registro.
+      // Sin activa (deep-link), se crea vía sesión JWT.
+      if (companyId) {
+        return host.updateCompany(companyId, {
+          business_name: businessName.trim(),
+          nit: nit.trim(),
+          municipio: municipio.trim() || undefined,
+          direccion: direccion.trim() || undefined,
+          telefono: telefono.trim() || undefined,
+        })
+      }
+      const created = await createCompany({
         nit: nit.trim(),
-        ambiente: "PILOTO" as const,
+        business_name: businessName.trim(),
         municipio: municipio.trim() || undefined,
         direccion: direccion.trim() || undefined,
         telefono: telefono.trim() || undefined,
-      }
-      if (companyId) return host.updateCompany(companyId, payload)
-      return host.createCompany(payload)
+      })
+      return created.company
     },
     onSuccess: (company) => {
       setCompanyId(company.id)
@@ -173,8 +186,8 @@ export function SetupPage() {
         active: true,
       })
       const pos = await host.createPointOfSale({
-        company_id: companyId!,
         branch_id: branch.id,
+        name: posDescription.trim(),
         description: posDescription.trim(),
         is_active: true,
       })
@@ -193,11 +206,7 @@ export function SetupPage() {
   })
 
   const connectMutation = useMutation({
-    mutationFn: () =>
-      host.setupCompany(companyId!, {
-        point_of_sale_id: posId,
-        codigo_documento_sector: sectorCodigo,
-      }),
+    mutationFn: () => host.setupPointOfSale(posId!),
     onSuccess: () => setConnectPhase("success"),
     onError: (error) => {
       setConnectPhase("error")

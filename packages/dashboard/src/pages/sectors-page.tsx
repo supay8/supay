@@ -1,30 +1,27 @@
 import { useMemo, useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
+import { useAuth } from "../auth-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import { PageHeader, QueryErrorState } from "@/components/shared/page-parts"
+import { ApiError } from "../host"
+import { PageHeader } from "../components/shared/page-parts"
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/components/ui/accordion"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/utils"
+} from "../components/ui/accordion"
+import { Button } from "../components/ui/button"
+import { Skeleton } from "../components/ui/skeleton"
+import { cn } from "../lib/utils"
 
 export function SectorsPage() {
   const host = useDashboardHost()
+  const { activeCompany, refreshCompanies } = useAuth()
   const queryClient = useQueryClient()
 
-  const companyQuery = useQuery({
-    queryKey: ["company", PLACEHOLDER_COMPANY_ID],
-    queryFn: () => host.getCompany(PLACEHOLDER_COMPANY_ID),
-    retry: false,
-  })
+  const company = activeCompany?.company ?? null
   const sectoresQuery = useQuery({
     queryKey: ["sectores"],
     queryFn: () => host.listSectores(),
@@ -33,7 +30,6 @@ export function SectorsPage() {
 
   const [pendingSector, setPendingSector] = useState<number | null>(null)
 
-  const company = companyQuery.data
   const sectores = useMemo(
     () => sectoresQuery.data ?? [],
     [sectoresQuery.data]
@@ -46,11 +42,12 @@ export function SectorsPage() {
   const selectMutation = useMutation({
     mutationKey: ["set-sector"],
     mutationFn: (codigo: number) =>
-      host.updateCompany(PLACEHOLDER_COMPANY_ID, {
+      host.updateCompany(company!.id, {
         codigo_actividad: String(codigo),
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       setPendingSector(null)
+      await refreshCompanies()
       queryClient.invalidateQueries({ queryKey: ["company"] })
       toast.success("Actividad actualizada para próximas facturas")
     },
@@ -69,11 +66,10 @@ export function SectorsPage() {
         description="Define qué campos adicionales te pide el sistema al emitir."
       />
 
-      {companyQuery.isError && (
-        <QueryErrorState
-          error={companyQuery.error}
-          onRetry={() => companyQuery.refetch()}
-        />
+      {company === null && (
+        <p className="text-muted-foreground text-sm">
+          Sin empresa activa.
+        </p>
       )}
 
       <section className="rounded-lg border p-5">

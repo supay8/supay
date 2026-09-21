@@ -1,4 +1,4 @@
-import { PageHeader } from "@/components/shared/page-parts"
+import { PageHeader } from "../components/shared/page-parts"
 import {
   Empty,
   EmptyContent,
@@ -6,8 +6,8 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/components/ui/empty"
-import { Button } from "@/components/ui/button"
+} from "../components/ui/empty"
+import { Button } from "../components/ui/button"
 import { Boxes, ShoppingCart } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 

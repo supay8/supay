@@ -1,14 +1,14 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import type { Product } from "@/lib/types"
-import { PageHeader, QueryErrorState } from "@/components/shared/page-parts"
-import { Button } from "@/components/ui/button"
+import { ApiError } from "../host"
+import { useAuth } from "../auth-context"
+import type { Product } from "../lib/types"
+import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
+import { Button } from "../components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -16,17 +16,17 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "../components/ui/dialog"
 import {
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
-} from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Skeleton } from "@/components/ui/skeleton"
+} from "../components/ui/empty"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
+import { Skeleton } from "../components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -34,25 +34,28 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "../components/ui/table"
 
 export function ProductsPage() {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState("")
   const [sku, setSku] = useState("")
 
   const productsQuery = useQuery({
-    queryKey: ["products"],
-    queryFn: () => host.listProducts(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["products", companyId],
+    queryFn: () => host.listProducts(companyId),
     retry: false,
+    enabled: companyId !== "",
   })
 
   const createMutation = useMutation({
     mutationFn: () =>
       host.createProduct({
-        company_id: PLACEHOLDER_COMPANY_ID,
+        company_id: companyId,
         name: name.trim(),
         sku: sku.trim(),
         active: true,

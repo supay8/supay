@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../host-context"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { format } from "date-fns"
@@ -14,19 +14,19 @@ import {
   X,
 } from "lucide-react"
 
-import { ApiError } from "@/host"
+import { ApiError } from "../host"
+import { useAuth } from "../auth-context"
 import {
   INVOICE_STATUS_LABELS,
-  PLACEHOLDER_COMPANY_ID,
   TRANSIENT_STATUSES,
-} from "@/lib/invoice-status"
-import { formatCurrency, formatDateTime, formatTime } from "@/lib/format"
-import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/types"
-import { StatusBadge } from "@/components/invoices/status-badge"
-import { InvoiceDetailSheet } from "@/components/invoices/invoice-detail-sheet"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+} from "../lib/invoice-status"
+import { formatCurrency, formatDateTime, formatTime } from "../lib/format"
+import { INVOICE_STATUSES, type InvoiceStatus } from "../lib/types"
+import { StatusBadge } from "../components/invoices/status-badge"
+import { InvoiceDetailSheet } from "../components/invoices/invoice-detail-sheet"
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert"
+import { Badge } from "../components/ui/badge"
+import { Button } from "../components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -34,30 +34,30 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "../components/ui/dropdown-menu"
 import {
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
-} from "@/components/ui/empty"
+} from "../components/ui/empty"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
-} from "@/components/ui/input-group"
-import { Calendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+} from "../components/ui/input-group"
+import { Calendar } from "../components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
+} from "../components/ui/select"
+import { Skeleton } from "../components/ui/skeleton"
+import { Spinner } from "../components/ui/spinner"
 import {
   Table,
   TableBody,
@@ -65,9 +65,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import type { Invoice } from "@/lib/types"
-import { LogoSupay } from "@/components/logo"
+} from "../components/ui/table"
+import type { Invoice } from "../lib/types"
+import { LogoSupay } from "../components/logo"
 
 const PAGE_SIZE = 20
 
@@ -95,6 +95,8 @@ function RowActions({
 
 export function InvoicesPage() {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const initialStatus = searchParams.get("status")
@@ -119,9 +121,10 @@ export function InvoicesPage() {
   }, [inputValue])
 
   const posQuery = useQuery({
-    queryKey: ["point-of-sale"],
-    queryFn: () => host.listPointsOfSale(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["point-of-sales", companyId],
+    queryFn: () => host.listPointsOfSale(companyId),
     retry: false,
+    enabled: companyId !== "",
   })
 
   const from = range?.from ? format(range.from, "yyyy-MM-dd") : undefined

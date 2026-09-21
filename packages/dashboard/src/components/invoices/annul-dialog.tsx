@@ -1,10 +1,10 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../../host-context"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { MOTIVOS_ANULACION } from "@/lib/invoice-status"
+import { ApiError } from "../../host"
+import { MOTIVOS_ANULACION } from "../../lib/invoice-status"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,9 +14,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+} from "../../components/ui/alert-dialog"
+import { Label } from "../../components/ui/label"
+import { RadioGroup, RadioGroupItem } from "../../components/ui/radio-group"
 
 interface AnnulDialogProps {
   invoiceId: string | null

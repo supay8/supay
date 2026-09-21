@@ -1,8 +1,8 @@
 import { useNavigate } from "react-router-dom"
 import { Check, LogOut, Monitor, Moon, Settings, Sun, User } from "lucide-react"
-import { toast } from "sonner"
 
-import { useTheme } from "@/components/theme-provider"
+import { useTheme } from "../../components/theme-provider"
+import { useAuth } from "../../auth-context"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +10,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "../../components/ui/dropdown-menu"
 
 const THEME_OPTIONS = [
   { value: "light", label: "Claro", icon: Sun },
@@ -21,6 +21,28 @@ const THEME_OPTIONS = [
 export function SidebarUserMenu() {
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
+  const { user, activeCompany, logout } = useAuth()
+
+  function handleLogout() {
+    logout()
+    navigate("/login", { replace: true })
+  }
+
+  const name = user?.name ?? "Mi cuenta"
+  const email = user?.email ?? ""
+  const roleLabel =
+    activeCompany?.role === "owner"
+      ? "Propietario"
+      : activeCompany?.role === "admin"
+        ? "Administrador"
+        : "Miembro"
+  const avatarInitials = name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p[0] ?? "")
+    .join("")
+    .toUpperCase() || "?"
 
   return (
     <DropdownMenu>
@@ -34,12 +56,12 @@ export function SidebarUserMenu() {
         }
       >
         <span className="bg-primary text-primary-foreground grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold">
-          CA
+          {avatarInitials}
         </span>
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-[13px] font-medium">Mi cuenta</span>
+          <span className="truncate text-[13px] font-medium">{name}</span>
           <span className="text-muted-foreground truncate text-[11px]">
-            Administrador
+            {email || roleLabel}
           </span>
         </span>
       </DropdownMenuTrigger>
@@ -78,9 +100,8 @@ export function SidebarUserMenu() {
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
-          disabled
           className="gap-2.5"
-          onClick={() => toast.info("La sesión llega con la autenticación")}
+          onClick={handleLogout}
         >
           <LogOut className="size-4" />
           Cerrar sesión

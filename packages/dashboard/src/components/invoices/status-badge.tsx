@@ -1,9 +1,9 @@
 import type { ReactNode } from "react"
 import { Ban } from "lucide-react"
-import { Spinner } from "@/components/ui/spinner"
-import { INVOICE_STATUS_LABELS } from "@/lib/invoice-status"
-import type { InvoiceStatus } from "@/lib/types"
-import { cn } from "@/lib/utils"
+import { Spinner } from "../../components/ui/spinner"
+import { INVOICE_STATUS_LABELS } from "../../lib/invoice-status"
+import type { InvoiceStatus } from "../../lib/types"
+import { cn } from "../../lib/utils"
 
 const DOT_COLORS: Record<InvoiceStatus, string> = {
   ACCEPTED: "bg-success",

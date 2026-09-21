@@ -1,20 +1,20 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { Check, Copy, Download } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { formatCurrency, formatDateTime } from "@/lib/format"
-import type { Invoice } from "@/lib/types"
-import { StatusBadge } from "@/components/invoices/status-badge"
-import { AnnulDialog } from "@/components/invoices/annul-dialog"
+import { ApiError } from "../../host"
+import { formatCurrency, formatDateTime } from "../../lib/format"
+import type { Invoice } from "../../lib/types"
+import { StatusBadge } from "../../components/invoices/status-badge"
+import { AnnulDialog } from "../../components/invoices/annul-dialog"
 import {
   Alert,
   AlertDescription,
   AlertTitle,
-} from "@/components/ui/alert"
+} from "../../components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,18 +24,18 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { ScrollArea } from "@/components/ui/scroll-area"
+} from "../../components/ui/alert-dialog"
+import { Button } from "../../components/ui/button"
+import { Label } from "../../components/ui/label"
+import { ScrollArea } from "../../components/ui/scroll-area"
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
+} from "../../components/ui/sheet"
+import { Skeleton } from "../../components/ui/skeleton"
+import { Spinner } from "../../components/ui/spinner"
 import {
   Table,
   TableBody,
@@ -43,8 +43,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+} from "../../components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (

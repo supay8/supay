@@ -1,12 +1,12 @@
 import type { ReactNode } from "react"
 import { RefreshCw } from "lucide-react"
-import { ApiError } from "@/host"
+import { ApiError } from "../../host"
 import {
   Alert,
   AlertDescription,
   AlertTitle,
-} from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
+} from "../../components/ui/alert"
+import { Button } from "../../components/ui/button"
 
 export function PageHeader({
   title,

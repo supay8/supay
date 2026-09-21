@@ -1,13 +1,13 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, ChevronsUpDown, UserPlus } from "lucide-react"
 import { toast } from "sonner"
 
-import { ApiError } from "@/host"
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import type { Customer } from "@/lib/types"
-import { Button } from "@/components/ui/button"
+import { ApiError } from "../../host"
+import { useAuth } from "../../auth-context"
+import type { Customer } from "../../lib/types"
+import { Button } from "../../components/ui/button"
 import {
   Command,
   CommandEmpty,
@@ -15,7 +15,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/components/ui/command"
+} from "../../components/ui/command"
 import {
   Dialog,
   DialogContent,
@@ -23,22 +23,22 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "../../components/ui/dialog"
+import { Input } from "../../components/ui/input"
+import { Label } from "../../components/ui/label"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover"
+} from "../../components/ui/popover"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { cn } from "@/lib/utils"
+} from "../../components/ui/select"
+import { cn } from "../../lib/utils"
 
 const DOCUMENT_TYPES = ["CI", "NIT", "CE", "PASAPORTE", "OTRO"]
 
@@ -52,6 +52,8 @@ function QuickCustomerDialog({
   onCreated: (customer: Customer) => void
 }) {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const [name, setName] = useState("")
   const [documentType, setDocumentType] = useState("CI")
   const [documentNumber, setDocumentNumber] = useState("")
@@ -60,7 +62,7 @@ function QuickCustomerDialog({
   const mutation = useMutation({
     mutationFn: () =>
       host.createCustomer({
-        company_id: PLACEHOLDER_COMPANY_ID,
+        company_id: companyId,
         name: name.trim(),
         document_type: documentType,
         document_number: documentNumber.trim(),
@@ -154,14 +156,17 @@ export function CustomerCombobox({
   onChange: (customer: Customer | null) => void
 }) {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const listCompanyId = activeCompany?.company.id ?? ""
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
   const [quickOpen, setQuickOpen] = useState(false)
 
   const customersQuery = useQuery({
-    queryKey: ["customers"],
-    queryFn: () => host.listCustomers(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["customers", listCompanyId],
+    queryFn: () => host.listCustomers(listCompanyId),
     staleTime: 60_000,
+    enabled: listCompanyId !== "",
   })
 
   const customers = customersQuery.data?.items ?? []

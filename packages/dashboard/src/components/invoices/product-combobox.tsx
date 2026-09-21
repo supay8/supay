@@ -1,12 +1,12 @@
 import { useState } from "react"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../../host-context"
+import { useAuth } from "../../auth-context"
 import { useQuery } from "@tanstack/react-query"
 import { ChevronsUpDown, PackageOpen, Plus } from "lucide-react"
 
 
-import { PLACEHOLDER_COMPANY_ID } from "@/lib/invoice-status"
-import type { Product } from "@/lib/types"
-import { Button } from "@/components/ui/button"
+import type { Product } from "../../lib/types"
+import { Button } from "../../components/ui/button"
 import {
   Command,
   CommandEmpty,
@@ -14,12 +14,12 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/components/ui/command"
+} from "../../components/ui/command"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover"
+} from "../../components/ui/popover"
 
 export function ProductCombobox({
   onSelectProduct,
@@ -29,13 +29,16 @@ export function ProductCombobox({
   onFreeLine: () => void
 }) {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
 
   const productsQuery = useQuery({
-    queryKey: ["products"],
-    queryFn: () => host.listProducts(PLACEHOLDER_COMPANY_ID),
+    queryKey: ["products", companyId],
+    queryFn: () => host.listProducts(companyId),
     staleTime: 60_000,
+    enabled: companyId !== "",
   })
 
   const products = productsQuery.data?.items ?? []

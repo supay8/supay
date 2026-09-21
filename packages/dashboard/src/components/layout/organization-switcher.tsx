@@ -1,7 +1,8 @@
 import { useNavigate } from "react-router-dom"
 import { Building2, Check, ChevronsUpDown, Plus } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
+import { useAuth } from "../../auth-context"
+import { Badge } from "../../components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,10 +11,18 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "../../components/ui/dropdown-menu"
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  const first = parts[0]?.[0] ?? "?"
+  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : ""
+  return (first + last).toUpperCase()
+}
 
 export function OrganizationSwitcher() {
   const navigate = useNavigate()
+  const { companies, activeCompany, switchCompany } = useAuth()
 
   return (
     <DropdownMenu>
@@ -27,32 +36,41 @@ export function OrganizationSwitcher() {
         }
       >
         <span className="bg-primary text-primary-foreground grid size-5 shrink-0 place-items-center rounded text-[9px] font-semibold">
-          CA
+          {activeCompany ? initials(activeCompany.company.business_name) : "?"}
         </span>
         <span className="hidden truncate text-[13px] font-medium tracking-tight sm:block">
-          Comercial Andina SRL
+          {activeCompany?.company.business_name ?? "Sin empresa"}
         </span>
         <ChevronsUpDown className="text-muted-foreground size-3 shrink-0 opacity-60" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Organización</DropdownMenuLabel>
-        <DropdownMenuItem className="gap-2.5">
-          <span className="bg-primary text-primary-foreground grid size-6 place-items-center rounded text-[10px] font-semibold">
-            CA
-          </span>
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-[13px] font-medium">
-              Comercial Andina SRL
-            </span>
-            <span className="text-muted-foreground flex items-center gap-1.5 font-mono text-[11px]">
-              NIT 1020304015
-              <Badge variant="outline" className="h-3.5 px-1 text-[9px]">
-                Piloto
-              </Badge>
-            </span>
-          </span>
-          <Check className="ml-auto size-4" />
-        </DropdownMenuItem>
+        {companies.map((uc) => {
+          const isActive = uc.company.id === activeCompany?.company.id
+          return (
+            <DropdownMenuItem
+              key={uc.company.id}
+              className="gap-2.5"
+              onClick={() => switchCompany(uc.company.id)}
+            >
+              <span className="bg-primary text-primary-foreground grid size-6 shrink-0 place-items-center rounded text-[10px] font-semibold">
+                {initials(uc.company.business_name)}
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-[13px] font-medium">
+                  {uc.company.business_name}
+                </span>
+                <span className="text-muted-foreground flex items-center gap-1.5 font-mono text-[11px]">
+                  NIT {uc.company.nit}
+                  <Badge variant="outline" className="h-3.5 px-1 text-[9px]">
+                    {uc.company.ambiente === "PRODUCCION" ? "Producción" : "Piloto"}
+                  </Badge>
+                </span>
+              </span>
+              {isActive && <Check className="ml-auto size-4 shrink-0" />}
+            </DropdownMenuItem>
+          )
+        })}
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem
@@ -62,7 +80,10 @@ export function OrganizationSwitcher() {
             <Building2 className="size-4" />
             Configuración de la empresa
           </DropdownMenuItem>
-          <DropdownMenuItem disabled className="gap-2.5">
+          <DropdownMenuItem
+            onClick={() => navigate("/companies")}
+            className="gap-2.5"
+          >
             <Plus className="size-4" />
             Nueva organización
           </DropdownMenuItem>

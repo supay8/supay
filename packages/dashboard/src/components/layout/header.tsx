@@ -1,31 +1,32 @@
 import { useLocation, useNavigate } from "react-router-dom"
-import { useDashboardHost } from "@/host-context"
+import { useDashboardHost } from "../../host-context"
+import { useAuth } from "../../auth-context"
 import { Bell, MessageSquarePlus, Plus } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { findActiveNav } from "@/lib/nav-config"
-import { useDashboardExtensions } from "@/dashboard-context"
-import { formatDateTime } from "@/lib/format"
-import { OrganizationSwitcher } from "@/components/layout/organization-switcher"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { findActiveNav } from "../../lib/nav-config"
+import { useDashboardExtensions } from "../../dashboard-context"
+import { formatDateTime } from "../../lib/format"
+import { OrganizationSwitcher } from "../../components/layout/organization-switcher"
+import { Badge } from "../../components/ui/badge"
+import { Button } from "../../components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "../../components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { SidebarTrigger } from "@/components/ui/sidebar"
-import type { Invoice } from "@/lib/types"
+} from "../../components/ui/select"
+import { SidebarTrigger } from "../../components/ui/sidebar"
+import type { Invoice } from "../../lib/types"
 
 function NotificationsMenu() {
   const host = useDashboardHost()
@@ -124,8 +125,19 @@ function NotificationsMenu() {
 export function AppHeader() {
   const location = useLocation()
   const navigate = useNavigate()
+  const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const { navSections } = useDashboardExtensions()
   const crumbs = findActiveNav(location.pathname, navSections)
+  const posQuery = useQuery({
+    queryKey: ["point-of-sales", companyId],
+    queryFn: () => host.listPointsOfSale(companyId),
+    retry: false,
+    enabled: companyId !== "",
+    staleTime: 60_000,
+  })
+  const posList = posQuery.data?.items ?? []
 
   return (
     <header className="bg-background/95 supports-[backdrop-filter]:bg-background/60 sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 backdrop-blur">
@@ -154,18 +166,23 @@ export function AppHeader() {
         )}
 
       <div className="flex shrink-0 items-center gap-2">
-        <Select defaultValue="pos-1">
-          <SelectTrigger
-            className="hidden h-8 w-40 text-xs lg:flex"
-            aria-label="Punto de venta activo"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="pos-1">Casa Matriz · Caja 1</SelectItem>
-            <SelectItem value="pos-2">Casa Matriz · Caja 2</SelectItem>
-          </SelectContent>
-        </Select>
+        {posList.length > 0 && (
+          <Select defaultValue={posList[0].id}>
+            <SelectTrigger
+              className="hidden h-8 w-40 text-xs lg:flex"
+              aria-label="Punto de venta activo"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {posList.map((pos) => (
+                <SelectItem key={pos.id} value={pos.id}>
+                  {pos.description}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         <Button size="sm" onClick={() => navigate("/invoices/new")}>
           <Plus data-icon="inline-start" />

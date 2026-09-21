@@ -1,10 +1,10 @@
 import { useEffect } from "react"
 import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom"
 
-import { useDashboardExtensions } from "@/dashboard-context"
-import { AppHeader } from "@/components/layout/header"
-import { SidebarUserMenu } from "@/components/layout/user-menu"
-import { LogoSupay } from "@/components/logo"
+import { useDashboardExtensions } from "../../dashboard-context"
+import { AppHeader } from "../../components/layout/header"
+import { SidebarUserMenu } from "../../components/layout/user-menu"
+import { LogoSupay } from "../../components/logo"
 import {
   Sidebar,
   SidebarContent,
@@ -19,7 +19,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarRail,
-} from "@/components/ui/sidebar"
+} from "../../components/ui/sidebar"
 
 function NavItems({ sectionIndex }: { sectionIndex: number }) {
   const location = useLocation()

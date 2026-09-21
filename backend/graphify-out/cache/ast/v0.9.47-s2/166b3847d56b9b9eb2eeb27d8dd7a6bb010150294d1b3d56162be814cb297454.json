@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_internal_repository_database_migrations_000001_baseline_down_sql", "label": "000001_baseline.down.sql", "file_type": "code", "source_file": "internal/repository/database/migrations/000001_baseline.down.sql", "source_location": null}], "edges": []}

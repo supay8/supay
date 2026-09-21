@@ -1,0 +1,612 @@
+openapi: 3.0.3
+info:
+  title: Supay Invoicing v1 — Una factura
+  version: 1.0.0
+  description: |
+    Contrato mínimo para el primer test del SDK: emitir UNA factura de
+    compra-venta estándar (sector 1, `sector: "auto"`).
+    Auth única: header `X-API-Key`. Fuera de alcance: borradores separados,
+    anulación, emisión masiva/paquetes, ajustes (24/29/47/48), sectores 30/33/52,
+    CUIS/CUFD/sincronización manuales y CRUD auxiliar.
+    Fuente: docs/sdk-facturacion-una-factura.md
+servers:
+  - url: http://localhost:8081
+    description: Local / piloto
+security:
+  - ApiKeyAuth: []
+paths:
+  /v1/health:
+    get:
+      summary: Smoke test
+      operationId: healthCheck
+      security: []
+      tags:
+        - system
+      responses:
+        "200":
+          description: API en ejecución.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /v1/invoices/preview:
+    post:
+      summary: Validar factura sin crear nada
+      operationId: previewInvoice
+      tags:
+        - invoices
+      description: Valida contrato local y catálogos. No crea cliente ni factura, no contacta al SIAT, no acepta Idempotency-Key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MinimalInvoiceRequest"
+            example:
+              point_of_sale_id: 5226da47-74da-4b27-a26d-892c62fa6d26
+              customer:
+                document_type: ci
+                document_number: "1234567"
+                name: Ada Lovelace
+                email: ada@example.com
+              items:
+                - sku: PLAN-PRO
+                  description: Plan profesional
+                  codigo_actividad: "101010"
+                  codigo_producto_sin: 5113100
+                  unidad_medida: 58
+                  quantity: 1
+                  price: 150
+                  discount: 0
+              invoice_type: sale
+              sector: auto
+              data: {}
+      responses:
+        "200":
+          description: Vista previa con códigos SIAT inferidos y totales.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoicePreview"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/invoices/emit:
+    post:
+      summary: Crear y emitir factura en el mismo request
+      operationId: emitInvoice
+      tags:
+        - invoices
+      description: |
+        Ruta estrella del SDK. Crea el borrador e intenta emitirlo al SIAT.
+        `ACCEPTED`/`OBSERVED`: respuesta SIAT. `OFFLINE`: timeout/caída de red,
+        trae XML firmado y `contingency_event_id` para envío posterior por paquete.
+        Una repetición con la misma Idempotency-Key no re-emite. Sector 30 → 400.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+          description: Clave de idempotencia (máx. 100 caracteres).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MinimalInvoiceRequest"
+            example:
+              point_of_sale_id: 5226da47-74da-4b27-a26d-892c62fa6d26
+              customer:
+                document_type: ci
+                document_number: "1234567"
+                name: Ada Lovelace
+                email: ada@example.com
+              items:
+                - sku: PLAN-PRO
+                  description: Plan profesional
+                  codigo_actividad: "101010"
+                  codigo_producto_sin: 5113100
+                  unidad_medida: 58
+                  quantity: 1
+                  price: 150
+                  discount: 0
+              invoice_type: sale
+              sector: auto
+              data: {}
+      responses:
+        "200":
+          description: Factura emitida (o replay idempotente).
+          headers:
+            Location:
+              schema:
+                type: string
+              description: /v1/invoices/{id}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/SiatRejected"
+        "503":
+          $ref: "#/components/responses/SiatUnavailable"
+  /v1/invoices/{id}:
+    get:
+      summary: Obtener factura por ID
+      operationId: getInvoice
+      tags:
+        - invoices
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+          description: xml,company,point_of_sale,cufd,archivo,all (coma-separados).
+      responses:
+        "200":
+          description: Factura del tenant autenticado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/invoices/{id}/xml:
+    get:
+      summary: Descargar XML firmado
+      operationId: downloadInvoiceXml
+      tags:
+        - invoices
+      description: Solo facturas emitidas; pendiente → 409 CONFLICT.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: XML firmado (attachment factura-{id}.xml).
+          content:
+            application/xml:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: La factura aún no tiene XML disponible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  responses:
+    ValidationError:
+      description: 400 VALIDATION_ERROR.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthorized:
+      description: 401 UNAUTHORIZED (falta X-API-Key o key inválida).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: 404 NOT_FOUND.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    SiatRejected:
+      description: 422 SIAT_REJECTED (details[] con observaciones del SIAT).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    SiatUnavailable:
+      description: 503 SIAT_UNAVAILABLE.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    HealthStatus:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          example: ok
+        message:
+          type: string
+          example: Supay API running
+    MinimalInvoiceRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - point_of_sale_id
+        - customer
+        - items
+      properties:
+        point_of_sale_id:
+          type: string
+          format: uuid
+          description: Punto de venta con CUIS/CUFD vigente.
+        customer:
+          $ref: "#/components/schemas/MinimalInvoiceCustomer"
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/MinimalInvoiceItem"
+        invoice_type:
+          type: string
+          default: sale
+          description: sale|venta|compraventa|compra_venta (default sale). Notas requieren sector de ajuste (fuera de alcance).
+        sector:
+          type: string
+          default: auto
+          description: auto|sale|compraventa|1 para este flujo (auto resuelve a 1).
+        data:
+          type: object
+          description: Campos datos_sector del perfil ({} para sector 1).
+        layout:
+          type: string
+          description: Solo sector 24 (fuera de alcance).
+        reference_invoice_id:
+          type: string
+          format: uuid
+          description: Solo documentos de ajuste (fuera de alcance).
+        payment:
+          $ref: "#/components/schemas/MinimalInvoicePayment"
+        total:
+          type: number
+          description: Solo sectores sin detalle (fuera de alcance).
+    MinimalInvoiceCustomer:
+      type: object
+      additionalProperties: false
+      required:
+        - document_number
+        - name
+      properties:
+        id:
+          type: string
+          description: NO permitido (400 si se envía); enviar snapshot completo.
+        document_type:
+          type: string
+          default: CI
+          description: ci|cédula|cex|extranjero|pasaporte|nit|otro (default CI).
+        document_number:
+          type: string
+        complement:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+    MinimalInvoiceItem:
+      type: object
+      additionalProperties: false
+      required:
+        - sku
+        - description
+        - codigo_producto_sin
+        - unidad_medida
+        - quantity
+        - price
+      properties:
+        sku:
+          type: string
+          description: Código interno; se congela como snapshot fiscal (sin resolución por catálogo).
+        description:
+          type: string
+        codigo_actividad:
+          type: string
+          description: Opcional si la empresa tiene actividad principal (se hereda).
+        codigo_producto_sin:
+          type: integer
+          format: int64
+          minimum: 1
+        unidad_medida:
+          type: integer
+          minimum: 1
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+        price:
+          type: number
+          minimum: 0
+        discount:
+          type: number
+          minimum: 0
+          description: No puede superar quantity*price.
+        data:
+          type: object
+          description: Campos datos_sector_detalle (vacío para sector 1).
+    MinimalInvoicePayment:
+      type: object
+      additionalProperties: false
+      required:
+        - method_code
+        - currency_code
+        - exchange_rate
+      properties:
+        method_code:
+          type: integer
+          minimum: 1
+        currency_code:
+          type: integer
+          minimum: 1
+        exchange_rate:
+          type: number
+          exclusiveMinimum: 0
+    InvoicePreview:
+      type: object
+      required:
+        - point_of_sale_id
+        - customer
+        - items
+        - invoice_type
+        - codigo_documento_sector
+        - subtotal
+        - total
+      properties:
+        point_of_sale_id:
+          type: string
+        customer:
+          $ref: "#/components/schemas/InvoicePreviewCustomer"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoicePreviewItem"
+        invoice_type:
+          type: string
+        codigo_documento_sector:
+          type: integer
+        codigo_metodo_pago:
+          type: integer
+        codigo_moneda:
+          type: integer
+        tipo_cambio:
+          type: number
+        subtotal:
+          type: number
+        total:
+          type: number
+        layout:
+          type: string
+        reference_invoice_id:
+          type: string
+        data:
+          type: object
+    InvoicePreviewCustomer:
+      type: object
+      required:
+        - document_type
+        - document_number
+        - name
+      properties:
+        id:
+          type: string
+        document_type:
+          type: string
+        document_number:
+          type: string
+        complement:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+    InvoicePreviewItem:
+      type: object
+      required:
+        - sku
+        - quantity
+        - unit_price
+        - subtotal
+      properties:
+        sku:
+          type: string
+        description:
+          type: string
+        quantity:
+          type: number
+        unit_price:
+          type: number
+        discount:
+          type: number
+        subtotal:
+          type: number
+        codigo_actividad:
+          type: string
+        codigo_producto_sin:
+          type: integer
+          format: int64
+        unidad_medida:
+          type: integer
+        codigo_documento_sector:
+          type: integer
+    Invoice:
+      type: object
+      required:
+        - id
+        - company_id
+        - point_of_sale_id
+        - invoice_number
+        - status
+        - subtotal
+        - total
+        - customer
+        - items
+      properties:
+        id:
+          type: string
+          format: uuid
+        company_id:
+          type: string
+        customer_id:
+          type: string
+        point_of_sale_id:
+          type: string
+        idempotency_key:
+          type: string
+        contingency_event_id:
+          type: string
+          description: Presente cuando status=OFFLINE.
+        invoice_number:
+          type: integer
+        status:
+          $ref: "#/components/schemas/InvoiceStatus"
+        cuf:
+          type: string
+        subtotal:
+          type: number
+        discount:
+          type: number
+        total:
+          type: number
+        codigo_metodo_pago:
+          type: integer
+        codigo_moneda:
+          type: integer
+        tipo_cambio:
+          type: number
+        codigo_documento_sector:
+          type: integer
+        codigo_tipo_factura:
+          type: integer
+        emission_type:
+          type: string
+        issue_date:
+          type: string
+          format: date-time
+        siat_reception_code:
+          type: string
+        siat_mensajes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiatMensaje"
+        customer:
+          $ref: "#/components/schemas/InvoiceCustomer"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceItem"
+        created_at:
+          type: string
+          format: date-time
+    InvoiceStatus:
+      type: string
+      enum: [PENDING, ACCEPTED, OBSERVED, OFFLINE, REJECTED, ANNULLED]
+    InvoiceCustomer:
+      type: object
+      required:
+        - document_type
+        - document_number
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        document_type:
+          type: string
+        document_number:
+          type: string
+        complement:
+          type: string
+    InvoiceItem:
+      type: object
+      required:
+        - code
+        - quantity
+        - unit_price
+        - subtotal
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+        description:
+          type: string
+        quantity:
+          type: number
+        unit_price:
+          type: number
+        discount:
+          type: number
+        subtotal:
+          type: number
+    SiatMensaje:
+      type: object
+      properties:
+        codigo:
+          type: integer
+        descripcion:
+          type: string
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+    ErrorBody:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum: [VALIDATION_ERROR, NOT_FOUND, CONFLICT, UNAUTHORIZED, FORBIDDEN, SIAT_REJECTED, SIAT_UNAVAILABLE, INTERNAL, RATE_LIMITED]
+          description: Programar contra code, nunca contra message.
+        message:
+          type: string
+        field:
+          type: string
+        sugerencias:
+          type: array
+          items:
+            type: string
+        accion:
+          type: string
+        invoice_id:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string

@@ -5,5 +5,5 @@ firma_digital/
 *.pem
 *.key
 
-storage/
+/storage/
 tmp/

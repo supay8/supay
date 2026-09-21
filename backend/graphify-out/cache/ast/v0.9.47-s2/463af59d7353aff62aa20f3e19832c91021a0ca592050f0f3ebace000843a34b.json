@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_internal_repository_database_migrations_000007_phase9_outbox_down_sql", "label": "000007_phase9_outbox.down.sql", "file_type": "code", "source_file": "internal/repository/database/migrations/000007_phase9_outbox.down.sql", "source_location": null}], "edges": []}

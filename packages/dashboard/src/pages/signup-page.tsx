@@ -1,17 +1,36 @@
-import { LogoSupay } from "@/components/logo"
+import { LogoSupay } from "../components/logo"
 import { useState, type FormEvent } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
+import { useAuth } from "../auth-context"
+import { HostError } from "../host"
 
 export function SignupPage() {
+  const { signup } = useAuth()
+  const navigate = useNavigate()
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    setError(null)
     setIsLoading(true)
-    window.setTimeout(() => setIsLoading(false), 1200)
+    try {
+      await signup(name.trim(), email.trim(), password)
+      navigate("/", { replace: true })
+    } catch (err) {
+      if (err instanceof HostError && err.status === 409) {
+        setError("Ya existe un usuario registrado con este correo.")
+      } else if (err instanceof Error) {
+        setError(err.message || "No se pudo crear la cuenta. Intenta de nuevo.")
+      } else {
+        setError("No se pudo crear la cuenta. Intenta de nuevo.")
+      }
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -37,6 +56,11 @@ export function SignupPage() {
 
         <div className="bg-card border-border rounded-xl border p-6 shadow-2xl shadow-black/5 dark:shadow-black/40">
           <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <p role="alert" className="text-destructive font-mono text-sm">
+                {error}
+              </p>
+            )}
             <div className="space-y-1.5">
               <label htmlFor="signup-name" className="text-muted-foreground block font-mono text-xs uppercase tracking-wider">
                 Nombre completo

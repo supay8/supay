@@ -32,8 +32,11 @@ type InvoiceUsecase struct {
 	contingencyRepo      domain.ContingencyEventRepository
 	modalidad            int
 	pdfService           PdfGenerator
+	fileService          *InvoiceFileService
 	allowCustomIssueDate bool
 }
+
+func (uc *InvoiceUsecase) SetFileService(files *InvoiceFileService) { uc.fileService = files }
 
 // SetContingencyRepository enables the official offline contingency fallback
 // without expanding the constructor used by embedded consumers and tests.

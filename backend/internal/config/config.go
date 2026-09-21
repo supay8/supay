@@ -40,6 +40,10 @@ type Config struct {
 	DeploymentMode       string // selfhosted | cloud
 	StorageDriver        string // none | local | r2
 	StoragePath          string // base path para driver local
+	StorageLocalPath     string
+	StorageSigningSecret string
+	StoragePresignTTL    time.Duration
+	StoragePublicURL     string
 	R2                   R2Config
 	AllowCustomIssueDate bool // dev-only: permite POST /invoices con issue_date arbitrario
 	Maintenance          MaintenanceConfig
@@ -148,15 +152,8 @@ func Load() Config {
 
 	deploymentMode := parseDeploymentMode(os.Getenv("DEPLOYMENT_MODE"), os.Getenv("SELF_HOSTED"))
 	rawStorageDriver := strings.TrimSpace(os.Getenv("STORAGE_DRIVER"))
-	var storageDriver string
-	if rawStorageDriver == "" {
-		// Default condicional: selfhosted -> local (disco), cloud -> r2.
-		if deploymentMode == "selfhosted" {
-			storageDriver = "local"
-		} else {
-			storageDriver = "r2"
-		}
-	} else {
+	storageDriver := "local"
+	if rawStorageDriver != "" {
 		storageDriver = parseStorageDriver(rawStorageDriver)
 	}
 	storagePath := strings.TrimSpace(os.Getenv("STORAGE_PATH"))
@@ -164,10 +161,8 @@ func Load() Config {
 		storagePath = "./storage/pdfs"
 	}
 
-	// Self-hosted no debe exigir R2: forzar local si se pide r2 en ese modo.
-	if deploymentMode == "selfhosted" && storageDriver == "r2" {
-		storageDriver = "local"
-	}
+	storageLocalPath := getEnv("STORAGE_LOCAL_PATH", "./data/files")
+	storagePresignTTL, _ := time.ParseDuration(getEnv("STORAGE_PRESIGN_TTL", "5m"))
 
 	r2Cfg := R2Config{
 		AccountID:       strings.TrimSpace(os.Getenv("R2_ACCOUNT_ID")),
@@ -236,12 +231,38 @@ func Load() Config {
 		DeploymentMode:       deploymentMode,
 		StorageDriver:        storageDriver,
 		StoragePath:          storagePath,
+		StorageLocalPath:     storageLocalPath,
+		StorageSigningSecret: os.Getenv("STORAGE_SIGNING_SECRET"),
+		StoragePresignTTL:    storagePresignTTL,
+		StoragePublicURL:     strings.TrimSpace(os.Getenv("STORAGE_PUBLIC_URL")),
 		R2:                   r2Cfg,
 		BackendSecret:        BackendSecret,
 		AllowCustomIssueDate: allowCustomIssueDate,
 		Maintenance:          maintenance,
 		Queue:                queue,
 	}
+}
+
+func (c Config) ValidateStorage() error {
+	switch c.StorageDriver {
+	case "local":
+		if strings.TrimSpace(c.StorageLocalPath) == "" {
+			return fmt.Errorf("STORAGE_LOCAL_PATH es obligatorio")
+		}
+		if len(c.StorageSigningSecret) < 32 {
+			return fmt.Errorf("STORAGE_SIGNING_SECRET debe tener al menos 32 caracteres")
+		}
+	case "r2":
+		if c.R2.Bucket == "" || c.R2.AccessKeyID == "" || c.R2.SecretAccessKey == "" || (c.R2.AccountID == "" && c.R2.Endpoint == "") {
+			return fmt.Errorf("STORAGE_DRIVER=r2 requiere R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY y R2_ACCOUNT_ID (o R2_ENDPOINT)")
+		}
+	default:
+		return fmt.Errorf("STORAGE_DRIVER debe ser local o r2")
+	}
+	if c.StoragePresignTTL <= 0 || c.StoragePresignTTL > 24*time.Hour {
+		return fmt.Errorf("STORAGE_PRESIGN_TTL debe estar entre 1ns y 24h")
+	}
+	return nil
 }
 
 func (c Config) ValidateAuth() error {
@@ -278,7 +299,7 @@ func parseStorageDriver(raw string) string {
 	case "":
 		return "none"
 	default:
-		return "none"
+		return v
 	}
 }
 

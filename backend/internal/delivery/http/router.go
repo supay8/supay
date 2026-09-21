@@ -27,9 +27,10 @@ type AuthRoutes interface {
 }
 
 type AuthOptions struct {
-	Routes      AuthRoutes
-	Tokens      AccessTokenVerifier
-	Memberships CompanyMembershipLookup
+	Routes         AuthRoutes
+	Tokens         AccessTokenVerifier
+	Memberships    CompanyMembershipLookup
+	SignedDownload http.HandlerFunc
 }
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
@@ -118,6 +119,9 @@ func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup,
 	r.Use(corsMiddleware.Handler)
 
 	r.Get("/health", healthHandler)
+	if auth.SignedDownload != nil {
+		r.Get("/storage/download", auth.SignedDownload)
+	}
 	r.Method(http.MethodGet, "/metrics", metrics.Handler())
 	registerAuthRoutes(r, auth)
 

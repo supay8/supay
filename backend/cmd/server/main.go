@@ -20,6 +20,9 @@ func main() {
 	if err := cfg.ValidateAuth(); err != nil {
 		log.Fatalf("Configuración de autenticación inválida: %v", err)
 	}
+	if err := cfg.ValidateStorage(); err != nil {
+		log.Fatalf("Configuración de storage inválida: %v", err)
+	}
 	db := database.ConnectDB()
 
 	if os.Getenv("AUTO_MIGRATE") == "true" {
@@ -34,6 +37,7 @@ func main() {
 	}
 
 	container := app.NewContainer(cfg, db)
+	_ = container.ObjectStorage()
 	app.StartStaleEmissionReaper(container.InvoiceRepo())
 	stopMaintenance := app.StartMaintenanceScheduler(context.Background(), container.MaintenanceService(), cfg.Maintenance)
 	defer stopMaintenance()

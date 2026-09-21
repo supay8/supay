@@ -1,6 +1,7 @@
 package invoice
 
 import (
+	"context"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
@@ -11,8 +12,18 @@ type Module struct {
 }
 
 // NewModule construye el módulo invoice a partir de su usecase.
-func NewModule(uc *usecase.InvoiceUsecase) *Module {
-	return &Module{h: newHandler(uc)}
+func NewModule(uc *usecase.InvoiceUsecase, files ...*usecase.InvoiceFileService) *Module {
+	h := newHandler(uc)
+	if len(files) > 0 {
+		h.files = files[0]
+	}
+	return &Module{h: h}
+}
+
+func (m *Module) SetPDFGenerator(generator interface {
+	GenerateInvoicePDFWithContext(context.Context, string) ([]byte, error)
+}) {
+	m.h.pdfGenerator = generator
 }
 
 func (m *Module) PathPrefix() string { return "/invoices" }
@@ -23,6 +34,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/sectores", m.h.sectores)
 	r.Get("/{id}", m.h.getByID)
 	r.Get("/{id}/xml", m.h.downloadXML)
+	r.Get("/{id}/pdf", m.h.downloadPDF)
 	r.Post("/{id}/emit", m.h.emit)
 	r.Get("/{id}/siat-status", m.h.siatStatus)
 	r.Post("/{id}/annul", m.h.annul)
@@ -39,6 +51,7 @@ func (m *Module) RegisterV1Routes(r chi.Router) {
 	r.Get("/sectores", m.h.sectores)
 	r.Get("/{id}", m.h.getByID)
 	r.Get("/{id}/xml", m.h.downloadXML)
+	r.Get("/{id}/pdf", m.h.downloadPDF)
 	r.Post("/{id}/emit", m.h.emit)
 	r.Get("/{id}/siat-status", m.h.siatStatus)
 	r.Post("/{id}/annul", m.h.annul)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -65,14 +66,16 @@ type Container struct {
 	outboxRepo                 domain.OutboxRepository
 
 	// Servicios de infraestructura
-	cryptoSvc    *crypto.Service
-	certStorage  storage.CertStorage
-	pdfStorage   pdf.Storage
-	siatProvider siat.SiatClientProvider
-	siatService  *siat.Service
-	pdfService   *pdf.Service
-	notifier     ports.Notifier
-	jwtManager   *authn.JWTManager
+	cryptoSvc          *crypto.Service
+	certStorage        storage.CertStorage
+	pdfStorage         pdf.Storage
+	objectStorage      domain.Storage
+	invoiceFileService *usecase.InvoiceFileService
+	siatProvider       siat.SiatClientProvider
+	siatService        *siat.Service
+	pdfService         *pdf.Service
+	notifier           ports.Notifier
+	jwtManager         *authn.JWTManager
 
 	// Usecases
 	companyUsecase     *usecase.CompanyUsecase
@@ -346,9 +349,28 @@ func (c *Container) FiscalService() ports.FiscalService {
 
 func (c *Container) PdfService() *pdf.Service {
 	if c.pdfService == nil {
-		c.pdfService = pdf.NewServiceWithStorage(c.db, c.PdfStorage())
+		c.pdfService = pdf.NewService(c.db)
+		c.pdfService.SetFileWriter(c.InvoiceFileService())
 	}
 	return c.pdfService
+}
+
+func (c *Container) ObjectStorage() domain.Storage {
+	if c.objectStorage == nil {
+		var err error
+		c.objectStorage, err = storage.NewObjectStorageFromConfig(context.Background(), c.cfg)
+		if err != nil {
+			log.Fatalf("Object storage no disponible: %v", err)
+		}
+	}
+	return c.objectStorage
+}
+
+func (c *Container) InvoiceFileService() *usecase.InvoiceFileService {
+	if c.invoiceFileService == nil {
+		c.invoiceFileService = usecase.NewInvoiceFileService(c.ObjectStorage(), postgres.NewPostgresInvoiceFileRepository(c.db), c.cfg.StoragePresignTTL)
+	}
+	return c.invoiceFileService
 }
 
 func (c *Container) Notifier() ports.Notifier {
@@ -464,6 +486,7 @@ func (c *Container) InvoiceUsecase() *usecase.InvoiceUsecase {
 			c.PdfService(), c.cfg.AllowCustomIssueDate, c.SiatProvider(),
 		)
 		c.invoiceUsecase.SetContingencyRepository(c.ContingencyRepo())
+		c.invoiceUsecase.SetFileService(c.InvoiceFileService())
 	}
 	return c.invoiceUsecase
 }
@@ -524,13 +547,15 @@ func (c *Container) CertificateUsecase() *usecase.CertificateUsecase {
 
 func (c *Container) Modules() []deliveryModules.Module {
 	if c.modules == nil {
+		invoiceModule := invoice.NewModule(c.InvoiceUsecase(), c.InvoiceFileService())
+		invoiceModule.SetPDFGenerator(c.PdfService())
 		c.modules = []deliveryModules.Module{
 			company.NewModule(c.CompanyUsecase()),
 			apikey.NewModule(c.ApiKeyUsecase()),
 			pos.NewModule(c.PointOfSaleUsecase()),
 			branch.NewModule(c.BranchUsecase()),
 			customer.NewModule(c.CustomerUsecase()),
-			invoice.NewModule(c.InvoiceUsecase()),
+			invoiceModule,
 			siatModule.NewModule(c.SiatUsecase(), c.PdfService()),
 			catalog.NewModule(c.SiatUsecase()),
 			certificate.NewModule(c.CertificateUsecase()),
@@ -544,12 +569,20 @@ func (c *Container) Router() http.Handler {
 		deliveryHttp.SetVerifyAPIKey(postgres.VerifyKey)
 		companyCreateHandler := c.companyCreateHandler()
 		c.router = deliveryHttp.NewRouter(c.cfg, c.Modules(), c.ApiKeyRepo(), companyCreateHandler, deliveryHttp.AuthOptions{
-			Routes:      authModule.NewModule(c.AuthUsecase()),
-			Tokens:      c.JWTManager(),
-			Memberships: c.AuthRepo(),
+			Routes:         authModule.NewModule(c.AuthUsecase()),
+			Tokens:         c.JWTManager(),
+			Memberships:    c.AuthRepo(),
+			SignedDownload: c.signedDownloadHandler(),
 		})
 	}
 	return c.router
+}
+
+func (c *Container) signedDownloadHandler() http.HandlerFunc {
+	if local, ok := c.ObjectStorage().(*storage.LocalObjectStorage); ok {
+		return deliveryHttp.SignedLocalDownload(local)
+	}
+	return nil
 }
 
 func (c *Container) companyCreateHandler() http.HandlerFunc {

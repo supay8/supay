@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -111,11 +112,14 @@ func (h *handler) emitV1(w http.ResponseWriter, r *http.Request) {
 	}
 	key, err := idempotencyKey(r)
 	if err != nil {
+		log.Println(err)
 		deliveryHttp.RespondValidation(w, err.Error())
 		return
 	}
 	inv, err := h.uc.EmitSimplified(r.Context(), req, key)
 	if err != nil {
+		log.Println(err)
+
 		deliveryHttp.RespondError(w, err)
 		return
 	}
@@ -124,7 +128,11 @@ func (h *handler) emitV1(w http.ResponseWriter, r *http.Request) {
 }
 
 type handler struct {
-	uc invoiceService
+	uc           invoiceService
+	files        *usecase.InvoiceFileService
+	pdfGenerator interface {
+		GenerateInvoicePDFWithContext(context.Context, string) ([]byte, error)
+	}
 }
 
 func newHandler(uc invoiceService) *handler {
@@ -317,9 +325,62 @@ func (h *handler) revertAnnul(w http.ResponseWriter, r *http.Request) {
 // downloadXML expone GET /invoices/{id}/xml: devuelve el XML firmado generado
 // por el SIAT. Solo disponible para facturas ya emitidas.
 func (h *handler) downloadXML(w http.ResponseWriter, r *http.Request) {
+	h.downloadFile(w, r, "xml")
+}
+
+func (h *handler) downloadPDF(w http.ResponseWriter, r *http.Request) {
+	h.downloadFile(w, r, "pdf")
+}
+
+func (h *handler) downloadFile(w http.ResponseWriter, r *http.Request, kind string) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
+		return
+	}
+	if h.files != nil {
+		companyID, ok := deliveryHttp.CompanyIDFromContext(r.Context())
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		body, info, err := h.files.Open(r.Context(), companyID, id, kind)
+		if errors.Is(err, domain.ErrNotFound) {
+			// Historical XML remains in invoices.xml until a separate migration.
+			// Keep it readable only after checking the tenant from authenticated context.
+			if kind == "xml" && h.uc != nil {
+				inv, lookupErr := h.uc.GetByID(id)
+				if lookupErr == nil && inv != nil && inv.CompanyId == companyID && inv.Xml != nil && *inv.Xml != "" {
+					w.Header().Set("Content-Type", "application/xml")
+					w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "factura-" + id + ".xml"}))
+					_, _ = io.Copy(w, strings.NewReader(*inv.Xml))
+					return
+				}
+			}
+			if kind == "pdf" && h.uc != nil && h.pdfGenerator != nil {
+				inv, lookupErr := h.uc.GetByID(id)
+				if lookupErr == nil && inv != nil && inv.CompanyId == companyID && inv.Cuf != nil {
+					if _, generateErr := h.pdfGenerator.GenerateInvoicePDFWithContext(r.Context(), id); generateErr == nil {
+						body, info, err = h.files.Open(r.Context(), companyID, id, kind)
+						if err == nil {
+							streamInvoiceObject(w, body, info, id, kind)
+							return
+						}
+					}
+				}
+			}
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			deliveryHttp.RespondError(w, err)
+			return
+		}
+		streamInvoiceObject(w, body, info, id, kind)
+		return
+	}
+	if kind == "pdf" {
+		http.NotFound(w, r)
 		return
 	}
 	inv, err := h.uc.GetByID(id)
@@ -335,6 +396,14 @@ func (h *handler) downloadXML(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=\"factura-"+id+".xml\"")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(*inv.Xml))
+}
+
+func streamInvoiceObject(w http.ResponseWriter, body io.ReadCloser, info domain.ObjectInfo, id, kind string) {
+	defer body.Close()
+	w.Header().Set("Content-Type", info.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "factura-" + id + "." + kind}))
+	_, _ = io.Copy(w, body)
 }
 
 // sectores expone el catálogo de documentos-sector soportados con la

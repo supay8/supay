@@ -1,11 +1,14 @@
 package pdf
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"gorm.io/gorm"
 )
@@ -15,7 +18,18 @@ import (
 type Service struct {
 	db      *gorm.DB
 	storage Storage
+	files   FileWriter
 }
+
+type FileWriter interface {
+	Save(ctx context.Context, companyID, invoiceID, cuf, kind string, reader io.Reader, size int64) (*domain.InvoiceFile, error)
+}
+
+type FileReader interface {
+	Open(ctx context.Context, companyID, invoiceID, kind string) (io.ReadCloser, domain.ObjectInfo, error)
+}
+
+func (s *Service) SetFileWriter(writer FileWriter) { s.files = writer }
 
 // NewService crea el servicio con storage noop (compatibilidad).
 // Preferir NewServiceWithStorage para inyección explícita.
@@ -46,11 +60,12 @@ func (s *Service) GenerateInvoicePDFWithContext(ctx context.Context, invoiceID s
 	if s.storage == nil {
 		s.storage = NewNoopStorage()
 	}
-	// Cache-aside: intentar servir desde storage sin tocar DB.
-	if data, err := s.storage.Get(ctx, invoiceID); err == nil {
-		return data, nil
-	} else if !errors.Is(err, ErrNotFound) {
-		slog.Warn("pdf storage: get falló, regenerando on-demand", "invoice_id", invoiceID, "error", err)
+	if s.files == nil {
+		if data, err := s.storage.Get(ctx, invoiceID); err == nil {
+			return data, nil
+		} else if !errors.Is(err, ErrNotFound) {
+			slog.Warn("pdf storage: get falló, regenerando on-demand", "invoice_id", invoiceID, "error", err)
+		}
 	}
 
 	var inv models.Invoice
@@ -58,6 +73,16 @@ func (s *Service) GenerateInvoicePDFWithContext(ctx context.Context, invoiceID s
 		Preload("Company.Config").Preload("CufdRecord").
 		First(&inv, "id = ?", invoiceID).Error; err != nil {
 		return nil, fmt.Errorf("pdf: factura no encontrada: %w", err)
+	}
+	if reader, ok := s.files.(FileReader); ok {
+		body, _, err := reader.Open(ctx, inv.CompanyId, inv.ID, "pdf")
+		if err == nil {
+			defer body.Close()
+			return io.ReadAll(body)
+		}
+		if !errors.Is(err, domain.ErrNotFound) {
+			return nil, err
+		}
 	}
 
 	data := InvoicePDFData{
@@ -69,8 +94,15 @@ func (s *Service) GenerateInvoicePDFWithContext(ctx context.Context, invoiceID s
 		return nil, err
 	}
 	// Best-effort persist: no falla la request si el storage falla.
-	if err := s.storage.Save(ctx, invoiceID, pdfBytes); err != nil {
-		slog.Warn("pdf storage: save falló (on-demand sigue funcionando)", "invoice_id", invoiceID, "error", err)
+	if s.files != nil && inv.Cuf != nil && *inv.Cuf != "" {
+		if _, err := s.files.Save(ctx, inv.CompanyId, inv.ID, *inv.Cuf, "pdf", bytes.NewReader(pdfBytes), int64(len(pdfBytes))); err != nil {
+			slog.Error("pdf file persistence failed", "invoice_id", invoiceID, "error", err)
+			return nil, fmt.Errorf("pdf file persistence: %w", err)
+		}
+	} else if s.files == nil {
+		if err := s.storage.Save(ctx, invoiceID, pdfBytes); err != nil {
+			slog.Warn("pdf storage: save falló (on-demand sigue funcionando)", "invoice_id", invoiceID, "error", err)
+		}
 	}
 	return pdfBytes, nil
 }
@@ -80,4 +112,9 @@ func (s *Service) GenerateAndPersist(ctx context.Context, invoiceID string) {
 	if _, err := s.GenerateInvoicePDFWithContext(ctx, invoiceID); err != nil {
 		slog.Warn("pdf storage: GenerateAndPersist falló", "invoice_id", invoiceID, "error", err)
 	}
+}
+
+func (s *Service) GenerateAndPersistStrict(ctx context.Context, invoiceID string) error {
+	_, err := s.GenerateInvoicePDFWithContext(ctx, invoiceID)
+	return err
 }

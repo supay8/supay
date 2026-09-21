@@ -100,21 +100,15 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 	// La factura permanece PENDING mientras obtiene credenciales para no ocupar
 	// SENDING con un documento que todavia no tiene CUIS/CUFD utilizable.
 	if err := uc.prepareCredentialsForEmission(ctx, inv); err != nil {
-		log.Println("DEBUG 3")
-
 		return nil, err
 	}
 
 	// Claim atómico PENDING->SENDING: evita emisiones duplicadas concurrentes.
 	claimed, err := uc.invoiceRepo.ClaimForEmission(id)
 	if err != nil {
-		log.Println("DEBUG 4")
-
 		return nil, err
 	}
 	if !claimed {
-		log.Println("DEBUG 5")
-
 		return nil, &EmissionInProgressError{}
 	}
 
@@ -123,8 +117,6 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 	rollback := func() {
 		event := invoiceTransitionEvent(inv, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, map[string]any{"source": "Emit"})
 		if _, err := uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, nil, event); err != nil {
-			log.Println("DEBUG 6")
-
 			slog.Error("emisión: no se pudo revertir la factura a PENDING",
 				"invoice_id", inv.ID, "error", err)
 		}
@@ -133,39 +125,27 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 
 	req, err := uc.buildSolicitudFactura(ctx, inv)
 	if err != nil {
-		log.Println("DEBUG 7")
-
 		rollback()
 		return nil, err
 	}
 	svc, err := uc.resolveEmissionService(ctx, inv.CompanyId)
 	if err != nil {
-		log.Println("DEBUG 8")
-
 		rollback()
 		return nil, err
 	}
 	result, err := svc.Emit(ctx, *req)
 	if err != nil {
-		log.Println("DEBUG 9")
-
 		if isSIATConnectivityError(err) {
-			log.Println("DEBUG 10")
-
 			offline, contingencyErr := uc.processOfflineContingency(ctx, inv, svc, *req)
 			if contingencyErr == nil {
 				return offline, nil
 			}
-			log.Println("DEBUG 13")
-
 			slog.Error("emisión: no se pudo activar contingencia offline",
 				"invoice_id", inv.ID, "siat_error", err, "contingency_error", contingencyErr)
 		}
 		rollback()
-		log.Println("DEBUG 12")
 		return nil, fmt.Errorf("error de emisión: %w", err)
 	}
-	log.Println("14")
 	if strings.TrimSpace(result.Cuf) != "" {
 		inv.Cuf = &result.Cuf
 	}
@@ -203,9 +183,13 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 	}
 
 	if err := uc.persistResultadoConReintentos(inv, result, transitionReason); err != nil {
-		log.Println("DEBUG 11")
-
 		return nil, err
+	}
+	if uc.fileService != nil && inv.Cuf != nil && inv.Xml != nil && *inv.Xml != "" {
+		if _, fileErr := uc.fileService.Save(ctx, inv.CompanyId, inv.ID, *inv.Cuf, "xml", strings.NewReader(*inv.Xml), int64(len(*inv.Xml))); fileErr != nil {
+			slog.Error("signed XML object persistence failed; reconcile", "invoice_id", inv.ID, "error", fileErr)
+			return nil, fmt.Errorf("signed XML persistence: %w", fileErr)
+		}
 	}
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
@@ -217,7 +201,16 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 
 	// El PDF forma parte del resultado sincrono que consume el POS.
 	if uc.pdfService != nil && result.Transaccion {
-		uc.pdfService.GenerateAndPersist(ctx, inv.ID)
+		if strict, ok := uc.pdfService.(interface {
+			GenerateAndPersistStrict(context.Context, string) error
+		}); ok {
+			if err := strict.GenerateAndPersistStrict(ctx, inv.ID); err != nil {
+				slog.Error("PDF persistence failed after SIAT acceptance; reconcile", "invoice_id", inv.ID, "error", err)
+				return nil, err
+			}
+		} else {
+			uc.pdfService.GenerateAndPersist(ctx, inv.ID)
+		}
 	}
 
 	return inv, nil
@@ -309,8 +302,22 @@ func (uc *InvoiceUsecase) processOfflineContingency(
 	if !claimed {
 		return nil, domain.NewConflictError("la factura cambió de estado mientras se activaba la contingencia")
 	}
+	if uc.fileService != nil && inv.Cuf != nil && inv.Xml != nil && *inv.Xml != "" {
+		if _, err := uc.fileService.Save(offlineCtx, inv.CompanyId, inv.ID, *inv.Cuf, "xml", strings.NewReader(*inv.Xml), int64(len(*inv.Xml))); err != nil {
+			slog.Error("offline signed XML persistence failed; reconcile", "invoice_id", inv.ID, "error", err)
+			return nil, err
+		}
+	}
 	if uc.pdfService != nil {
-		uc.pdfService.GenerateAndPersist(offlineCtx, inv.ID)
+		if strict, ok := uc.pdfService.(interface {
+			GenerateAndPersistStrict(context.Context, string) error
+		}); ok {
+			if err := strict.GenerateAndPersistStrict(offlineCtx, inv.ID); err != nil {
+				return nil, err
+			}
+		} else {
+			uc.pdfService.GenerateAndPersist(offlineCtx, inv.ID)
+		}
 	}
 	return inv, nil
 }

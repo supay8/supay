@@ -11,11 +11,121 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
+	"github.com/brandsrx/supay/internal/storage"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
+
+type fileRepoForHandler struct{ file *domain.InvoiceFile }
+
+func (r *fileRepoForHandler) BelongsToCompany(_ context.Context, companyID, invoiceID string) (bool, error) {
+	return companyID == "company1" && invoiceID == "invoice1", nil
+}
+func (r *fileRepoForHandler) CreateFile(_ context.Context, file *domain.InvoiceFile) error {
+	r.file = file
+	return nil
+}
+func (r *fileRepoForHandler) FindFile(_ context.Context, _, _, _ string) (*domain.InvoiceFile, error) {
+	if r.file == nil {
+		return nil, domain.ErrNotFound
+	}
+	return r.file, nil
+}
+
+func TestDownloadXMLStreamsOnlyOwnCompany(t *testing.T) {
+	objects := storage.NewMemoryObjectStorage()
+	files := usecase.NewInvoiceFileService(objects, &fileRepoForHandler{}, time.Minute)
+	_, err := files.Save(context.Background(), "company1", "invoice1", "CUF", "xml", strings.NewReader("<signed/>"), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHandler(&mockInvoiceService{})
+	h.files = files
+	router := chi.NewRouter()
+	router.Get("/invoices/{id}/xml", h.downloadXML)
+	for _, tc := range []struct {
+		company string
+		status  int
+		body    string
+	}{{"other", http.StatusNotFound, ""}, {"company1", http.StatusOK, "<signed/>"}} {
+		req := httptest.NewRequest(http.MethodGet, "/invoices/invoice1/xml", nil)
+		req = req.WithContext(deliveryHttp.WithCompanyID(req.Context(), tc.company))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != tc.status {
+			t.Fatalf("%s: status %d", tc.company, w.Code)
+		}
+		if tc.body != "" && w.Body.String() != tc.body {
+			t.Fatalf("%s: body %q", tc.company, w.Body.String())
+		}
+	}
+}
+
+func TestHistoricalXMLFallbackChecksCompany(t *testing.T) {
+	xml := "<historical/>"
+	h := newHandler(&mockInvoiceService{getByIDFunc: func(string) (*domain.Invoice, error) { return &domain.Invoice{CompanyId: "company1", Xml: &xml}, nil }})
+	h.files = usecase.NewInvoiceFileService(storage.NewMemoryObjectStorage(), &fileRepoForHandler{}, time.Minute)
+	router := chi.NewRouter()
+	router.Get("/invoices/{id}/xml", h.downloadXML)
+	for _, tc := range []struct {
+		company string
+		status  int
+	}{{"company1", http.StatusOK}, {"other", http.StatusNotFound}} {
+		req := httptest.NewRequest(http.MethodGet, "/invoices/invoice1/xml", nil)
+		req = req.WithContext(deliveryHttp.WithCompanyID(req.Context(), tc.company))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != tc.status {
+			t.Fatalf("%s: status %d", tc.company, w.Code)
+		}
+		if tc.status == http.StatusOK && w.Body.String() != xml {
+			t.Fatalf("fallback body: %q", w.Body.String())
+		}
+	}
+}
+
+type pdfGeneratorForHandler struct {
+	files *usecase.InvoiceFileService
+	calls int
+}
+
+func (g *pdfGeneratorForHandler) GenerateInvoicePDFWithContext(ctx context.Context, id string) ([]byte, error) {
+	g.calls++
+	_, err := g.files.Save(ctx, "company1", id, "CUF", "pdf", strings.NewReader("%PDF"), 4)
+	return []byte("%PDF"), err
+}
+
+func TestPDFGenerationFallbackChecksCompany(t *testing.T) {
+	files := usecase.NewInvoiceFileService(storage.NewMemoryObjectStorage(), &fileRepoForHandler{}, time.Minute)
+	cuf := "CUF"
+	h := newHandler(&mockInvoiceService{getByIDFunc: func(string) (*domain.Invoice, error) { return &domain.Invoice{CompanyId: "company1", Cuf: &cuf}, nil }})
+	h.files = files
+	generator := &pdfGeneratorForHandler{files: files}
+	h.pdfGenerator = generator
+	router := chi.NewRouter()
+	router.Get("/invoices/{id}/pdf", h.downloadPDF)
+	for _, tc := range []struct {
+		company string
+		status  int
+	}{{"other", http.StatusNotFound}, {"company1", http.StatusOK}} {
+		req := httptest.NewRequest(http.MethodGet, "/invoices/invoice1/pdf", nil)
+		req = req.WithContext(deliveryHttp.WithCompanyID(req.Context(), tc.company))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != tc.status {
+			t.Fatalf("%s: status %d", tc.company, w.Code)
+		}
+		if tc.status == http.StatusOK && w.Body.String() != "%PDF" {
+			t.Fatalf("pdf body: %q", w.Body.String())
+		}
+	}
+	if generator.calls != 1 {
+		t.Fatalf("generation called %d times", generator.calls)
+	}
+}
 
 func TestSectoresEndpointDevuelveCatalogo(t *testing.T) {
 	h := newHandler(nil)

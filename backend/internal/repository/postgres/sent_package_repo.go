@@ -306,7 +306,7 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 		}
 		for _, invoice := range invoices {
 			if document, ok := documents[invoice.ID]; ok {
-				fields := map[string]any{"cuf": document.Cuf, "xml": document.Xml, "xml_hash": document.XmlHash}
+				fields := map[string]any{"cuf": document.Cuf, "xml_hash": document.XmlHash}
 				if document.Archivo != "" {
 					fields["archivo"], fields["hash_archivo"] = document.Archivo, document.HashArchivo
 				}
@@ -318,9 +318,6 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 					fields["codigo_tipo_factura"] = pkg.CodigoTipoFactura
 				}
 				if err := tx.Model(&models.Invoice{}).Where("id = ?", invoice.ID).Updates(fields).Error; err != nil {
-					return err
-				}
-				if err := persistInvoiceDocuments(tx, invoice.ID, fields); err != nil {
 					return err
 				}
 			}

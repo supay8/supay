@@ -81,22 +81,23 @@ type Invoice struct {
 	Subtotal              float64         `json:"subtotal"`
 	Discount              float64         `json:"discount"`
 	Total                 float64         `json:"total"`
-	Xml                   *string         `json:"xml,omitempty"`
-	XmlHash               *string         `json:"xml_hash,omitempty"`
-	SiatReceptionCode     *string         `json:"siat_reception_code,omitempty"`
-	SiatMensajes          *string         `json:"siat_mensajes,omitempty"`
-	MotivoAnulacion       *int            `json:"motivo_anulacion,omitempty"`
-	FechaAnulacion        *time.Time      `json:"fecha_anulacion,omitempty"`
-	Status                InvoiceStatus   `json:"status"`
-	CreatedAt             time.Time       `json:"created_at"`
+	// Xml es un artefacto transitorio devuelto por el adaptador. Nunca se
+	// persiste en PostgreSQL; su fuente canónica es object storage.
+	Xml               *string       `json:"xml,omitempty"`
+	XmlHash           *string       `json:"xml_hash,omitempty"`
+	SiatReceptionCode *string       `json:"siat_reception_code,omitempty"`
+	SiatMensajes      *string       `json:"siat_mensajes,omitempty"`
+	MotivoAnulacion   *int          `json:"motivo_anulacion,omitempty"`
+	FechaAnulacion    *time.Time    `json:"fecha_anulacion,omitempty"`
+	Status            InvoiceStatus `json:"status"`
+	CreatedAt         time.Time     `json:"created_at"`
 
-	Company     Company           `json:"company"`
-	Customer    Customer          `json:"customer"`
-	PointOfSale PointOfSale       `json:"point_of_sale"`
-	CufdRecord  Cufd              `json:"cufd_record"`
-	Items       []InvoiceItem     `json:"items"`
-	Events      []InvoiceEvent    `json:"events,omitempty"`
-	Documents   []InvoiceDocument `json:"documents,omitempty"`
+	Company     Company        `json:"company"`
+	Customer    Customer       `json:"customer"`
+	PointOfSale PointOfSale    `json:"point_of_sale"`
+	CufdRecord  Cufd           `json:"cufd_record"`
+	Items       []InvoiceItem  `json:"items"`
+	Events      []InvoiceEvent `json:"events,omitempty"`
 }
 
 // InvoiceListFilter acota el listado de facturas por punto de venta, estado y

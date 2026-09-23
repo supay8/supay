@@ -21,4 +21,5 @@ type InvoiceFileRepository interface {
 	BelongsToCompany(ctx context.Context, companyID, invoiceID string) (bool, error)
 	CreateFile(ctx context.Context, file *InvoiceFile) error
 	FindFile(ctx context.Context, companyID, invoiceID, kind string) (*InvoiceFile, error)
+	DeleteFile(ctx context.Context, companyID, invoiceID, kind, storageKey string) error
 }

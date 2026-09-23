@@ -56,4 +56,11 @@ func (r *PostgresInvoiceFileRepository) FindFile(ctx context.Context, companyID,
 	return &domain.InvoiceFile{ID: row.ID, CompanyID: row.CompanyID, InvoiceID: row.InvoiceID, Kind: row.Kind, StorageKey: row.StorageKey, SHA256: row.SHA256, Size: row.Size, ContentType: row.ContentType, CreatedAt: row.CreatedAt}, nil
 }
 
+func (r *PostgresInvoiceFileRepository) DeleteFile(ctx context.Context, companyID, invoiceID, kind, storageKey string) error {
+	result := r.db.WithContext(ctx).
+		Where("company_id = ? AND invoice_id = ? AND kind = ? AND storage_key = ?", companyID, invoiceID, kind, storageKey).
+		Delete(&invoiceFileRow{})
+	return result.Error
+}
+
 var _ domain.InvoiceFileRepository = (*PostgresInvoiceFileRepository)(nil)

@@ -381,7 +381,6 @@ type Invoice struct {
 	Subtotal               decimal.Decimal `gorm:"type:numeric(18,2);not null"`
 	Discount               decimal.Decimal `gorm:"type:numeric(18,2);default:0;not null"`
 	Total                  decimal.Decimal `gorm:"type:numeric(18,2);not null"`
-	Xml                    *string         `gorm:"type:text"`
 	XmlHash                *string         `gorm:"type:varchar(100)"`
 	SiatReceptionCode      *string         `gorm:"type:varchar(100)"`
 	SiatMensajes           *string         `gorm:"type:text"`
@@ -397,9 +396,8 @@ type Invoice struct {
 	ContingencyEvent *ContingencyEvent `gorm:"foreignKey:ContingencyEventId"`
 	AjustaFactura    *Invoice          `gorm:"foreignKey:AjustaFacturaId"`
 
-	Items     []InvoiceItem     `gorm:"foreignKey:InvoiceId"`
-	Events    []InvoiceEvent    `gorm:"foreignKey:InvoiceId"`
-	Documents []InvoiceDocument `gorm:"foreignKey:InvoiceID"`
+	Items  []InvoiceItem  `gorm:"foreignKey:InvoiceId"`
+	Events []InvoiceEvent `gorm:"foreignKey:InvoiceId"`
 }
 
 type InvoiceSequence struct {
@@ -408,21 +406,6 @@ type InvoiceSequence struct {
 	NextNumber    int    `gorm:"not null"`
 	UpdatedAt     time.Time
 }
-
-type InvoiceDocument struct {
-	ID           string  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	InvoiceID    string  `gorm:"column:invoice_id;type:uuid;index;not null"`
-	DocumentType string  `gorm:"column:document_type;type:varchar(20);not null"`
-	Version      int     `gorm:"not null"`
-	Content      *string `gorm:"type:text"`
-	StorageRef   *string `gorm:"column:storage_ref;type:text"`
-	MIMEType     *string `gorm:"column:mime_type;type:varchar(100)"`
-	SHA256       *string `gorm:"column:sha256;type:varchar(128)"`
-	IsCurrent    bool    `gorm:"column:is_current;not null;default:true"`
-	CreatedAt    time.Time
-}
-
-func (InvoiceDocument) TableName() string { return "invoice_documents" }
 
 type InvoiceItem struct {
 	ID                string  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`

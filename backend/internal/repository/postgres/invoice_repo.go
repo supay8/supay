@@ -3,7 +3,6 @@ package postgres
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -58,8 +57,8 @@ func (r *PostgresInvoiceRepository) Create(inv *domain.Invoice) error {
 	})
 }
 
-// ListFiltered devuelve facturas paginadas según el filtro omitiendo los
-// campos pesados (xml, archivo) y pre-cargando ítems.
+// ListFiltered devuelve facturas paginadas según el filtro, omitiendo el
+// archivo fiscal pesado y precargando ítems. El XML vive en object storage.
 func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
 	query := r.db.Model(&models.Invoice{}).Where("point_of_sale_id = ?", filter.PointOfSaleID)
 	if filter.Status != nil {
@@ -77,7 +76,7 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 	}
 	var ms []models.Invoice
 	if err := query.
-		Omit("xml", "archivo").
+		Omit("archivo").
 		Preload("Items").
 		Order("invoice_number DESC").
 		Limit(filter.Limit).Offset(filter.Offset).
@@ -93,7 +92,7 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 
 func (r *PostgresInvoiceRepository) GetByID(id string) (*domain.Invoice, error) {
 	var m models.Invoice
-	if err := r.db.Preload("Items").Preload("Events").Preload("Documents").Preload("PointOfSale").Preload("Company.Config").Preload("CufdRecord").First(&m, "id = ?", id).Error; err != nil {
+	if err := r.db.Preload("Items").Preload("Events").Preload("PointOfSale").Preload("Company.Config").Preload("CufdRecord").First(&m, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return toDomainInvoice(&m), nil
@@ -120,7 +119,6 @@ func (r *PostgresInvoiceRepository) ListByPointOfSale(pointOfSaleID string) ([]*
 func invoiceMutableFields(inv *domain.Invoice) map[string]any {
 	return map[string]any{
 		"cuf":                 inv.Cuf,
-		"xml":                 inv.Xml,
 		"xml_hash":            inv.XmlHash,
 		"archivo":             inv.Archivo,
 		"hash_archivo":        inv.HashArchivo,
@@ -184,9 +182,6 @@ func (r *PostgresInvoiceRepository) TransitionStatus(id string, from, to domain.
 			return nil
 		}
 		claimed = true
-		if err := persistInvoiceDocuments(tx, id, fields); err != nil {
-			return err
-		}
 		if event == nil {
 			return nil
 		}
@@ -212,41 +207,6 @@ func (r *PostgresInvoiceRepository) TransitionStatus(id string, from, to domain.
 		return nil
 	})
 	return claimed, err
-}
-
-func persistInvoiceDocuments(tx *gorm.DB, invoiceID string, fields map[string]any) error {
-	definitions := []struct {
-		key, hashKey, documentType, mimeType string
-	}{
-		{"xml", "xml_hash", "XML", "application/xml"},
-		{"archivo", "hash_archivo", "FILE", "application/octet-stream"},
-	}
-	for _, definition := range definitions {
-		content, ok := fields[definition.key].(*string)
-		if !ok {
-			if value, stringOK := fields[definition.key].(string); stringOK && strings.TrimSpace(value) != "" {
-				content = &value
-				ok = true
-			}
-		}
-		if !ok || content == nil || strings.TrimSpace(*content) == "" {
-			continue
-		}
-		var hash *string
-		if value, ok := fields[definition.hashKey].(*string); ok {
-			hash = value
-		} else if value, ok := fields[definition.hashKey].(string); ok && value != "" {
-			hash = &value
-		}
-		document := &domain.InvoiceDocument{
-			InvoiceID: invoiceID, DocumentType: domain.InvoiceDocumentType(definition.documentType),
-			Content: content, SHA256: hash, MIMEType: &definition.mimeType, IsCurrent: true,
-		}
-		if _, err := rotateInvoiceDocument(tx, document); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
@@ -370,7 +330,6 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		Subtotal:               decimal.NewFromFloat(inv.Subtotal),
 		Discount:               decimal.NewFromFloat(inv.Discount),
 		Total:                  decimal.NewFromFloat(inv.Total),
-		Xml:                    inv.Xml,
 		XmlHash:                inv.XmlHash,
 		SiatReceptionCode:      inv.SiatReceptionCode,
 		SiatMensajes:           inv.SiatMensajes,
@@ -436,7 +395,6 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		Subtotal:              decimalFloat(m.Subtotal),
 		Discount:              decimalFloat(m.Discount),
 		Total:                 decimalFloat(m.Total),
-		Xml:                   m.Xml,
 		XmlHash:               m.XmlHash,
 		SiatReceptionCode:     m.SiatReceptionCode,
 		SiatMensajes:          m.SiatMensajes,
@@ -484,16 +442,6 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 			ID: event.ID, InvoiceID: event.InvoiceId, TenantID: event.TenantID,
 			EventKey: event.EventKey, Type: event.Type, Message: event.Message,
 			Payload: json.RawMessage(event.Payload), CreatedAt: event.CreatedAt,
-		})
-	}
-	inv.Documents = make([]domain.InvoiceDocument, 0, len(m.Documents))
-	for i := range m.Documents {
-		document := m.Documents[i]
-		inv.Documents = append(inv.Documents, domain.InvoiceDocument{
-			ID: document.ID, InvoiceID: document.InvoiceID,
-			DocumentType: domain.InvoiceDocumentType(document.DocumentType), Version: document.Version,
-			Content: document.Content, StorageRef: document.StorageRef, MIMEType: document.MIMEType,
-			SHA256: document.SHA256, IsCurrent: document.IsCurrent, CreatedAt: document.CreatedAt,
 		})
 	}
 	return inv

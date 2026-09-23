@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://schema.buildwithfern.dev/docs-yml.json
+instances:
+  - url: https://supay.docs.buildwithfern.com
+
+title: Supay | Documentation
+
+# Configuración de logotipos opcionales para cada modo
+logo:
+  dark: assets/logo-dark.svg
+  light: assets/logo-light.svg
+
+colors:
+  accent-primary:
+    light: "#000000" # Negro puro para acentos en modo claro
+    dark: "#FFFFFF"  # Blanco puro para acentos en modo oscuro
+  background:
+    light: "#FFFFFF" # Fondo blanco estilo Vercel
+    dark: "#0a0a0a"  # Fondo negro profundo estilo Vercel
+  border:
+    light: "#eaeaea" # Bordes sutiles claros
+    dark: "#222222"  # Bordes oscuros discretos
+  sidebar-background:
+    light: "#fafafa"
+    dark: "#0a0a0a"
+  header-background:
+    light: "#ffffff"
+    dark: "#0a0a0a"
+
+navigation:
+  - api: API Reference
+    paginated: true

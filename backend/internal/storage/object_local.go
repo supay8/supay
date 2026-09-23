@@ -31,12 +31,15 @@ type LocalObjectStorage struct {
 func NewLocalObjectStorage(dir, signingSecret, baseURL string) (*LocalObjectStorage, error) {
 	exePath, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("storage local: os.Executable: %w", err)
+		return nil, fmt.Errorf("storage local: working directory: %w", err)
 	}
 	if dir == "" {
 		return nil, fmt.Errorf("STORAGE_LOCAL_PATH es obligatorio")
 	}
-	storagePath := filepath.Join(exePath, "..", dir)
+	storagePath := dir
+	if !filepath.IsAbs(storagePath) {
+		storagePath = filepath.Join(exePath, "..", storagePath)
+	}
 	if len(signingSecret) < 32 {
 		return nil, fmt.Errorf("STORAGE_SIGNING_SECRET debe tener al menos 32 caracteres")
 	}

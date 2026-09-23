@@ -11,6 +11,7 @@ import (
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
+	"github.com/brandsrx/supay/internal/storage"
 	"gorm.io/gorm"
 )
 
@@ -23,11 +24,47 @@ type fakeInvoiceRepo struct {
 	updateErr          error
 	activeCufd         *domain.Cufd
 	conflictingIdemKey string // simula violación del índice único al crear con esta key
+	lastFields         map[string]any
 }
 
 type fakePDFGenerator struct{ calls int }
 
 func (f *fakePDFGenerator) GenerateAndPersist(context.Context, string) { f.calls++ }
+
+type fakeInvoiceFileRepo struct {
+	invoices *fakeInvoiceRepo
+	rows     map[string]*domain.InvoiceFile
+}
+
+func (r *fakeInvoiceFileRepo) key(companyID, invoiceID, kind string) string {
+	return companyID + "/" + invoiceID + "/" + kind
+}
+
+func (r *fakeInvoiceFileRepo) BelongsToCompany(_ context.Context, companyID, invoiceID string) (bool, error) {
+	inv, ok := r.invoices.invoices[invoiceID]
+	return ok && inv.CompanyId == companyID, nil
+}
+
+func (r *fakeInvoiceFileRepo) CreateFile(_ context.Context, file *domain.InvoiceFile) error {
+	r.rows[r.key(file.CompanyID, file.InvoiceID, file.Kind)] = file
+	return nil
+}
+
+func (r *fakeInvoiceFileRepo) FindFile(_ context.Context, companyID, invoiceID, kind string) (*domain.InvoiceFile, error) {
+	file, ok := r.rows[r.key(companyID, invoiceID, kind)]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return file, nil
+}
+
+func (r *fakeInvoiceFileRepo) DeleteFile(_ context.Context, companyID, invoiceID, kind, storageKey string) error {
+	key := r.key(companyID, invoiceID, kind)
+	if file, ok := r.rows[key]; ok && file.StorageKey == storageKey {
+		delete(r.rows, key)
+	}
+	return nil
+}
 
 func (f *fakeInvoiceRepo) GetByIDs(ids []string) ([]*domain.Invoice, error) {
 	var result []*domain.Invoice
@@ -140,7 +177,9 @@ func (f *fakeInvoiceRepo) ClaimStatus(id string, from, to domain.InvoiceStatus, 
 		return false, nil
 	}
 	inv.Status = to
+	f.lastFields = make(map[string]any, len(fields))
 	for k, v := range fields {
+		f.lastFields[k] = v
 		switch k {
 		case "motivo_anulacion":
 			if m, ok := v.(int); ok {
@@ -524,8 +563,14 @@ func testInvoice() *domain.Invoice {
 }
 
 func newTestUsecase(repo *fakeInvoiceRepo, catalog *fakeCatalogRepo, svc ports.FiscalService) *InvoiceUsecase {
-	return NewInvoiceUsecase(repo, nil, nil, nil, catalog, nil, svc, siat.ModalidadElectronica,
+	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, nil, svc, siat.ModalidadElectronica,
 		nil, nil, nil, nil, nil, false, nil)
+	uc.SetFileService(NewInvoiceFileService(
+		storage.NewMemoryObjectStorage(),
+		&fakeInvoiceFileRepo{invoices: repo, rows: map[string]*domain.InvoiceFile{}},
+		time.Minute,
+	))
+	return uc
 }
 
 type fakeDocSectorRepo struct {
@@ -766,7 +811,14 @@ func TestEmitAccepted(t *testing.T) {
 		t.Errorf("Cuf no persistido: %v", got.Cuf)
 	}
 	if got.Xml == nil || got.XmlHash == nil || got.SiatReceptionCode == nil {
-		t.Errorf("Xml/XmlHash/SiatReceptionCode no persistidos")
+		t.Errorf("respuesta sin Xml/XmlHash/SiatReceptionCode")
+	}
+	if _, exists := repo.lastFields["xml"]; exists {
+		t.Error("el XML fue enviado a persistencia relacional")
+	}
+	data, file, readErr := uc.fileService.ReadAll(context.Background(), got.CompanyId, got.ID, "xml")
+	if readErr != nil || string(data) != "<xml/>" || got.XmlHash == nil || *got.XmlHash != file.SHA256 {
+		t.Fatalf("XML canónico no persistido en object storage: file=%+v err=%v", file, readErr)
 	}
 	if repo.claimCalls != 1 || repo.updateCalls != 1 {
 		t.Errorf("claimCalls=%d updateCalls=%d, se esperaba 1/1", repo.claimCalls, repo.updateCalls)
@@ -776,7 +828,7 @@ func TestEmitAccepted(t *testing.T) {
 func TestEmitSiempreProcesaSincrono(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	_ = repo.Create(testInvoice())
-	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true, CodigoEstado: 908}}
+	svc := &fakeEmissionService{result: &ports.FiscalResult{Cuf: "CUF-1", Xml: "<xml/>", Transaccion: true, CodigoEstado: 908}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
 	got, err := uc.Emit(context.Background(), "inv-1")
@@ -855,7 +907,7 @@ func TestRegistrarEventoCompletaLaContingenciaAbiertaPorEmit(t *testing.T) {
 func TestProcessEmissionGeneraPDFDentroDelWorker(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	_ = repo.Create(testInvoice())
-	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true, CodigoEstado: 908}}
+	svc := &fakeEmissionService{result: &ports.FiscalResult{Cuf: "CUF-1", Xml: "<xml/>", Transaccion: true, CodigoEstado: 908}}
 	pdf := &fakePDFGenerator{}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 	uc.pdfService = pdf
@@ -873,6 +925,7 @@ func TestEmitObserved(t *testing.T) {
 	_ = repo.Create(testInvoice())
 	svc := &fakeEmissionService{result: &ports.FiscalResult{
 		Cuf:          "CUF-1",
+		Xml:          "<xml/>",
 		Transaccion:  true,
 		CodigoEstado: 904,
 		Mensajes:     []ports.FiscalMessage{{Codigo: 1007, Descripcion: "DIRECCION NO CORRESPONDE A PADRON"}},
@@ -897,6 +950,8 @@ func TestEmitRejected(t *testing.T) {
 	repo := newFakeInvoiceRepo()
 	_ = repo.Create(testInvoice())
 	svc := &fakeEmissionService{result: &ports.FiscalResult{
+		Cuf:          "CUF-1",
+		Xml:          "<xml/>",
 		Transaccion:  false,
 		CodigoEstado: 902,
 		Mensajes:     []ports.FiscalMessage{{Codigo: 123, Descripcion: "descripcion rechazo"}},

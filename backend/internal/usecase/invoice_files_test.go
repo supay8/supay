@@ -1,6 +1,7 @@
 package usecase_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -12,6 +13,31 @@ import (
 	"github.com/brandsrx/supay/internal/storage"
 	"github.com/brandsrx/supay/internal/usecase"
 )
+
+type consumeOnConflictStorage struct{ inner *storage.MemoryObjectStorage }
+
+func (s *consumeOnConflictStorage) Put(ctx context.Context, key string, reader io.Reader, opts domain.PutOptions) (domain.ObjectInfo, error) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return domain.ObjectInfo{}, err
+	}
+	if _, err := s.inner.Stat(ctx, key); err == nil {
+		return domain.ObjectInfo{}, domain.ErrAlreadyExists
+	}
+	return s.inner.Put(ctx, key, bytes.NewReader(data), opts)
+}
+func (s *consumeOnConflictStorage) Get(ctx context.Context, key string) (io.ReadCloser, domain.ObjectInfo, error) {
+	return s.inner.Get(ctx, key)
+}
+func (s *consumeOnConflictStorage) Stat(ctx context.Context, key string) (domain.ObjectInfo, error) {
+	return s.inner.Stat(ctx, key)
+}
+func (s *consumeOnConflictStorage) Delete(ctx context.Context, key string) error {
+	return s.inner.Delete(ctx, key)
+}
+func (s *consumeOnConflictStorage) PresignGet(ctx context.Context, key string, ttl time.Duration, filename string) (string, error) {
+	return s.inner.PresignGet(ctx, key, ttl, filename)
+}
 
 type fileRepoFake struct {
 	rows       map[string]*domain.InvoiceFile
@@ -33,6 +59,12 @@ func (r *fileRepoFake) FindFile(_ context.Context, companyID, invoiceID, kind st
 		return f, nil
 	}
 	return nil, domain.ErrNotFound
+}
+func (r *fileRepoFake) DeleteFile(_ context.Context, _, _, kind, storageKey string) error {
+	if file, ok := r.rows[kind]; ok && file.StorageKey == storageKey {
+		delete(r.rows, kind)
+	}
+	return nil
 }
 
 func TestInvoiceFileServiceTenantAndCompensation(t *testing.T) {
@@ -76,5 +108,30 @@ func TestInvoiceFileServiceTenantAndCompensation(t *testing.T) {
 	}
 	if _, err := svc.Save(ctx, "company1", "invoice1", "CUF", "xml", strings.NewReader("other"), 5); !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("changed fiscal file: %v", err)
+	}
+}
+
+func TestInvoiceFileServiceReconcilesExistingObjectAfterReaderWasConsumed(t *testing.T) {
+	ctx := context.Background()
+	objects := &consumeOnConflictStorage{inner: storage.NewMemoryObjectStorage()}
+	repo := &fileRepoFake{rows: map[string]*domain.InvoiceFile{}}
+	svc := usecase.NewInvoiceFileService(objects, repo, time.Minute)
+
+	key, err := domain.InvoiceObjectKey("company1", "invoice1", "CUF", "xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := objects.inner.Put(ctx, key, strings.NewReader("signed"), domain.PutOptions{ContentType: "application/xml", Size: 6}); err != nil {
+		t.Fatal(err)
+	}
+	file, err := svc.Save(ctx, "company1", "invoice1", "CUF", "xml", strings.NewReader("signed"), 6)
+	if err != nil {
+		t.Fatalf("reconciliar objeto huérfano: %v", err)
+	}
+	if file == nil || repo.rows["xml"] == nil || file.SHA256 != repo.rows["xml"].SHA256 {
+		t.Fatalf("metadata no reconciliada: file=%+v rows=%+v", file, repo.rows)
+	}
+	if _, err := svc.Save(ctx, "company1", "invoice1", "CUF", "xml", strings.NewReader("other!"), 6); !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Fatalf("contenido distinto no fue rechazado: %v", err)
 	}
 }

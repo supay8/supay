@@ -11,6 +11,7 @@ import (
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
+	"github.com/brandsrx/supay/internal/storage"
 	"gorm.io/gorm"
 )
 
@@ -62,7 +63,6 @@ func (r *batchTestRepository) ReserveBatch(pkg *domain.SentPackage, ids []string
 		inv.Status = domain.InvoiceSending
 		doc := pkg.Documents[i]
 		inv.Cuf = strPtr(doc.Cuf)
-		inv.Xml = strPtr(doc.Xml)
 	}
 	r.packages[pkg.ID] = *pkg
 	return nil
@@ -163,6 +163,11 @@ func batchFixture() (*SiatUsecase, *batchTestRepository, *batchTestService, *dom
 	companyRepo := &fakeCompanyRepo{company: inv.Company}
 	posRepo := &fakePointOfSaleRepo{pos: inv.PointOfSale}
 	uc := &SiatUsecase{companyRepo: companyRepo, pointOfSaleRepo: posRepo, invoiceRepo: invoices, sentPackageRepo: repo, siatService: svc}
+	uc.fileService = NewInvoiceFileService(
+		storage.NewMemoryObjectStorage(),
+		&fakeInvoiceFileRepo{invoices: invoices, rows: map[string]*domain.InvoiceFile{}},
+		time.Minute,
+	)
 	uc.credentials = NewCredentialService(posRepo, &fakeCredCufdStore{existing: &inv.CufdRecord}, svc, siat.ModalidadElectronica)
 	return uc, repo, svc, inv
 }
@@ -170,7 +175,8 @@ func batchFixture() (*SiatUsecase, *batchTestRepository, *batchTestService, *dom
 func TestMasivaPreparaYGuardaDocumentosAntesDeEnviar(t *testing.T) {
 	uc, repo, svc, inv := batchFixture()
 	svc.onSend = func(docs []ports.FiscalDocument) error {
-		if inv.Status != domain.InvoiceSending || inv.Cuf == nil || inv.Xml == nil || *inv.Xml != docs[0].XML {
+		storedXML, _, err := uc.fileService.ReadAll(context.Background(), inv.CompanyId, inv.ID, "xml")
+		if err != nil || inv.Status != domain.InvoiceSending || inv.Cuf == nil || string(storedXML) != docs[0].XML || inv.Xml != nil {
 			t.Fatal("envío sin reserva e identidad fiscal persistida")
 		}
 		if docs[0].Cufd != inv.CufdRecord.Cufd || docs[0].CodigoPuntoVenta != inv.PointOfSale.CodigoPuntoVenta {
@@ -277,7 +283,8 @@ func TestMasivaRespuestaInciertaConservaIdentidadYNoReenvia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Response.Transaccion || out.Batches[0].Status != domain.PackageStatusUnknown || inv.Cuf == nil || inv.Xml == nil || inv.Status != domain.InvoiceSending {
+	storedXML, _, readErr := uc.fileService.ReadAll(context.Background(), inv.CompanyId, inv.ID, "xml")
+	if out.Response.Transaccion || out.Batches[0].Status != domain.PackageStatusUnknown || inv.Cuf == nil || inv.Xml != nil || inv.Status != domain.InvoiceSending || readErr != nil || len(storedXML) == 0 {
 		t.Fatalf("resultado=%+v factura=%+v", out, inv)
 	}
 	if repo.packages[out.Batches[0].BatchID].Status != domain.PackageStatusUnknown {
@@ -294,7 +301,11 @@ func TestPaquetePreservaXMLHistoricoSinDependerDelClienteActual(t *testing.T) {
 	inv.Status = domain.InvoiceOffline
 	inv.EmissionType = "OFFLINE"
 	inv.Cuf = strPtr("original-cuf")
-	inv.Xml = strPtr("<original-firmado/>")
+	file, err := uc.fileService.Save(context.Background(), inv.CompanyId, inv.ID, *inv.Cuf, "xml", strings.NewReader("<original-firmado/>"), int64(len("<original-firmado/>")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv.XmlHash = &file.SHA256
 	inv.ContingencyEventId = strPtr("event-1")
 	originalDate := inv.IssueDate
 	historical := inv.CufdRecord
@@ -404,6 +415,9 @@ func TestReservaFallidaNoSeReportaEnviada(t *testing.T) {
 	}
 	if out.Response.Transaccion || out.Batches[0].Status != "NOT_SENT" || out.Batches[0].BatchID != "" || svc.sendCalls != 0 {
 		t.Fatalf("resultado=%+v", out.Batches)
+	}
+	if _, _, readErr := uc.fileService.ReadAll(context.Background(), inv.CompanyId, inv.ID, "xml"); !errors.Is(readErr, domain.ErrNotFound) {
+		t.Fatalf("la reserva fallida dejó un XML huérfano: %v", readErr)
 	}
 }
 

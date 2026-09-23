@@ -34,6 +34,12 @@ func (r *fileRepoForHandler) FindFile(_ context.Context, _, _, _ string) (*domai
 	}
 	return r.file, nil
 }
+func (r *fileRepoForHandler) DeleteFile(_ context.Context, _, _, _, storageKey string) error {
+	if r.file != nil && r.file.StorageKey == storageKey {
+		r.file = nil
+	}
+	return nil
+}
 
 func TestDownloadXMLStreamsOnlyOwnCompany(t *testing.T) {
 	objects := storage.NewMemoryObjectStorage()
@@ -64,8 +70,8 @@ func TestDownloadXMLStreamsOnlyOwnCompany(t *testing.T) {
 	}
 }
 
-func TestHistoricalXMLFallbackChecksCompany(t *testing.T) {
-	xml := "<historical/>"
+func TestMissingXMLDoesNotFallbackToDatabase(t *testing.T) {
+	xml := "<legacy-database-copy/>"
 	h := newHandler(&mockInvoiceService{getByIDFunc: func(string) (*domain.Invoice, error) { return &domain.Invoice{CompanyId: "company1", Xml: &xml}, nil }})
 	h.files = usecase.NewInvoiceFileService(storage.NewMemoryObjectStorage(), &fileRepoForHandler{}, time.Minute)
 	router := chi.NewRouter()
@@ -73,16 +79,13 @@ func TestHistoricalXMLFallbackChecksCompany(t *testing.T) {
 	for _, tc := range []struct {
 		company string
 		status  int
-	}{{"company1", http.StatusOK}, {"other", http.StatusNotFound}} {
+	}{{"company1", http.StatusNotFound}, {"other", http.StatusNotFound}} {
 		req := httptest.NewRequest(http.MethodGet, "/invoices/invoice1/xml", nil)
 		req = req.WithContext(deliveryHttp.WithCompanyID(req.Context(), tc.company))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		if w.Code != tc.status {
 			t.Fatalf("%s: status %d", tc.company, w.Code)
-		}
-		if tc.status == http.StatusOK && w.Body.String() != xml {
-			t.Fatalf("fallback body: %q", w.Body.String())
 		}
 	}
 }
@@ -528,10 +531,16 @@ func TestEmitDevuelveResultadoSincrono(t *testing.T) {
 func TestDownloadXML(t *testing.T) {
 	svc := &mockInvoiceService{}
 	h := newHandler(svc)
+	objects := storage.NewMemoryObjectStorage()
+	h.files = usecase.NewInvoiceFileService(objects, &fileRepoForHandler{}, time.Minute)
+	if _, err := h.files.Save(context.Background(), "company1", "invoice1", "CUF", "xml", strings.NewReader("<xml/>"), 6); err != nil {
+		t.Fatal(err)
+	}
 	r := chi.NewRouter()
 	r.Get("/invoices/{id}/xml", h.downloadXML)
 
-	req := httptest.NewRequest(http.MethodGet, "/invoices/inv-1/xml", nil)
+	req := httptest.NewRequest(http.MethodGet, "/invoices/invoice1/xml", nil)
+	req = req.WithContext(deliveryHttp.WithCompanyID(req.Context(), "company1"))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

@@ -60,7 +60,6 @@ type Container struct {
 	customerRepo               domain.CustomerRepository
 	invoiceRepo                domain.InvoiceRepository
 	invoiceEventRepo           domain.InvoiceEventRepository
-	invoiceDocumentRepo        domain.InvoiceDocumentRepository
 	certificateRepo            domain.CertificateRepository
 	maintenanceRepo            domain.MaintenanceRepository
 	outboxRepo                 domain.OutboxRepository
@@ -234,13 +233,6 @@ func (c *Container) InvoiceEventRepo() domain.InvoiceEventRepository {
 		c.invoiceEventRepo = postgres.NewPostgresInvoiceEventRepository(c.db)
 	}
 	return c.invoiceEventRepo
-}
-
-func (c *Container) InvoiceDocumentRepo() domain.InvoiceDocumentRepository {
-	if c.invoiceDocumentRepo == nil {
-		c.invoiceDocumentRepo = postgres.NewPostgresInvoiceDocumentRepository(c.db)
-	}
-	return c.invoiceDocumentRepo
 }
 
 func (c *Container) CertificateRepo() domain.CertificateRepository {
@@ -527,6 +519,7 @@ func (c *Container) SiatUsecase() *usecase.SiatUsecase {
 			c.SiatLeyendaRepo(), c.SiatActividadDocSectorRepo(),
 			c.InvoiceRepo(), c.SiatProvider(),
 		)
+		c.siatUsecase.SetFileService(c.InvoiceFileService())
 	}
 	return c.siatUsecase
 }

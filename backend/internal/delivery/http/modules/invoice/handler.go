@@ -188,7 +188,28 @@ func (h *handler) getByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includes := parseIncludes(r.URL.Query().Get("include"))
+	if err := h.attachRequestedXML(r.Context(), inv, includes); err != nil {
+		deliveryHttp.RespondError(w, err)
+		return
+	}
 	deliveryHttp.WriteJSON(w, http.StatusOK, toInvoiceDTO(inv, includes))
+}
+
+func (h *handler) attachRequestedXML(ctx context.Context, inv *domain.Invoice, includes map[string]bool) error {
+	if inv == nil || !includes["xml"] || inv.Xml != nil || inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
+		return nil
+	}
+	if h.files == nil {
+		return domain.NewConflictError("el storage de documentos fiscales no está configurado")
+	}
+	data, file, err := h.files.ReadAll(ctx, inv.CompanyId, inv.ID, "xml")
+	if err != nil {
+		return err
+	}
+	xml := string(data)
+	inv.Xml = &xml
+	inv.XmlHash = &file.SHA256
+	return nil
 }
 
 // list expone GET /invoices: listado paginado por punto de venta con filtros
@@ -346,17 +367,6 @@ func (h *handler) downloadFile(w http.ResponseWriter, r *http.Request, kind stri
 		}
 		body, info, err := h.files.Open(r.Context(), companyID, id, kind)
 		if errors.Is(err, domain.ErrNotFound) {
-			// Historical XML remains in invoices.xml until a separate migration.
-			// Keep it readable only after checking the tenant from authenticated context.
-			if kind == "xml" && h.uc != nil {
-				inv, lookupErr := h.uc.GetByID(id)
-				if lookupErr == nil && inv != nil && inv.CompanyId == companyID && inv.Xml != nil && *inv.Xml != "" {
-					w.Header().Set("Content-Type", "application/xml")
-					w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "factura-" + id + ".xml"}))
-					_, _ = io.Copy(w, strings.NewReader(*inv.Xml))
-					return
-				}
-			}
 			if kind == "pdf" && h.uc != nil && h.pdfGenerator != nil {
 				inv, lookupErr := h.uc.GetByID(id)
 				if lookupErr == nil && inv != nil && inv.CompanyId == companyID && inv.Cuf != nil {
@@ -379,23 +389,7 @@ func (h *handler) downloadFile(w http.ResponseWriter, r *http.Request, kind stri
 		streamInvoiceObject(w, body, info, id, kind)
 		return
 	}
-	if kind == "pdf" {
-		http.NotFound(w, r)
-		return
-	}
-	inv, err := h.uc.GetByID(id)
-	if err != nil {
-		deliveryHttp.RespondError(w, err)
-		return
-	}
-	if inv.Xml == nil || strings.TrimSpace(*inv.Xml) == "" {
-		deliveryHttp.RespondError(w, domain.NewConflictError("la factura aún no tiene XML disponible"))
-		return
-	}
-	w.Header().Set("Content-Type", "application/xml")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"factura-"+id+".xml\"")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(*inv.Xml))
+	http.NotFound(w, r)
 }
 
 func streamInvoiceObject(w http.ResponseWriter, body io.ReadCloser, info domain.ObjectInfo, id, kind string) {

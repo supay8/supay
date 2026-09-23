@@ -167,6 +167,10 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 	if msgs, err := marshalMensajes(result.Mensajes); err == nil {
 		inv.SiatMensajes = &msgs
 	}
+	if err := uc.persistSignedXML(ctx, inv); err != nil {
+		slog.Error("signed XML object persistence failed; invoice remains SENDING for retry", "invoice_id", inv.ID, "error", err)
+		return nil, fmt.Errorf("signed XML persistence: %w", err)
+	}
 	transitionReason := domain.TransitionSIATRejected
 	if result.Transaccion {
 		// Según el catálogo mensajesServicios del SIAT, 904 = RECEPCION OBSERVADA
@@ -184,12 +188,6 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 
 	if err := uc.persistResultadoConReintentos(inv, result, transitionReason); err != nil {
 		return nil, err
-	}
-	if uc.fileService != nil && inv.Cuf != nil && inv.Xml != nil && *inv.Xml != "" {
-		if _, fileErr := uc.fileService.Save(ctx, inv.CompanyId, inv.ID, *inv.Cuf, "xml", strings.NewReader(*inv.Xml), int64(len(*inv.Xml))); fileErr != nil {
-			slog.Error("signed XML object persistence failed; reconcile", "invoice_id", inv.ID, "error", fileErr)
-			return nil, fmt.Errorf("signed XML persistence: %w", fileErr)
-		}
 	}
 	if !result.Transaccion {
 		return nil, &EmissionRejectedError{
@@ -282,9 +280,13 @@ func (uc *InvoiceUsecase) processOfflineContingency(
 	inv.ContingencyEventId = &event.ID
 	inv.EmissionType = "OFFLINE"
 	inv.Status = domain.InvoiceOffline
+	if err := uc.persistSignedXML(offlineCtx, inv); err != nil {
+		slog.Error("offline signed XML object persistence failed; invoice remains SENDING for retry", "invoice_id", inv.ID, "error", err)
+		return nil, fmt.Errorf("persistir XML offline firmado: %w", err)
+	}
 
 	fields := map[string]any{
-		"cuf": inv.Cuf, "xml": inv.Xml, "xml_hash": inv.XmlHash,
+		"cuf": inv.Cuf, "xml_hash": inv.XmlHash,
 		"archivo": inv.Archivo, "hash_archivo": inv.HashArchivo,
 		"cufd_id": inv.CufdId, "contingency_event_id": event.ID,
 		"emission_type": inv.EmissionType,
@@ -301,12 +303,6 @@ func (uc *InvoiceUsecase) processOfflineContingency(
 	}
 	if !claimed {
 		return nil, domain.NewConflictError("la factura cambió de estado mientras se activaba la contingencia")
-	}
-	if uc.fileService != nil && inv.Cuf != nil && inv.Xml != nil && *inv.Xml != "" {
-		if _, err := uc.fileService.Save(offlineCtx, inv.CompanyId, inv.ID, *inv.Cuf, "xml", strings.NewReader(*inv.Xml), int64(len(*inv.Xml))); err != nil {
-			slog.Error("offline signed XML persistence failed; reconcile", "invoice_id", inv.ID, "error", err)
-			return nil, err
-		}
 	}
 	if uc.pdfService != nil {
 		if strict, ok := uc.pdfService.(interface {
@@ -382,7 +378,7 @@ func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, res
 	var err error
 	for intento := 1; intento <= maxIntentos; intento++ {
 		fields := map[string]any{
-			"cuf": inv.Cuf, "xml": inv.Xml, "xml_hash": inv.XmlHash,
+			"cuf": inv.Cuf, "xml_hash": inv.XmlHash,
 			"archivo": inv.Archivo, "hash_archivo": inv.HashArchivo,
 			"siat_reception_code": inv.SiatReceptionCode, "siat_mensajes": inv.SiatMensajes,
 			"cufd_id": inv.CufdId,
@@ -412,6 +408,26 @@ func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, res
 		"codigo_estado", result.CodigoEstado,
 		"transaccion", result.Transaccion)
 	return fmt.Errorf("no se pudo persistir el resultado de la emisión tras %d intentos: %w", maxIntentos, err)
+}
+
+func (uc *InvoiceUsecase) persistSignedXML(ctx context.Context, inv *domain.Invoice) error {
+	if inv == nil || inv.Xml == nil || strings.TrimSpace(*inv.Xml) == "" {
+		return errors.New("el resultado fiscal no contiene XML firmado")
+	}
+	if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
+		return errors.New("el resultado fiscal no contiene CUF")
+	}
+	if uc.fileService == nil {
+		return errors.New("storage de documentos fiscales no configurado")
+	}
+	file, err := uc.fileService.Save(ctx, inv.CompanyId, inv.ID, *inv.Cuf, "xml", strings.NewReader(*inv.Xml), int64(len(*inv.Xml)))
+	if err != nil {
+		return err
+	}
+	// El hash canónico es el calculado sobre los bytes realmente persistidos,
+	// no un valor declarado por el adaptador fiscal.
+	inv.XmlHash = &file.SHA256
+	return nil
 }
 
 // VerifyStatus consulta al SIAT el estado real de un documento emitido

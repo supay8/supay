@@ -26,16 +26,24 @@ func NewInvoiceFileService(storage domain.Storage, repo domain.InvoiceFileReposi
 }
 
 func (s *InvoiceFileService) Save(ctx context.Context, companyID, invoiceID, cuf, kind string, reader io.Reader, size int64) (*domain.InvoiceFile, error) {
+	file, _, err := s.SaveWithStatus(ctx, companyID, invoiceID, cuf, kind, reader, size)
+	return file, err
+}
+
+// SaveWithStatus stores the immutable object before its metadata row and reports
+// whether this call created it. Callers that stage files before a larger
+// database transaction can compensate only objects created by that attempt.
+func (s *InvoiceFileService) SaveWithStatus(ctx context.Context, companyID, invoiceID, cuf, kind string, reader io.Reader, size int64) (*domain.InvoiceFile, bool, error) {
 	key, err := domain.InvoiceObjectKey(companyID, invoiceID, cuf, kind)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	belongs, err := s.repo.BelongsToCompany(ctx, companyID, invoiceID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !belongs {
-		return nil, domain.ErrNotFound
+		return nil, false, domain.ErrNotFound
 	}
 	contentType := "application/xml"
 	if kind == "pdf" {
@@ -44,17 +52,36 @@ func (s *InvoiceFileService) Save(ctx context.Context, companyID, invoiceID, cuf
 	hash := sha256.New()
 	info, err := s.storage.Put(ctx, key, io.TeeReader(reader, hash), domain.PutOptions{ContentType: contentType, Size: size})
 	if errors.Is(err, domain.ErrAlreadyExists) {
+		// Algunos backends detectan la colisión antes de consumir el reader
+		// (memoria) y otros después de consumirlo (local/R2). Completar desde la
+		// posición actual produce el hash correcto en ambos casos.
 		if _, hashErr := io.Copy(hash, reader); hashErr != nil {
-			return nil, hashErr
+			return nil, false, hashErr
+		}
+		digest := hex.EncodeToString(hash.Sum(nil))
+		stored, statErr := s.storage.Stat(ctx, key)
+		if statErr != nil {
+			return nil, false, fmt.Errorf("verify existing invoice object %s: %w", key, statErr)
+		}
+		if stored.SHA256 != digest || (size > 0 && stored.Size != size) {
+			return nil, false, fmt.Errorf("invoice object exists with different content; reconcile %s: %w", key, domain.ErrAlreadyExists)
 		}
 		existing, findErr := s.repo.FindFile(ctx, companyID, invoiceID, kind)
-		if findErr == nil && existing.StorageKey == key && existing.SHA256 == hex.EncodeToString(hash.Sum(nil)) {
-			return existing, nil
+		if findErr == nil && existing.StorageKey == key && existing.SHA256 == digest {
+			return existing, false, nil
 		}
-		return nil, fmt.Errorf("invoice object exists without matching metadata; reconcile %s: %w", key, domain.ErrAlreadyExists)
+		if errors.Is(findErr, domain.ErrNotFound) {
+			file := &domain.InvoiceFile{CompanyID: companyID, InvoiceID: invoiceID, Kind: kind, StorageKey: key, SHA256: digest, Size: stored.Size, ContentType: contentType, CreatedAt: stored.CreatedAt}
+			if createErr := s.repo.CreateFile(ctx, file); createErr == nil {
+				// El objeto ya existía; no debe eliminarse si una operación superior
+				// necesita compensar su propio trabajo.
+				return file, false, nil
+			}
+		}
+		return nil, false, fmt.Errorf("invoice object exists without matching metadata; reconcile %s: %w", key, domain.ErrAlreadyExists)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	file := &domain.InvoiceFile{CompanyID: companyID, InvoiceID: invoiceID, Kind: kind, StorageKey: key, SHA256: info.SHA256, Size: info.Size, ContentType: contentType, CreatedAt: info.CreatedAt}
 	if err := s.repo.CreateFile(ctx, file); err != nil {
@@ -65,9 +92,38 @@ func (s *InvoiceFileService) Save(ctx context.Context, companyID, invoiceID, cuf
 		} else {
 			slog.Error("invoice file metadata failed; object deleted", "key", key, "invoice_id", invoiceID, "error", err)
 		}
-		return nil, fmt.Errorf("invoice file metadata: %w", err)
+		return nil, false, fmt.Errorf("invoice file metadata: %w", err)
 	}
-	return file, nil
+	return file, true, nil
+}
+
+// RemoveCreated compensates a staged object that could not be committed by its
+// enclosing operation. The storage key match prevents deleting a newer file.
+func (s *InvoiceFileService) RemoveCreated(ctx context.Context, file *domain.InvoiceFile) error {
+	if file == nil {
+		return nil
+	}
+	if err := s.repo.DeleteFile(ctx, file.CompanyID, file.InvoiceID, file.Kind, file.StorageKey); err != nil {
+		return err
+	}
+	return s.storage.Delete(ctx, file.StorageKey)
+}
+
+func (s *InvoiceFileService) ReadAll(ctx context.Context, companyID, invoiceID, kind string) ([]byte, *domain.InvoiceFile, error) {
+	file, err := s.file(ctx, companyID, invoiceID, kind)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, _, err := s.storage.Get(ctx, file.StorageKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, file, nil
 }
 
 func (s *InvoiceFileService) Open(ctx context.Context, companyID, invoiceID, kind string) (io.ReadCloser, domain.ObjectInfo, error) {

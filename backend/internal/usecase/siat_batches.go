@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,7 +117,7 @@ func (uc *SiatUsecase) selectBatchInvoices(repo domain.FiscalBatchRepository, co
 	return invoices, nil
 }
 
-func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domain.PointOfSale, current *domain.Cufd, invoices []*domain.Invoice, event *domain.ContingencyEvent, kind domain.SentPackageType) ([]invoiceBatch, error) {
+func (uc *SiatUsecase) prepareInvoiceBatches(ctx context.Context, company *domain.Company, pos *domain.PointOfSale, current *domain.Cufd, invoices []*domain.Invoice, event *domain.ContingencyEvent, kind domain.SentPackageType) ([]invoiceBatch, error) {
 	if current == nil || current.ID == "" || current.PointOfSaleID != pos.ID || pos.Cuis == nil || *pos.Cuis == "" {
 		return nil, domain.NewConflictError("No se pudieron resolver las credenciales del punto de venta")
 	}
@@ -132,10 +133,22 @@ func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domai
 	batches := make([]invoiceBatch, 0)
 	for _, inv := range invoices {
 		credential := current
+		var persistedXML string
 		if kind == domain.PackageTypePaquete {
 			credential = &inv.CufdRecord
-			if inv.Xml == nil || strings.TrimSpace(*inv.Xml) == "" || inv.Cuf == nil || *inv.Cuf == "" {
+			if inv.Cuf == nil || strings.TrimSpace(*inv.Cuf) == "" {
 				return nil, domain.NewConflictError("La factura offline " + inv.ID + " no conserva su XML y CUF originales")
+			}
+			if uc.fileService == nil {
+				return nil, domain.NewConflictError("El storage de documentos fiscales no está configurado")
+			}
+			data, file, err := uc.fileService.ReadAll(ctx, inv.CompanyId, inv.ID, "xml")
+			if err != nil {
+				return nil, domain.NewConflictError("La factura offline " + inv.ID + " no conserva su XML firmado en storage")
+			}
+			persistedXML = string(data)
+			if strings.TrimSpace(persistedXML) == "" || (inv.XmlHash != nil && *inv.XmlHash != "" && *inv.XmlHash != file.SHA256) {
+				return nil, domain.NewConflictError("El XML firmado de la factura offline " + inv.ID + " no coincide con su metadata")
 			}
 			if credential.ID == "" || credential.ID != inv.CufdId || credential.PointOfSaleID != pos.ID {
 				return nil, domain.NewConflictError("No se pudo resolver el CUFD histórico de la factura " + inv.ID)
@@ -161,7 +174,7 @@ func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domai
 				CodigoAmbiente: company.Ambiente.CodigoAmbiente(), CodigoSistema: "",
 				Nit: company.Nit, Modalidad: inv.Modalidad, NumeroFactura: int64(inv.InvoiceNumber),
 				CodigoSucursal: pos.CodigoSucursal, CodigoDocumentoSector: inv.CodigoDocumentoSector,
-				FechaEmision: inv.IssueDate, XML: *inv.Xml, Cuf: *inv.Cuf,
+				FechaEmision: inv.IssueDate, XML: persistedXML, Cuf: *inv.Cuf,
 			}
 		} else {
 			doc, err = uc.solicitudDesdeInvoice(inv, company, pos, credential)
@@ -183,7 +196,7 @@ func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domai
 		doc.Cufd, doc.CodigoControl, doc.Cuis = credential.Cufd, credential.ControlCode, *pos.Cuis
 		doc.CodigoPuntoVenta = resolveCodigoPuntoVenta(pos)
 		if kind == domain.PackageTypePaquete {
-			doc.XML, doc.Cuf = *inv.Xml, *inv.Cuf
+			doc.XML, doc.Cuf = persistedXML, *inv.Cuf
 		}
 		key := groupKey{doc.CodigoDocumentoSector, doc.CodigoTipoFactura, doc.Modalidad, doc.Layout, credential.ID}
 		idx, exists := groups[key]
@@ -207,6 +220,49 @@ func (uc *SiatUsecase) prepareInvoiceBatches(company *domain.Company, pos *domai
 		batches[idx].pkg.CantidadFacturas++
 	}
 	return batches, nil
+}
+
+func (uc *SiatUsecase) persistBatchDocuments(ctx context.Context, batch invoiceBatch) ([]*domain.InvoiceFile, error) {
+	if uc.fileService == nil {
+		return nil, domain.NewConflictError("El storage de documentos fiscales no está configurado")
+	}
+	created := make([]*domain.InvoiceFile, 0, len(batch.pkg.Documents))
+	for i, document := range batch.pkg.Documents {
+		file, wasCreated, err := uc.fileService.SaveWithStatus(
+			ctx, batch.pkg.CompanyId, batch.pkg.InvoiceIDs[i], document.Cuf, "xml",
+			strings.NewReader(document.Xml), int64(len(document.Xml)),
+		)
+		if err != nil {
+			uc.cleanupBatchDocuments(created)
+			return nil, fmt.Errorf("persistir XML firmado de factura %s: %w", batch.pkg.InvoiceIDs[i], err)
+		}
+		if file.SHA256 != document.XmlHash {
+			if wasCreated {
+				uc.cleanupBatchDocuments([]*domain.InvoiceFile{file})
+			}
+			uc.cleanupBatchDocuments(created)
+			return nil, fmt.Errorf("hash del XML persistido de factura %s inconsistente", batch.pkg.InvoiceIDs[i])
+		}
+		if wasCreated {
+			created = append(created, file)
+		}
+	}
+	return created, nil
+}
+
+func (uc *SiatUsecase) cleanupBatchDocuments(files []*domain.InvoiceFile) {
+	if uc.fileService == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, file := range files {
+		if err := uc.fileService.RemoveCreated(cleanupCtx, file); err != nil {
+			// La metadata conserva suficiente información para una conciliación;
+			// nunca ocultar un fallo de compensación de un documento fiscal.
+			slog.Error("no se pudo compensar XML preparado", "storage_key", file.StorageKey, "error", err)
+		}
+	}
 }
 
 func fiscalBatchRequest(pkg *domain.SentPackage, company *domain.Company, pos *domain.PointOfSale) ports.FiscalBulk {
@@ -320,7 +376,7 @@ func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID 
 	if err != nil {
 		return nil, err
 	}
-	batches, err := uc.prepareInvoiceBatches(company, pos, current, invoices, event, kind)
+	batches, err := uc.prepareInvoiceBatches(ctx, company, pos, current, invoices, event, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +396,15 @@ func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID 
 			out.Response.Transaccion = false
 			continue
 		}
+		createdFiles, err := uc.persistBatchDocuments(ctx, batch)
+		if err != nil {
+			item.Error = err.Error()
+			out.Batches = append(out.Batches, item)
+			out.Response.Transaccion = false
+			continue
+		}
 		if err := repo.ReserveBatch(pkg, pkg.InvoiceIDs, status); err != nil {
+			uc.cleanupBatchDocuments(createdFiles)
 			item.Error = err.Error()
 			out.Batches = append(out.Batches, item)
 			out.Response.Transaccion = false

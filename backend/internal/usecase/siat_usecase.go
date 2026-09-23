@@ -37,12 +37,15 @@ type SiatUsecase struct {
 	leyendaRepo     domain.SiatLeyendaRepository
 	docSectorRepo   domain.SiatActividadDocSectorRepository
 	invoiceRepo     domain.InvoiceRepository
+	fileService     *InvoiceFileService
 
 	siatService  ports.FiscalService
 	siatProvider siat.SiatClientProvider
 	credentials  *CredentialService
 	modalidad    int
 }
+
+func (uc *SiatUsecase) SetFileService(files *InvoiceFileService) { uc.fileService = files }
 
 func NewSiatUsecase(
 	companyRepo domain.CompanyRepository,

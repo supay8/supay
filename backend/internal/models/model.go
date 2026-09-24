@@ -70,20 +70,21 @@ const (
 // --- Modelos de Base de Datos ---
 
 type Company struct {
-	ID              string          `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Nit             string          `gorm:"type:varchar(20);uniqueIndex;not null"`
-	BusinessName    string          `gorm:"type:varchar(150);not null"`
-	Ambiente        SiatEnvironment `gorm:"-"`
-	Modalidad       int             `gorm:"-"`
-	Municipio       string          `gorm:"type:varchar(100);not null;default:''"`
-	Direccion       string          `gorm:"type:text;not null;default:''"`
-	Telefono        string          `gorm:"type:varchar(50);not null;default:''"`
-	CodigoActividad *string         `gorm:"type:varchar(20)"`
-	PiePagina       string          `gorm:"type:text;not null;default:''"`
-	UsuarioSiat     string          `gorm:"type:varchar(50);not null;default:'SUPAY'"`
-	IsActive        bool            `gorm:"column:is_active;not null;default:true"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                 string          `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	AuthOrganizationID *string         `gorm:"column:auth_organization_id;type:uuid;uniqueIndex"`
+	Nit                string          `gorm:"type:varchar(20);uniqueIndex;not null"`
+	BusinessName       string          `gorm:"type:varchar(150);not null"`
+	Ambiente           SiatEnvironment `gorm:"-"`
+	Modalidad          int             `gorm:"-"`
+	Municipio          string          `gorm:"type:varchar(100);not null;default:''"`
+	Direccion          string          `gorm:"type:text;not null;default:''"`
+	Telefono           string          `gorm:"type:varchar(50);not null;default:''"`
+	CodigoActividad    *string         `gorm:"type:varchar(20)"`
+	PiePagina          string          `gorm:"type:text;not null;default:''"`
+	UsuarioSiat        string          `gorm:"type:varchar(50);not null;default:'SUPAY'"`
+	IsActive           bool            `gorm:"column:is_active;not null;default:true"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 
 	PointsOfSale []PointOfSale `gorm:"foreignKey:CompanyId"`
 	Customers    []Customer    `gorm:"foreignKey:CompanyId"`

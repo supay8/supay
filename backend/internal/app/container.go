@@ -45,6 +45,7 @@ type Container struct {
 	companyRepo                domain.CompanyRepository
 	apiKeyRepo                 *postgres.PostgresApiKeyRepository
 	authRepo                   *postgres.PostgresAuthRepository
+	betterAuthMembershipRepo   *postgres.BetterAuthMembershipRepository
 	pointOfSaleRepo            domain.PointOfSaleRepository
 	cufdRepo                   domain.CufdRepository
 	contingencyRepo            domain.ContingencyEventRepository
@@ -75,6 +76,7 @@ type Container struct {
 	pdfService         *pdf.Service
 	notifier           ports.Notifier
 	jwtManager         *authn.JWTManager
+	betterAuthVerifier *authn.BetterAuthVerifier
 
 	// Usecases
 	companyUsecase     *usecase.CompanyUsecase
@@ -128,6 +130,33 @@ func (c *Container) JWTManager() *authn.JWTManager {
 		c.jwtManager = authn.NewJWTManager(c.cfg.JWTSecret, c.cfg.JWTIssuer, c.cfg.JWTAccessTTL)
 	}
 	return c.jwtManager
+}
+
+func (c *Container) AccessTokenVerifier() deliveryHttp.AccessTokenVerifier {
+	if c.cfg.DeploymentMode != "cloud" {
+		return c.JWTManager()
+	}
+	if c.betterAuthVerifier == nil {
+		cfg := c.cfg.BetterAuth
+		c.betterAuthVerifier = authn.NewBetterAuthVerifier(
+			cfg.JWKSURL,
+			cfg.Issuer,
+			cfg.Audience,
+			cfg.JWKSCacheTTL,
+			cfg.HTTPTimeout,
+		)
+	}
+	return c.betterAuthVerifier
+}
+
+func (c *Container) CompanyMemberships() deliveryHttp.CompanyMembershipLookup {
+	if c.cfg.DeploymentMode != "cloud" {
+		return c.AuthRepo()
+	}
+	if c.betterAuthMembershipRepo == nil {
+		c.betterAuthMembershipRepo = postgres.NewBetterAuthMembershipRepository(c.db)
+	}
+	return c.betterAuthMembershipRepo
 }
 
 func (c *Container) PointOfSaleRepo() domain.PointOfSaleRepository {
@@ -561,12 +590,15 @@ func (c *Container) Router() http.Handler {
 	if c.router == nil {
 		deliveryHttp.SetVerifyAPIKey(postgres.VerifyKey)
 		companyCreateHandler := c.companyCreateHandler()
-		c.router = deliveryHttp.NewRouter(c.cfg, c.Modules(), c.ApiKeyRepo(), companyCreateHandler, deliveryHttp.AuthOptions{
-			Routes:         authModule.NewModule(c.AuthUsecase()),
-			Tokens:         c.JWTManager(),
-			Memberships:    c.AuthRepo(),
+		authOptions := deliveryHttp.AuthOptions{
+			Tokens:         c.AccessTokenVerifier(),
+			Memberships:    c.CompanyMemberships(),
 			SignedDownload: c.signedDownloadHandler(),
-		})
+		}
+		if c.cfg.DeploymentMode != "cloud" {
+			authOptions.Routes = authModule.NewModule(c.AuthUsecase())
+		}
+		c.router = deliveryHttp.NewRouter(c.cfg, c.Modules(), c.ApiKeyRepo(), companyCreateHandler, authOptions)
 	}
 	return c.router
 }

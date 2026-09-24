@@ -38,15 +38,16 @@ func createCompany(db *gorm.DB, c *domain.Company) error {
 		modalidad = 1
 	}
 	tenant := models.Company{
-		ID:              uuid.NewString(),
-		Nit:             c.Nit,
-		BusinessName:    c.BusinessName,
-		Municipio:       c.Municipio,
-		Direccion:       c.Direccion,
-		Telefono:        c.Telefono,
-		CodigoActividad: c.CodigoActividad,
-		PiePagina:       c.PiePagina,
-		UsuarioSiat:     c.UsuarioSiat,
+		ID:                 uuid.NewString(),
+		AuthOrganizationID: optionalString(c.AuthOrganizationID),
+		Nit:                c.Nit,
+		BusinessName:       c.BusinessName,
+		Municipio:          c.Municipio,
+		Direccion:          c.Direccion,
+		Telefono:           c.Telefono,
+		CodigoActividad:    c.CodigoActividad,
+		PiePagina:          c.PiePagina,
+		UsuarioSiat:        c.UsuarioSiat,
 	}
 	settings, err := tenantSettingsWithCertificateWebhook(nil, c.CertificateWebhookURL)
 	if err != nil {
@@ -109,6 +110,7 @@ func toDomainCompany(dbModel *models.Company) *domain.Company {
 	}
 	return &domain.Company{
 		ID:                     dbModel.ID,
+		AuthOrganizationID:     stringValue(dbModel.AuthOrganizationID),
 		Nit:                    dbModel.Nit,
 		BusinessName:           dbModel.BusinessName,
 		Ambiente:               domain.SiatEnvironment(ambiente),
@@ -124,6 +126,13 @@ func toDomainCompany(dbModel *models.Company) *domain.Company {
 		CreatedAt:              dbModel.CreatedAt,
 		UpdatedAt:              dbModel.UpdatedAt,
 	}
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func (r *PostgresCompanyRepository) Update(c *domain.Company) error {

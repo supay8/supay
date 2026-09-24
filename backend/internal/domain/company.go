@@ -30,6 +30,7 @@ var ErrCompanyHasDependencies = errors.New("no se puede eliminar: la empresa tie
 
 type Company struct {
 	ID                    string          `json:"id"`
+	AuthOrganizationID    string          `json:"auth_organization_id,omitempty"`
 	Nit                   string          `json:"nit"`
 	BusinessName          string          `json:"business_name"`
 	Ambiente              SiatEnvironment `json:"ambiente"`

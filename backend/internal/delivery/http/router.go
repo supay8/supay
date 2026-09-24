@@ -102,14 +102,18 @@ func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup,
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(LimitBody(maxBodyBytes))
-	corsMiddleware := cors.New(cors.Options{
-		AllowedOrigins: []string{
+	allowedOrigins := cfg.CORSAllowedOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{
 			"http://localhost:3000",
 			"http://127.0.0.1:3000",
-			"http://0.0.0.0:3000", // <-- Añade este origen exacto
+			"http://0.0.0.0:3000",
 			"http://localhost:5173",
 			"http://127.0.0.1:5173",
-		},
+		}
+	}
+	corsMiddleware := cors.New(cors.Options{
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With", "X-API-Key", "X-Backend-Token", "X-Company-ID"},
 		AllowCredentials: true,

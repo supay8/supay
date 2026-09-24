@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -12,7 +14,8 @@ import (
 )
 
 type Config struct {
-	Port string
+	Port               string
+	CORSAllowedOrigins []string
 	// SIAT y SiatModalidad se mantienen por compatibilidad pero están
 	// desacoplados: ya no se valida NIT/Token/Cert al iniciar. El
 	// SiatClientProvider resuelve credenciales por CompanyId.
@@ -35,6 +38,9 @@ type Config struct {
 	JWTSecret    string
 	JWTIssuer    string
 	JWTAccessTTL time.Duration
+	// BetterAuth configura la validación de los access tokens emitidos por el
+	// plugin JWT/JWKS de Better Auth. Solo se usa en DEPLOYMENT_MODE=cloud.
+	BetterAuth BetterAuthConfig
 	// EncryptionKey es la llave maestra AES-GCM para cifrar tokens y P12 por empresa.
 	EncryptionKey        string
 	DeploymentMode       string // selfhosted | cloud
@@ -48,6 +54,18 @@ type Config struct {
 	AllowCustomIssueDate bool // dev-only: permite POST /invoices con issue_date arbitrario
 	Maintenance          MaintenanceConfig
 	Queue                QueueConfig
+}
+
+// BetterAuthConfig es el contrato cloud entre Next.js/Better Auth y la API Go.
+// Go nunca necesita la llave privada: descarga y cachea únicamente el JWKS
+// público y valida issuer/audience antes de aceptar el subject como user ID.
+type BetterAuthConfig struct {
+	URL          string
+	JWKSURL      string
+	Issuer       string
+	Audience     string
+	JWKSCacheTTL time.Duration
+	HTTPTimeout  time.Duration
 }
 
 // SiatInfraConfig retiene solo infra compartida, sin credenciales por empresa.
@@ -151,6 +169,19 @@ func Load() Config {
 	}
 
 	deploymentMode := parseDeploymentMode(os.Getenv("DEPLOYMENT_MODE"), os.Getenv("SELF_HOSTED"))
+	betterAuthURL := strings.TrimRight(strings.TrimSpace(os.Getenv("BETTER_AUTH_URL")), "/")
+	betterAuthJWKSURL := strings.TrimSpace(os.Getenv("BETTER_AUTH_JWKS_URL"))
+	if betterAuthJWKSURL == "" && betterAuthURL != "" {
+		betterAuthJWKSURL = betterAuthURL + "/api/auth/jwks"
+	}
+	betterAuthIssuer := strings.TrimSpace(os.Getenv("BETTER_AUTH_ISSUER"))
+	if betterAuthIssuer == "" {
+		betterAuthIssuer = betterAuthURL
+	}
+	betterAuthAudience := strings.TrimSpace(os.Getenv("BETTER_AUTH_AUDIENCE"))
+	if betterAuthAudience == "" {
+		betterAuthAudience = betterAuthURL
+	}
 	rawStorageDriver := strings.TrimSpace(os.Getenv("STORAGE_DRIVER"))
 	storageDriver := "local"
 	if rawStorageDriver != "" {
@@ -218,15 +249,30 @@ func Load() Config {
 	}
 
 	return Config{
-		Port:                 getEnv("PORT", "8081"),
-		SIAT:                 siatConfig,
-		SiatModalidad:        modalidad,
-		SiatSandbox:          parseBoolEnv("SIAT_SANDBOX", false),
-		SiatInfra:            siatInfra,
-		APIKey:               strings.TrimSpace(os.Getenv("API_KEY")),
-		JWTSecret:            strings.TrimSpace(os.Getenv("JWT_SECRET")),
-		JWTIssuer:            getEnv("JWT_ISSUER", "supay-selfhosted"),
-		JWTAccessTTL:         parseDuration(getEnv("JWT_ACCESS_TTL", "24h"), 24*time.Hour),
+		Port: getEnv("PORT", "8081"),
+		CORSAllowedOrigins: parseCSVEnv("CORS_ALLOWED_ORIGINS", []string{
+			"http://localhost:3000",
+			"http://127.0.0.1:3000",
+			"http://0.0.0.0:3000",
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+		}),
+		SIAT:          siatConfig,
+		SiatModalidad: modalidad,
+		SiatSandbox:   parseBoolEnv("SIAT_SANDBOX", false),
+		SiatInfra:     siatInfra,
+		APIKey:        strings.TrimSpace(os.Getenv("API_KEY")),
+		JWTSecret:     strings.TrimSpace(os.Getenv("JWT_SECRET")),
+		JWTIssuer:     getEnv("JWT_ISSUER", "supay-selfhosted"),
+		JWTAccessTTL:  parseDuration(getEnv("JWT_ACCESS_TTL", "24h"), 24*time.Hour),
+		BetterAuth: BetterAuthConfig{
+			URL:          betterAuthURL,
+			JWKSURL:      betterAuthJWKSURL,
+			Issuer:       betterAuthIssuer,
+			Audience:     betterAuthAudience,
+			JWKSCacheTTL: parseDuration(getEnv("BETTER_AUTH_JWKS_CACHE_TTL", "1h"), time.Hour),
+			HTTPTimeout:  parseDuration(getEnv("BETTER_AUTH_HTTP_TIMEOUT", "5s"), 5*time.Second),
+		},
 		EncryptionKey:        encryptionKey,
 		DeploymentMode:       deploymentMode,
 		StorageDriver:        storageDriver,
@@ -266,10 +312,50 @@ func (c Config) ValidateStorage() error {
 }
 
 func (c Config) ValidateAuth() error {
-	if len(c.JWTSecret) < 32 {
-		return fmt.Errorf("JWT_SECRET es obligatorio y debe tener al menos 32 caracteres")
+	if c.DeploymentMode != "cloud" {
+		if len(c.JWTSecret) < 32 {
+			return fmt.Errorf("JWT_SECRET es obligatorio y debe tener al menos 32 caracteres")
+		}
+		return nil
+	}
+
+	if err := validateBetterAuthURL(c.BetterAuth.JWKSURL); err != nil {
+		return fmt.Errorf("BETTER_AUTH_JWKS_URL inválida: %w", err)
+	}
+	if strings.TrimSpace(c.BetterAuth.Issuer) == "" {
+		return fmt.Errorf("BETTER_AUTH_ISSUER es obligatorio en modo cloud")
+	}
+	if strings.TrimSpace(c.BetterAuth.Audience) == "" {
+		return fmt.Errorf("BETTER_AUTH_AUDIENCE es obligatorio en modo cloud")
+	}
+	if c.BetterAuth.JWKSCacheTTL <= 0 {
+		return fmt.Errorf("BETTER_AUTH_JWKS_CACHE_TTL debe ser mayor a cero")
+	}
+	if c.BetterAuth.HTTPTimeout <= 0 || c.BetterAuth.HTTPTimeout > 30*time.Second {
+		return fmt.Errorf("BETTER_AUTH_HTTP_TIMEOUT debe estar entre 1ns y 30s")
 	}
 	return nil
+}
+
+func validateBetterAuthURL(raw string) error {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("debe ser una URL HTTP(S) absoluta sin credenciales")
+	}
+	if parsed.Scheme == "https" {
+		return nil
+	}
+	if parsed.Scheme != "http" {
+		return fmt.Errorf("el esquema debe ser https")
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("http solo está permitido para localhost")
 }
 
 func parseDeploymentMode(raw, legacySelfHosted string) string {
@@ -356,4 +442,28 @@ func parseBoolEnv(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+func parseCSVEnv(key string, fallback []string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return append([]string(nil), fallback...)
+	}
+	values := make([]string, 0)
+	seen := make(map[string]struct{})
+	for value := range strings.SplitSeq(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	if len(values) == 0 {
+		return append([]string(nil), fallback...)
+	}
+	return values
 }

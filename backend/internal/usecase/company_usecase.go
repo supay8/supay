@@ -7,6 +7,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -21,11 +22,12 @@ func NewCompanyUsecase(repo domain.CompanyRepository, cryptoSvc *crypto.Service,
 }
 
 type RegisterCompanyRequest struct {
-	Nit          string                 `json:"nit"`
-	BusinessName string                 `json:"business_name"`
-	Ambiente     domain.SiatEnvironment `json:"ambiente"`
-	Modalidad    int                    `json:"modalidad,omitempty"`
-	UsuarioSiat  string                 `json:"usuario_siat,omitempty"`
+	Nit                string                 `json:"nit"`
+	BusinessName       string                 `json:"business_name"`
+	AuthOrganizationID string                 `json:"auth_organization_id,omitempty"`
+	Ambiente           domain.SiatEnvironment `json:"ambiente"`
+	Modalidad          int                    `json:"modalidad,omitempty"`
+	UsuarioSiat        string                 `json:"usuario_siat,omitempty"`
 	// Datos del emisor que viajan en la cabecera de la factura. Municipio y
 	// dirección deben coincidir con el padrón del SIAT.
 	Municipio             string  `json:"municipio,omitempty"`
@@ -87,6 +89,7 @@ func (uc *CompanyUsecase) prepareRegistration(req RegisterCompanyRequest) (*doma
 	company := &domain.Company{
 		Nit:                   req.Nit,
 		BusinessName:          req.BusinessName,
+		AuthOrganizationID:    strings.TrimSpace(req.AuthOrganizationID),
 		Ambiente:              req.Ambiente,
 		Modalidad:             req.Modalidad,
 		UsuarioSiat:           req.UsuarioSiat,
@@ -106,6 +109,11 @@ func (uc *CompanyUsecase) prepareRegistration(req RegisterCompanyRequest) (*doma
 	}
 	if company.Modalidad == 0 {
 		company.Modalidad = 1
+	}
+	if company.AuthOrganizationID != "" {
+		if err := uuid.Validate(company.AuthOrganizationID); err != nil {
+			return nil, domain.NewBadRequestError("auth_organization_id debe ser un UUID válido")
+		}
 	}
 
 	if !validEnvironment(company.Ambiente) {

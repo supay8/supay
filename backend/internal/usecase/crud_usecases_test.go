@@ -164,13 +164,14 @@ func (r *phase12POSRepo) Delete(string) error                                { r
 func TestCompanyUsecaseLifecycleAndValidation(t *testing.T) {
 	repo := &phase12CompanyRepo{items: map[string]*domain.Company{}}
 	uc := NewCompanyUsecase(repo, nil, nil)
-	for _, request := range []RegisterCompanyRequest{{}, {Nit: "1"}, {Nit: "1", BusinessName: "ACME", Ambiente: "INVALID"}, {Nit: "1", BusinessName: "ACME", Modalidad: 3}, {Nit: "1", BusinessName: "ACME", CertificateWebhookURL: "ftp://bad"}} {
+	for _, request := range []RegisterCompanyRequest{{}, {Nit: "1"}, {Nit: "1", BusinessName: "ACME", Ambiente: "INVALID"}, {Nit: "1", BusinessName: "ACME", Modalidad: 3}, {Nit: "1", BusinessName: "ACME", CertificateWebhookURL: "ftp://bad"}, {Nit: "1", BusinessName: "ACME", AuthOrganizationID: "not-a-uuid"}} {
 		if _, err := uc.Register(request); err == nil {
 			t.Fatalf("se esperaba error para %+v", request)
 		}
 	}
-	company, err := uc.Register(RegisterCompanyRequest{Nit: "123", BusinessName: " ACME ", CertificateWebhookURL: " https://example.com/hook "})
-	if err != nil || company.Ambiente != domain.EnvironmentPiloto || company.UsuarioSiat != "SUPAY" {
+	organizationID := "22222222-2222-4222-8222-222222222222"
+	company, err := uc.Register(RegisterCompanyRequest{Nit: "123", BusinessName: " ACME ", AuthOrganizationID: organizationID, CertificateWebhookURL: " https://example.com/hook "})
+	if err != nil || company.Ambiente != domain.EnvironmentPiloto || company.UsuarioSiat != "SUPAY" || company.AuthOrganizationID != organizationID {
 		t.Fatalf("Register=%+v err=%v", company, err)
 	}
 	if _, err = uc.Register(RegisterCompanyRequest{Nit: "123", BusinessName: "duplicada"}); err == nil {

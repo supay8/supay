@@ -9,6 +9,7 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/repository/postgres"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -173,6 +174,7 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 	company := &domain.Company{
 		Nit:                   req.Nit,
 		BusinessName:          req.BusinessName,
+		AuthOrganizationID:    strings.TrimSpace(req.AuthOrganizationID),
 		Ambiente:              req.Ambiente,
 		Modalidad:             req.Modalidad,
 		UsuarioSiat:           req.UsuarioSiat,
@@ -192,6 +194,11 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 	}
 	if company.Modalidad == 0 {
 		company.Modalidad = 1
+	}
+	if company.AuthOrganizationID != "" {
+		if err := uuid.Validate(company.AuthOrganizationID); err != nil {
+			return BootstrapCompanyResponse{}, domain.NewBadRequestError("auth_organization_id debe ser un UUID válido")
+		}
 	}
 
 	if company.Ambiente != domain.EnvironmentPiloto && company.Ambiente != domain.EnvironmentProduccion {

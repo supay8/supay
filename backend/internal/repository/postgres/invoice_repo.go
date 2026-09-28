@@ -3,6 +3,7 @@ package postgres
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
@@ -60,15 +61,20 @@ func (r *PostgresInvoiceRepository) Create(inv *domain.Invoice) error {
 // ListFiltered devuelve facturas paginadas según el filtro, omitiendo el
 // archivo fiscal pesado y precargando ítems. El XML vive en object storage.
 func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
-	query := r.db.Model(&models.Invoice{}).Where("point_of_sale_id = ?", filter.PointOfSaleID)
+	if strings.TrimSpace(filter.TenantID) == "" {
+		return nil, 0, domain.ErrMissingCompanyID
+	}
+	query := r.db.Model(&models.Invoice{}).
+		Joins("JOIN points_of_sale AS invoice_pos ON invoice_pos.id = invoices.point_of_sale_id AND invoice_pos.tenant_id = invoices.tenant_id").
+		Where("invoices.tenant_id = ? AND invoices.point_of_sale_id = ? AND invoice_pos.tenant_id = ?", filter.TenantID, filter.PointOfSaleID, filter.TenantID)
 	if filter.Status != nil {
-		query = query.Where("status = ?", string(*filter.Status))
+		query = query.Where("invoices.status = ?", string(*filter.Status))
 	}
 	if filter.From != nil {
-		query = query.Where("issue_date >= ?", *filter.From)
+		query = query.Where("invoices.issue_date >= ?", *filter.From)
 	}
 	if filter.To != nil {
-		query = query.Where("issue_date <= ?", *filter.To)
+		query = query.Where("invoices.issue_date <= ?", *filter.To)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -78,7 +84,7 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 	if err := query.
 		Omit("archivo").
 		Preload("Items").
-		Order("invoice_number DESC").
+		Order("invoices.invoice_number DESC").
 		Limit(filter.Limit).Offset(filter.Offset).
 		Find(&ms).Error; err != nil {
 		return nil, 0, err
@@ -98,10 +104,13 @@ func (r *PostgresInvoiceRepository) GetByID(id string) (*domain.Invoice, error) 
 	return toDomainInvoice(&m), nil
 }
 
-func (r *PostgresInvoiceRepository) ListByPointOfSale(pointOfSaleID string) ([]*domain.Invoice, error) {
+func (r *PostgresInvoiceRepository) ListByPointOfSale(tenantID, pointOfSaleID string) ([]*domain.Invoice, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, domain.ErrMissingCompanyID
+	}
 	var ms []models.Invoice
 	if err := r.db.Preload("Items").
-		Where("point_of_sale_id = ?", pointOfSaleID).
+		Where("tenant_id = ? AND point_of_sale_id = ?", tenantID, pointOfSaleID).
 		Order("invoice_number ASC").Find(&ms).Error; err != nil {
 		return nil, err
 	}

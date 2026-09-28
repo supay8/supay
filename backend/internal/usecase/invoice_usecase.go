@@ -349,8 +349,14 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		}
 		return nil, err
 	}
+	if tenantID, ok := siat.CompanyIDFromContext(ctx); ok && pos.CompanyId != tenantID {
+		return nil, domain.NewNotFoundError("punto de venta no encontrado")
+	}
 	if req.CompanyId == "" {
 		req.CompanyId = pos.CompanyId
+	}
+	if tenantID, ok := siat.CompanyIDFromContext(ctx); ok && req.CompanyId != tenantID {
+		return nil, domain.NewNotFoundError("punto de venta no encontrado")
 	}
 	if pos.CompanyId != req.CompanyId {
 		return nil, domain.NewBadRequestError("el punto de venta no pertenece a la empresa")
@@ -755,8 +761,11 @@ func sameCustomerSnapshot(a, b domain.Customer) bool {
 		strings.TrimSpace(a.Name) == strings.TrimSpace(b.Name)
 }
 
-func (uc *InvoiceUsecase) ListByPointOfSale(pointOfSaleID string) ([]*domain.Invoice, error) {
-	return uc.invoiceRepo.ListByPointOfSale(pointOfSaleID)
+func (uc *InvoiceUsecase) ListByPointOfSale(tenantID, pointOfSaleID string) ([]*domain.Invoice, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, domain.ErrMissingCompanyID
+	}
+	return uc.invoiceRepo.ListByPointOfSale(tenantID, pointOfSaleID)
 }
 
 // Limites de paginación del listado de facturas.
@@ -768,6 +777,9 @@ const (
 // ListInvoices devuelve el listado paginado de facturas de un punto de venta
 // (sin xml/archivo), con filtro opcional por estado y rango de emisión.
 func (uc *InvoiceUsecase) ListInvoices(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
+	if strings.TrimSpace(filter.TenantID) == "" {
+		return nil, 0, domain.ErrMissingCompanyID
+	}
 	if strings.TrimSpace(filter.PointOfSaleID) == "" {
 		return nil, 0, domain.NewBadRequestError("point_of_sale_id es obligatorio")
 	}

@@ -104,6 +104,7 @@ type Invoice struct {
 // rango de fecha de emisión, con paginación. El listado nunca devuelve los
 // campos pesados (xml/archivo).
 type InvoiceListFilter struct {
+	TenantID      string
 	PointOfSaleID string
 	Status        *InvoiceStatus
 	From          *time.Time
@@ -118,7 +119,7 @@ type InvoiceRepository interface {
 	Create(inv *Invoice) error
 	GetByID(id string) (*Invoice, error)
 	GetByIDs(ids []string) ([]*Invoice, error)
-	ListByPointOfSale(pointOfSaleID string) ([]*Invoice, error)
+	ListByPointOfSale(tenantID, pointOfSaleID string) ([]*Invoice, error)
 	// ListFiltered devuelve el listado paginado según el filtro, sin los
 	// campos pesados (xml/archivo), junto con el total de coincidencias.
 	ListFiltered(filter InvoiceListFilter) ([]*Invoice, int64, error)

@@ -75,10 +75,10 @@ func (f *fakeInvoiceRepo) GetByIDs(ids []string) ([]*domain.Invoice, error) {
 	}
 	return result, nil
 }
-func (f *fakeInvoiceRepo) ListByPointOfSale(posID string) ([]*domain.Invoice, error) {
+func (f *fakeInvoiceRepo) ListByPointOfSale(tenantID, posID string) ([]*domain.Invoice, error) {
 	out := make([]*domain.Invoice, 0)
 	for _, inv := range f.invoices {
-		if inv.PointOfSaleId == posID {
+		if inv.CompanyId == tenantID && inv.PointOfSaleId == posID {
 			out = append(out, inv)
 		}
 	}

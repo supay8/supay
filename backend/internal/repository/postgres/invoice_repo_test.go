@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -139,6 +140,42 @@ func TestCreateAsignaCorrelativosPorPuntoDeVenta(t *testing.T) {
 		if inv.InvoiceNumber != i {
 			t.Errorf("correlativo esperado %d, got %d", i, inv.InvoiceNumber)
 		}
+	}
+}
+
+func TestInvoiceTenantIsolation(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewPostgresInvoiceRepository(db).(*PostgresInvoiceRepository)
+	tenantA := seedFixture(t, db)
+	tenantB := seedFixture(t, db)
+
+	invoiceA := nuevaFacturaPendiente(tenantA)
+	invoiceB := nuevaFacturaPendiente(tenantB)
+	for _, inv := range []*domain.Invoice{invoiceA, invoiceB} {
+		if err := repo.Create(inv); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	list, total, err := repo.ListFiltered(domain.InvoiceListFilter{
+		TenantID: tenantA.companyID, PointOfSaleID: tenantA.posID, Limit: 20,
+	})
+	if err != nil || total != 1 || len(list) != 1 || list[0].CompanyId != tenantA.companyID {
+		t.Fatalf("list tenant A: total=%d len=%d err=%v", total, len(list), err)
+	}
+
+	list, total, err = repo.ListFiltered(domain.InvoiceListFilter{
+		TenantID: tenantA.companyID, PointOfSaleID: tenantB.posID, Limit: 20,
+	})
+	if err != nil || total != 0 || len(list) != 0 {
+		t.Fatalf("tenant A no debe listar POS de B: total=%d len=%d err=%v", total, len(list), err)
+	}
+
+	if _, _, err := repo.ListFiltered(domain.InvoiceListFilter{PointOfSaleID: tenantA.posID}); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("filtro sin tenant: err=%v", err)
+	}
+	if _, err := repo.ListByPointOfSale("", tenantA.posID); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("listado por POS sin tenant: err=%v", err)
 	}
 }
 

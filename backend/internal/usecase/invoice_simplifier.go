@@ -129,6 +129,9 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		}
 		return nil, err
 	}
+	if tenantID, ok := siat.CompanyIDFromContext(ctx); ok && pos.CompanyId != tenantID {
+		return nil, domain.NewNotFoundError("punto de venta no encontrado")
+	}
 	if !pos.IsActive {
 		return nil, domain.NewBadRequestError("el punto de venta está inactivo")
 	}

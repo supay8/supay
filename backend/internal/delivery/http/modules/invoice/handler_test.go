@@ -21,6 +21,10 @@ import (
 
 type fileRepoForHandler struct{ file *domain.InvoiceFile }
 
+func withTenant(req *http.Request, tenantID string) *http.Request {
+	return req.WithContext(deliveryHttp.WithCompanyID(req.Context(), tenantID))
+}
+
 func (r *fileRepoForHandler) BelongsToCompany(_ context.Context, companyID, invoiceID string) (bool, error) {
 	return companyID == "company1" && invoiceID == "invoice1", nil
 }
@@ -131,11 +135,11 @@ func TestPDFGenerationFallbackChecksCompany(t *testing.T) {
 }
 
 func TestSectoresEndpointDevuelveCatalogo(t *testing.T) {
-	h := newHandler(nil)
+	h := newHandler(&mockInvoiceService{})
 	r := chi.NewRouter()
 	r.Get("/invoices/sectores", h.sectores)
 
-	req := httptest.NewRequest(http.MethodGet, "/invoices/sectores", nil)
+	req := withTenant(httptest.NewRequest(http.MethodGet, "/invoices/sectores", nil), "comp-1")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -174,20 +178,27 @@ func TestSectoresEndpointDevuelveCatalogo(t *testing.T) {
 }
 
 func TestSectoresExponeSoportadoYEtiquetas(t *testing.T) {
-	h := newHandler(nil)
+	h := newHandler(&mockInvoiceService{})
 	r := chi.NewRouter()
 	r.Get("/invoices/sectores", h.sectores)
 
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoices/sectores", nil))
+	r.ServeHTTP(rec, withTenant(httptest.NewRequest(http.MethodGet, "/invoices/sectores", nil), "comp-1"))
 
 	var sectores []sectorDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &sectores); err != nil {
 		t.Fatalf("JSON inválido: %v", err)
 	}
 	for _, s := range sectores {
-		if !s.Soportado && s.Habilitado != nil {
-			t.Fatalf("sector %d: habilitado solo aplica con company_id", s.Codigo)
+		estadoEsperado := "experimental"
+		if s.Soportado {
+			estadoEsperado = "soportado"
+		}
+		if s.Estado != estadoEsperado {
+			t.Fatalf("sector %d: estado=%q, se esperaba %q", s.Codigo, s.Estado, estadoEsperado)
+		}
+		if s.Habilitado == nil {
+			t.Fatalf("sector %d: falta habilitación del tenant autenticado", s.Codigo)
 		}
 		for _, c := range s.Campos {
 			if c.Etiqueta == "" {
@@ -206,6 +217,100 @@ func TestSectoresExponeSoportadoYEtiquetas(t *testing.T) {
 	// un campo curado debe traer ejemplo
 	if s := porCodigo[24]; len(s.Campos) > 0 && s.Campos[0].Ejemplo == "" {
 		t.Fatal("los campos curados del sector 24 deben traer ejemplo")
+	}
+}
+
+func TestInvoiceHandlersOcultanFacturasDeOtroTenant(t *testing.T) {
+	foreign := sampleInvoice()
+	foreign.CompanyId = "tenant-b"
+	sideEffects := 0
+	svc := &mockInvoiceService{
+		getByIDFunc: func(string) (*domain.Invoice, error) { return foreign, nil },
+		emitFunc: func(context.Context, string) (*domain.Invoice, error) {
+			sideEffects++
+			return foreign, nil
+		},
+		verifyStatusFunc: func(context.Context, string) (*domain.Invoice, error) {
+			sideEffects++
+			return foreign, nil
+		},
+		annulFunc: func(context.Context, string, int) (*domain.Invoice, error) {
+			sideEffects++
+			return foreign, nil
+		},
+		revertAnnulFunc: func(context.Context, string) (*domain.Invoice, error) {
+			sideEffects++
+			return foreign, nil
+		},
+	}
+	h := newHandler(svc)
+	tests := []struct {
+		name, method, route, target, body string
+		handler                           http.HandlerFunc
+	}{
+		{"leer", http.MethodGet, "/invoices/{id}", "/invoices/inv-1", "", h.getByID},
+		{"emitir", http.MethodPost, "/invoices/{id}/emit", "/invoices/inv-1/emit", "", h.emit},
+		{"estado", http.MethodGet, "/invoices/{id}/siat-status", "/invoices/inv-1/siat-status", "", h.siatStatus},
+		{"anular", http.MethodPost, "/invoices/{id}/annul", "/invoices/inv-1/annul", `{"codigo_motivo":1}`, h.annul},
+		{"revertir", http.MethodPost, "/invoices/{id}/annul/revert", "/invoices/inv-1/annul/revert", "", h.revertAnnul},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Method(tc.method, tc.route, tc.handler)
+			req := withTenant(httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body)), "tenant-a")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if sideEffects != 0 {
+		t.Fatalf("se ejecutaron %d operaciones sobre una factura ajena", sideEffects)
+	}
+}
+
+func TestInvoiceListYSectoresUsanTenantAutenticado(t *testing.T) {
+	var listedTenant, sectorsTenant string
+	svc := &mockInvoiceService{
+		listInvoicesFunc: func(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
+			listedTenant = filter.TenantID
+			return nil, 0, nil
+		},
+		sectoresFunc: func(companyID string) (map[int]bool, error) {
+			sectorsTenant = companyID
+			return map[int]bool{1: true}, nil
+		},
+	}
+	h := newHandler(svc)
+	r := chi.NewRouter()
+	r.Get("/invoices", h.list)
+	r.Get("/invoices/sectores", h.sectores)
+
+	for _, target := range []string{
+		"/invoices?point_of_sale_id=pos-b",
+		"/invoices/sectores?company_id=tenant-b",
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, withTenant(httptest.NewRequest(http.MethodGet, target, nil), "tenant-a"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status=%d body=%s", target, rec.Code, rec.Body.String())
+		}
+	}
+	if listedTenant != "tenant-a" || sectorsTenant != "tenant-a" {
+		t.Fatalf("listado=%q sectores=%q", listedTenant, sectorsTenant)
+	}
+}
+
+func TestInvoiceHandlerRequiereTenant(t *testing.T) {
+	h := newHandler(&mockInvoiceService{})
+	r := chi.NewRouter()
+	r.Get("/invoices/{id}", h.getByID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoices/inv-1", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -357,7 +462,7 @@ func TestCreateReturnsSlimDTO(t *testing.T) {
 	r.Post("/invoices", h.create)
 
 	body := `{"point_of_sale_id":"pos-1","customer_id":"cust-1","items":[{"code":"P001","description":"Producto","quantity":1,"unit_price":100}]}`
-	req := httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body))
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body)), "comp-1")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -392,7 +497,7 @@ func TestCreateWithInclude(t *testing.T) {
 	r.Post("/invoices", h.create)
 
 	body := `{"point_of_sale_id":"pos-1","customer_id":"cust-1","items":[{"code":"P001","description":"Producto","quantity":1,"unit_price":100}]}`
-	req := httptest.NewRequest(http.MethodPost, "/invoices?include=xml,company", strings.NewReader(body))
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/invoices?include=xml,company", strings.NewReader(body)), "comp-1")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -418,7 +523,7 @@ func TestCreateIdempotencyHeader(t *testing.T) {
 	r.Post("/invoices", h.create)
 
 	body := `{"point_of_sale_id":"pos-1","customer_id":"cust-1","items":[{"code":"P001","description":"Producto","quantity":1,"unit_price":100}]}`
-	req := httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body))
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body)), "comp-1")
 	req.Header.Set("Idempotency-Key", "orden-123")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -451,7 +556,7 @@ func TestCreateEmitTrue(t *testing.T) {
 	r.Post("/invoices", h.create)
 
 	body := `{"point_of_sale_id":"pos-1","customer_id":"cust-1","emit":true,"items":[{"code":"P001","description":"Producto","quantity":1,"unit_price":100}]}`
-	req := httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body))
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body)), "comp-1")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -486,7 +591,7 @@ func TestEmitRechazoIncluyeInvoiceID(t *testing.T) {
 	r := chi.NewRouter()
 	r.Post("/invoices/{id}/emit", h.emit)
 
-	req := httptest.NewRequest(http.MethodPost, "/invoices/inv-42/emit", nil)
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/invoices/inv-42/emit", nil), "comp-1")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -519,7 +624,7 @@ func TestEmitDevuelveResultadoSincrono(t *testing.T) {
 	r.Post("/invoices/{id}/emit", h.emit)
 
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/invoices/inv-1/emit", nil))
+	r.ServeHTTP(rec, withTenant(httptest.NewRequest(http.MethodPost, "/invoices/inv-1/emit", nil), "comp-1"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, se esperaba 200", rec.Code)
 	}
@@ -581,7 +686,7 @@ func TestCreateEmitIdempotencyReplay(t *testing.T) {
 	body := `{"point_of_sale_id":"pos-1","customer_id":"cust-1","emit":true,"items":[{"code":"P001","description":"Producto","quantity":1,"unit_price":100}]}`
 	expectedStatuses := []int{http.StatusOK, http.StatusOK}
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body))
+		req := withTenant(httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(body)), "comp-1")
 		req.Header.Set("Idempotency-Key", "orden-emit-1")
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
@@ -622,7 +727,7 @@ func TestGetByIDExponeCamposSectoriales(t *testing.T) {
 	r.Get("/invoices/{id}", h.getByID)
 
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoices/inv-1", nil))
+	r.ServeHTTP(rec, withTenant(httptest.NewRequest(http.MethodGet, "/invoices/inv-1", nil), "comp-1"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, se esperaba 200", rec.Code)
@@ -663,7 +768,7 @@ func TestCreateRejectsOversizedIdempotencyKey(t *testing.T) {
 	r.Post("/invoices", h.create)
 
 	body := bytes.NewBufferString(`{"point_of_sale_id":"pos-1","customer_id":"cust-1","items":[]}`)
-	req := httptest.NewRequest(http.MethodPost, "/invoices", body)
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/invoices", body), "comp-1")
 	req.Header.Set("Idempotency-Key", strings.Repeat("x", 101))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -685,7 +790,7 @@ func TestV1PreviewUsaContratoMinimo(t *testing.T) {
 
 	body := `{"point_of_sale_id":"pos-1","customer":{"document_number":"123"},"items":[{"sku":"SKU-1","quantity":2,"price":12.5}],"invoice_type":"venta","sector":"auto"}`
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invoices/preview", strings.NewReader(body)))
+	r.ServeHTTP(rec, withTenant(httptest.NewRequest(http.MethodPost, "/v1/invoices/preview", strings.NewReader(body)), "comp-1"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -703,7 +808,7 @@ func TestRegisterV1RoutesExponePreviewSinSlashFinal(t *testing.T) {
 
 	body := `{"point_of_sale_id":"pos-1","customer":{"id":"cust-1"},"items":[{"sku":"SKU-1","quantity":1,"price":100}]}`
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invoices/preview", strings.NewReader(body)))
+	r.ServeHTTP(rec, withTenant(httptest.NewRequest(http.MethodPost, "/v1/invoices/preview", strings.NewReader(body)), "comp-1"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -737,7 +842,7 @@ func TestV1EmitDevuelveResultadoSincrono(t *testing.T) {
 	r.Post("/v1/invoices/emit", h.emitV1)
 
 	body := `{"point_of_sale_id":"pos-1","customer":{"id":"cust-1"},"items":[{"sku":"SKU-1","quantity":1,"price":100}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/invoices/emit", strings.NewReader(body))
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/v1/invoices/emit", strings.NewReader(body)), "comp-1")
 	req.Header.Set("Idempotency-Key", "sale-42")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -758,7 +863,7 @@ func TestV1RechazaCamposFueraDelContrato(t *testing.T) {
 	r := chi.NewRouter()
 	r.Post("/v1/invoices", h.createV1)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invoices", strings.NewReader(`{"point_of_sale_id":"pos-1","customer":{},"items":[],"codigo_moneda":1}`)))
+	r.ServeHTTP(rec, withTenant(httptest.NewRequest(http.MethodPost, "/v1/invoices", strings.NewReader(`{"point_of_sale_id":"pos-1","customer":{},"items":[],"codigo_moneda":1}`)), "comp-1"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d, se esperaba 400", rec.Code)
 	}

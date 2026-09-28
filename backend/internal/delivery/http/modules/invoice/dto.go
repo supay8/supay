@@ -212,6 +212,7 @@ type sectorCampoDTO struct {
 type sectorDTO struct {
 	Codigo             int    `json:"codigo"`
 	Nombre             string `json:"nombre"`
+	Estado             string `json:"estado"`
 	TipoDocumento      int    `json:"tipo_documento"`
 	Operacion          string `json:"operacion"`
 	Fachada            string `json:"fachada"`
@@ -232,6 +233,13 @@ type sectorDTO struct {
 	Habilitado    *bool            `json:"habilitado,omitempty"`
 	Campos        []sectorCampoDTO `json:"campos_datos_sector"`
 	CamposDetalle []sectorCampoDTO `json:"campos_datos_sector_detalle,omitempty"`
+}
+
+func estadoSectorBeta(soportado bool) string {
+	if soportado {
+		return "soportado"
+	}
+	return "experimental"
 }
 
 // humanizarClave convierte una clave snake_case en una etiqueta legible

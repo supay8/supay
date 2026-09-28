@@ -2,7 +2,6 @@ package http
 
 import (
 	"crypto/subtle"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -32,11 +31,8 @@ type CompanyMembershipLookup interface {
 func InternalBootstrapMiddleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Este log ahora sí se ejecuta en cada petición que llega a este grupo
-			log.Println("Pasa por el middleware de bootstrap interno")
-
 			token := r.Header.Get("X-Backend-Token")
-			match := subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1
+			match := strings.TrimSpace(secret) != "" && subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1
 
 			if !match {
 				http.Error(w, "Unauthorized internal request", http.StatusUnauthorized)
@@ -195,8 +191,11 @@ func resolveTenant(provided string, lookup ApiKeyLookup) (string, bool) {
 		return "", false
 	}
 	prefix := extractKeyPrefix(provided)
+	if prefix == "" {
+		return "", false
+	}
 	key, err := lookup.FindByPrefix(prefix)
-	if err != nil {
+	if err != nil || key == nil || !key.IsActive || strings.TrimSpace(key.CompanyId) == "" {
 		return "", false
 	}
 	if !verifyAPIKey(provided, key.KeyHash) {
@@ -208,14 +207,14 @@ func resolveTenant(provided string, lookup ApiKeyLookup) (string, bool) {
 }
 
 // extractKeyPrefix extrae un prefijo identificador de una API key con formato
-// sup_<prefijo>_<random>. Si el formato no coincide, devuelve la key completa
-// (la búsqueda simplemente no encontrará coincidencia).
+// sup_<entorno>_<prefijo>_<secreto>. Un formato inválido devuelve vacío para
+// impedir consultas de repositorio con entrada arbitraria.
 func extractKeyPrefix(key string) string {
 	parts := strings.Split(key, "_")
-	if len(parts) >= 3 && parts[0] != "" {
+	if len(parts) == 4 && parts[0] == "sup" && (parts[1] == "live" || parts[1] == "test") && parts[2] != "" && parts[3] != "" {
 		return strings.Join(parts[:len(parts)-1], "_")
 	}
-	return key
+	return ""
 }
 
 // verifyAPIKey compara una API key plana con su hash almacenado.

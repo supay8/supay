@@ -22,7 +22,7 @@ func (versionedTestModule) RegisterV1Routes(r chi.Router) {
 
 func TestRouterExponeModulosBajoV1(t *testing.T) {
 	registered := []modules.Module{versionedTestModule{}}
-	router := NewRouter(config.Config{}, registered, nil, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
+	router := NewRouter(config.Config{DeploymentMode: "test"}, registered, nil, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
 
 	legacy := httptest.NewRecorder()
 	router.ServeHTTP(legacy, httptest.NewRequest(http.MethodGet, "/probe", nil))
@@ -41,7 +41,7 @@ func TestRouterExponeModulosBajoV1(t *testing.T) {
 }
 
 func TestRouterExponeHealthYBootstrapVersionados(t *testing.T) {
-	router := NewRouter(config.Config{}, nil, nil, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
+	router := NewRouter(config.Config{DeploymentMode: "test"}, nil, nil, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
 
 	health := httptest.NewRecorder()
 	router.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
@@ -70,7 +70,7 @@ func (authRoutesTest) RegisterProtectedRoutes(r chi.Router) {
 }
 
 func TestRouterExponeAuthPublicoYProtegido(t *testing.T) {
-	router := NewRouter(config.Config{}, nil, nil, nil, AuthOptions{
+	router := NewRouter(config.Config{DeploymentMode: "test"}, nil, nil, nil, AuthOptions{
 		Routes: authRoutesTest{}, Tokens: fakeTokenVerifier{userID: "user-1"},
 	})
 
@@ -110,7 +110,7 @@ func (apiKeyManagementTestModule) RegisterRoutes(r chi.Router) {
 }
 
 func TestJWTCanCreateFirstAPIKeyWithoutAPIKeyOrCompanyHeader(t *testing.T) {
-	router := NewRouter(config.Config{}, []modules.Module{apiKeyManagementTestModule{}}, nil, nil, AuthOptions{
+	router := NewRouter(config.Config{DeploymentMode: "test"}, []modules.Module{apiKeyManagementTestModule{}}, nil, nil, AuthOptions{
 		Tokens:      fakeTokenVerifier{userID: "user-1"},
 		Memberships: fakeMembershipLookup{allowed: true},
 	})
@@ -124,7 +124,7 @@ func TestJWTCanCreateFirstAPIKeyWithoutAPIKeyOrCompanyHeader(t *testing.T) {
 }
 
 func TestRouterSoloPermiteCrearCompanyDesdeBootstrapInterno(t *testing.T) {
-	router := NewRouter(config.Config{}, []modules.Module{companyRouteTestModule{}}, nil, func(w http.ResponseWriter, _ *http.Request) {
+	router := NewRouter(config.Config{DeploymentMode: "test", BackendSecret: "backend-secret"}, []modules.Module{companyRouteTestModule{}}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
@@ -135,8 +135,36 @@ func TestRouterSoloPermiteCrearCompanyDesdeBootstrapInterno(t *testing.T) {
 	}
 
 	internalCreate := httptest.NewRecorder()
-	router.ServeHTTP(internalCreate, httptest.NewRequest(http.MethodPost, "/internal/companies", nil))
+	internalRequest := httptest.NewRequest(http.MethodPost, "/internal/companies", nil)
+	internalRequest.Header.Set("X-Backend-Token", "backend-secret")
+	router.ServeHTTP(internalCreate, internalRequest)
 	if internalCreate.Code != http.StatusCreated {
 		t.Fatalf("POST /internal/companies status=%d", internalCreate.Code)
+	}
+}
+
+func TestRouterFallaCerradoSinTenantLookupFueraDeTest(t *testing.T) {
+	t.Setenv("GO_ENV", "")
+	t.Setenv("APP_ENV", "")
+	defer func() {
+		if recover() == nil {
+			t.Fatal("se esperaba panic sin lookup de API keys")
+		}
+	}()
+	_ = NewRouter(config.Config{DeploymentMode: "selfhosted"}, nil, nil, nil)
+}
+
+func TestBootstrapLegacyNoSeBloqueaTrasDiezRequests(t *testing.T) {
+	router := NewRouter(config.Config{DeploymentMode: "test", BackendSecret: "backend-secret"}, nil, nil, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
+	for i := 0; i < 11; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/internal/companies", nil)
+		req.Header.Set("X-Backend-Token", "backend-secret")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("request %d: status=%d body=%s", i+1, rec.Code, rec.Body.String())
+		}
 	}
 }

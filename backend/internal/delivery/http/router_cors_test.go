@@ -10,7 +10,7 @@ import (
 
 func TestRouterUsesConfiguredCORSOrigins(t *testing.T) {
 	router := NewRouter(
-		config.Config{CORSAllowedOrigins: []string{"https://app.supay.test"}},
+		config.Config{DeploymentMode: "test", CORSAllowedOrigins: []string{"https://app.supay.test"}},
 		nil,
 		nil,
 		func(http.ResponseWriter, *http.Request) {},
@@ -29,7 +29,7 @@ func TestRouterUsesConfiguredCORSOrigins(t *testing.T) {
 
 func TestRouterDoesNotReflectUnknownCORSOrigin(t *testing.T) {
 	router := NewRouter(
-		config.Config{CORSAllowedOrigins: []string{"https://app.supay.test"}},
+		config.Config{DeploymentMode: "test", CORSAllowedOrigins: []string{"https://app.supay.test"}},
 		nil,
 		nil,
 		func(http.ResponseWriter, *http.Request) {},

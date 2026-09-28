@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -62,23 +61,21 @@ func idempotencyKey(r *http.Request) (string, error) {
 }
 
 func (h *handler) createV1(w http.ResponseWriter, r *http.Request) {
+	if _, ok := deliveryHttp.RequireTenant(w, r); !ok {
+		return
+	}
 	req, err := decodeMinimalInvoice(r)
 	if err != nil {
-		log.Println(err)
-
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
 		return
 	}
 	key, err := idempotencyKey(r)
 	if err != nil {
-		log.Println(err)
 		deliveryHttp.RespondValidation(w, err.Error())
 		return
 	}
 	inv, err := h.uc.CreateSimplified(r.Context(), req, key)
 	if err != nil {
-		log.Println(err)
-
 		deliveryHttp.RespondError(w, err)
 		return
 	}
@@ -91,6 +88,9 @@ func (h *handler) createV1(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) previewV1(w http.ResponseWriter, r *http.Request) {
+	if _, ok := deliveryHttp.RequireTenant(w, r); !ok {
+		return
+	}
 	req, err := decodeMinimalInvoice(r)
 	if err != nil {
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
@@ -105,6 +105,9 @@ func (h *handler) previewV1(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) emitV1(w http.ResponseWriter, r *http.Request) {
+	if _, ok := deliveryHttp.RequireTenant(w, r); !ok {
+		return
+	}
 	req, err := decodeMinimalInvoice(r)
 	if err != nil {
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
@@ -112,14 +115,11 @@ func (h *handler) emitV1(w http.ResponseWriter, r *http.Request) {
 	}
 	key, err := idempotencyKey(r)
 	if err != nil {
-		log.Println(err)
 		deliveryHttp.RespondValidation(w, err.Error())
 		return
 	}
 	inv, err := h.uc.EmitSimplified(r.Context(), req, key)
 	if err != nil {
-		log.Println(err)
-
 		deliveryHttp.RespondError(w, err)
 		return
 	}
@@ -140,6 +140,9 @@ func newHandler(uc invoiceService) *handler {
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
+	if _, ok := deliveryHttp.RequireTenant(w, r); !ok {
+		return
+	}
 	var req usecase.CreateInvoiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
@@ -182,9 +185,8 @@ func (h *handler) getByID(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
 		return
 	}
-	inv, err := h.uc.GetByID(id)
-	if err != nil {
-		deliveryHttp.RespondError(w, err)
+	_, inv, ok := h.requireOwnedInvoice(w, r, id)
+	if !ok {
 		return
 	}
 	includes := parseIncludes(r.URL.Query().Get("include"))
@@ -216,6 +218,10 @@ func (h *handler) attachRequestedXML(ctx context.Context, inv *domain.Invoice, i
 // opcionales de estado y rango de emisión. Nunca devuelve xml/archivo; para
 // el XML usá GET /invoices/{id}.
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := deliveryHttp.RequireTenant(w, r)
+	if !ok {
+		return
+	}
 	query := r.URL.Query()
 	pointOfSaleID := query.Get("point_of_sale_id")
 	if pointOfSaleID == "" {
@@ -223,7 +229,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := domain.InvoiceListFilter{PointOfSaleID: pointOfSaleID}
+	filter := domain.InvoiceListFilter{TenantID: tenantID, PointOfSaleID: pointOfSaleID}
 
 	if status := query.Get("status"); status != "" {
 		st := domain.InvoiceStatus(strings.TrimSpace(status))
@@ -270,6 +276,10 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	dtos := make([]invoiceDTO, 0, len(list))
 	for _, inv := range list {
+		if inv == nil || inv.CompanyId != tenantID {
+			deliveryHttp.RespondError(w, domain.NewNotFoundError("factura no encontrada"))
+			return
+		}
 		dtos = append(dtos, toInvoiceDTO(inv, nil))
 	}
 	deliveryHttp.RespondList(w, dtos, int(total), filter.Limit, filter.Offset)
@@ -281,9 +291,16 @@ func (h *handler) emit(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
 		return
 	}
+	tenantID, _, ok := h.requireOwnedInvoice(w, r, id)
+	if !ok {
+		return
+	}
 	inv, err := h.uc.Emit(r.Context(), id)
 	if err != nil {
 		deliveryHttp.RespondErrorWithInvoiceID(w, err, id)
+		return
+	}
+	if !h.respondIfOwned(w, inv, tenantID) {
 		return
 	}
 	includes := parseIncludes(r.URL.Query().Get("include"))
@@ -297,9 +314,16 @@ func (h *handler) siatStatus(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
 		return
 	}
+	tenantID, _, ok := h.requireOwnedInvoice(w, r, id)
+	if !ok {
+		return
+	}
 	inv, err := h.uc.VerifyStatus(r.Context(), id)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
+		return
+	}
+	if !h.respondIfOwned(w, inv, tenantID) {
 		return
 	}
 	includes := parseIncludes(r.URL.Query().Get("include"))
@@ -310,6 +334,10 @@ func (h *handler) annul(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
+		return
+	}
+	tenantID, _, ok := h.requireOwnedInvoice(w, r, id)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -324,6 +352,9 @@ func (h *handler) annul(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondError(w, err)
 		return
 	}
+	if !h.respondIfOwned(w, inv, tenantID) {
+		return
+	}
 	includes := parseIncludes(r.URL.Query().Get("include"))
 	deliveryHttp.WriteJSON(w, http.StatusOK, toInvoiceDTO(inv, includes))
 }
@@ -334,9 +365,16 @@ func (h *handler) revertAnnul(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
 		return
 	}
+	tenantID, _, ok := h.requireOwnedInvoice(w, r, id)
+	if !ok {
+		return
+	}
 	inv, err := h.uc.RevertAnnul(r.Context(), id)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
+		return
+	}
+	if !h.respondIfOwned(w, inv, tenantID) {
 		return
 	}
 	includes := parseIncludes(r.URL.Query().Get("include"))
@@ -359,12 +397,11 @@ func (h *handler) downloadFile(w http.ResponseWriter, r *http.Request, kind stri
 		deliveryHttp.RespondValidation(w, "el id es obligatorio")
 		return
 	}
+	companyID, ok := deliveryHttp.RequireTenant(w, r)
+	if !ok {
+		return
+	}
 	if h.files != nil {
-		companyID, ok := deliveryHttp.CompanyIDFromContext(r.Context())
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
 		body, info, err := h.files.Open(r.Context(), companyID, id, kind)
 		if errors.Is(err, domain.ErrNotFound) {
 			if kind == "pdf" && h.uc != nil && h.pdfGenerator != nil {
@@ -402,21 +439,21 @@ func streamInvoiceObject(w http.ResponseWriter, body io.ReadCloser, info domain.
 
 // sectores expone el catálogo de documentos-sector soportados con la
 // declaración de sus campos datos_sector, para que los clientes construyan
-// formularios dinámicos y validen en el frontend. Con ?company_id= anota cada
-// sector con habilitado según el catálogo de la empresa.
+// formularios dinámicos y validen en el frontend. La habilitación se resuelve
+// exclusivamente para el tenant autenticado.
 func (h *handler) sectores(w http.ResponseWriter, r *http.Request) {
-	var habilitados map[int]bool
-	if companyID := r.URL.Query().Get("company_id"); companyID != "" {
-		if h.uc == nil {
-			deliveryHttp.RespondError(w, domain.NewConflictError("servicio de sectores no disponible"))
-			return
-		}
-		var err error
-		habilitados, err = h.uc.SectoresHabilitados(companyID)
-		if err != nil {
-			deliveryHttp.RespondError(w, err)
-			return
-		}
+	companyID, ok := deliveryHttp.RequireTenant(w, r)
+	if !ok {
+		return
+	}
+	if h.uc == nil {
+		deliveryHttp.RespondError(w, domain.NewConflictError("servicio de sectores no disponible"))
+		return
+	}
+	habilitados, err := h.uc.SectoresHabilitados(companyID)
+	if err != nil {
+		deliveryHttp.RespondError(w, err)
+		return
 	}
 
 	perfiles := siat.PerfilesSector()
@@ -434,6 +471,7 @@ func (h *handler) sectores(w http.ResponseWriter, r *http.Request) {
 		dto := sectorDTO{
 			Codigo:             p.Codigo,
 			Nombre:             p.Nombre,
+			Estado:             estadoSectorBeta(p.Soportado),
 			TipoDocumento:      p.TipoDocumentoResuelto(0),
 			Operacion:          p.Operacion.String(),
 			Fachada:            p.Facade.String(),
@@ -458,4 +496,33 @@ func (h *handler) sectores(w http.ResponseWriter, r *http.Request) {
 		salida = append(salida, dto)
 	}
 	deliveryHttp.WriteJSON(w, http.StatusOK, salida)
+}
+
+func (h *handler) requireOwnedInvoice(w http.ResponseWriter, r *http.Request, id string) (string, *domain.Invoice, bool) {
+	tenantID, ok := deliveryHttp.RequireTenant(w, r)
+	if !ok {
+		return "", nil, false
+	}
+	if h.uc == nil {
+		deliveryHttp.RespondError(w, domain.NewNotFoundError("factura no encontrada"))
+		return "", nil, false
+	}
+	inv, err := h.uc.GetByID(id)
+	if err != nil {
+		deliveryHttp.RespondError(w, err)
+		return "", nil, false
+	}
+	if inv == nil || inv.CompanyId != tenantID {
+		deliveryHttp.RespondError(w, domain.NewNotFoundError("factura no encontrada"))
+		return "", nil, false
+	}
+	return tenantID, inv, true
+}
+
+func (h *handler) respondIfOwned(w http.ResponseWriter, inv *domain.Invoice, tenantID string) bool {
+	if inv != nil && inv.CompanyId == tenantID {
+		return true
+	}
+	deliveryHttp.RespondError(w, domain.NewNotFoundError("factura no encontrada"))
+	return false
 }

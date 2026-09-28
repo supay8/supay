@@ -42,6 +42,7 @@ func (r *httpActividadRepo) List(string) ([]*domain.SiatActividad, error) {
 
 func TestCatalogRoutesDomainSlugs(t *testing.T) {
 	cfg := config.Load()
+	cfg.DeploymentMode = "test"
 	uc := usecase.NewSiatUsecase(nil, nil, nil, nil, &httpCatalogRepo{items: map[string][]*domain.CatalogItem{
 		"tipoMoneda": {{Codigo: 1, Descripcion: "BOLIVIANO", Tipo: "tipoMoneda"}},
 	}}, nil, nil, nil, 0, nil, nil, &httpActividadRepo{items: []domain.SiatActividad{

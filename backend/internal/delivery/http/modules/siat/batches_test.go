@@ -112,7 +112,7 @@ func TestSiatBatchResponseLimitsCompanyAndPointOfSaleData(t *testing.T) {
 type batchRouteKeyLookup struct{}
 
 func (batchRouteKeyLookup) FindByPrefix(prefix string) (*models.ApiKey, error) {
-	if prefix != "sup_batch" {
+	if prefix != "sup_live_batch" {
 		return nil, http.ErrNoLocation
 	}
 	return &models.ApiKey{ID: "key-1", CompanyId: "comp-1", KeyHash: "test-hash", IsActive: true}, nil
@@ -121,7 +121,7 @@ func (batchRouteKeyLookup) FindByPrefix(prefix string) (*models.ApiKey, error) {
 func (batchRouteKeyLookup) TouchLastUsed(string) error { return nil }
 
 func TestSiatBatchesMountedWithTenantAuthentication(t *testing.T) {
-	deliveryHttp.SetVerifyAPIKey(func(plain, hash string) bool { return plain == "sup_batch_valid" && hash == "test-hash" })
+	deliveryHttp.SetVerifyAPIKey(func(plain, hash string) bool { return plain == "sup_live_batch_valid" && hash == "test-hash" })
 	t.Cleanup(func() { deliveryHttp.SetVerifyAPIKey(func(string, string) bool { return false }) })
 	calls := 0
 	check := func(companyID string) (*usecase.PaqueteResultado, error) {
@@ -162,10 +162,10 @@ func TestSiatBatchesMountedWithTenantAuthentication(t *testing.T) {
 					status           int
 				}{
 					{"missing key", "", "", http.StatusUnauthorized},
-					{"invalid key", "sup_batch_invalid", "", http.StatusUnauthorized},
-					{"foreign query", "sup_batch_valid", "?company_id=other", http.StatusForbidden},
-					{"duplicate foreign query", "sup_batch_valid", "?company_id=comp-1&company_id=other", http.StatusForbidden},
-					{"valid key", "sup_batch_valid", "", http.StatusOK},
+					{"invalid key", "sup_live_batch_invalid", "", http.StatusUnauthorized},
+					{"foreign query", "sup_live_batch_valid", "?company_id=other", http.StatusForbidden},
+					{"duplicate foreign query", "sup_live_batch_valid", "?company_id=comp-1&company_id=other", http.StatusForbidden},
+					{"valid key", "sup_live_batch_valid", "", http.StatusOK},
 				} {
 					t.Run(path+"/"+tc.name, func(t *testing.T) {
 						before := calls

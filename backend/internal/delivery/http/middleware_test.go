@@ -15,9 +15,11 @@ import (
 type fakeApiKeyLookup struct {
 	key *models.ApiKey
 	err error
+	calls int
 }
 
 func (f *fakeApiKeyLookup) FindByPrefix(prefix string) (*models.ApiKey, error) {
+	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -77,6 +79,9 @@ func TestTenantMiddlewareRejectsInvalidApiKey(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("esperaba 401, got %d", rec.Code)
 	}
+	if lookup.calls != 0 {
+		t.Fatalf("una key malformada no debe consultar el repositorio; calls=%d", lookup.calls)
+	}
 }
 
 func TestTenantMiddlewareRejectsMissingHeader(t *testing.T) {
@@ -100,8 +105,9 @@ func TestExtractKeyPrefix(t *testing.T) {
 		in, want string
 	}{
 		{"sup_live_abc_xxxxxxxx", "sup_live_abc"},
-		{"sup_test_123", "sup_test"},
-		{"single", "single"},
+		{"sup_test_123", ""},
+		{"single", ""},
+		{"other_live_abc_secret", ""},
 	}
 	for _, c := range cases {
 		got := extractKeyPrefix(c.in)
@@ -133,6 +139,18 @@ func TestInternalBootstrapMiddleware(t *testing.T) {
 	handler.ServeHTTP(allowed, req)
 	if allowed.Code != http.StatusNoContent || !called {
 		t.Fatalf("solicitud autenticada: status=%d called=%v", allowed.Code, called)
+	}
+}
+
+func TestInternalBootstrapMiddlewareRechazaSecretoVacio(t *testing.T) {
+	called := false
+	handler := InternalBootstrapMiddleware("")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+	}))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/companies", nil))
+	if recorder.Code != http.StatusUnauthorized || called {
+		t.Fatalf("status=%d called=%v", recorder.Code, called)
 	}
 }
 

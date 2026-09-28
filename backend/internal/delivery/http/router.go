@@ -2,6 +2,8 @@ package http
 
 import (
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/brandsrx/supay/internal/config"
@@ -90,6 +92,9 @@ func registerAuthRoutes(r chi.Router, auth AuthOptions) {
 // companyCreateHandler es el handler interno para POST /internal/companies
 // (bootstrap protegido por X-Backend-Token).
 func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup, companyCreateHandler http.HandlerFunc, authOptions ...AuthOptions) http.Handler {
+	if lookup == nil && !allowsMissingTenantLookup(cfg) {
+		panic("tenant API key lookup no configurado fuera de un entorno de test")
+	}
 	r := chi.NewRouter()
 	metrics := observability.DefaultMetrics()
 	var auth AuthOptions
@@ -132,7 +137,7 @@ func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup,
 	// POST /internal/companies es el bootstrap interno con rate-limit por IP.
 	r.Group(func(r chi.Router) {
 		r.Use(InternalBootstrapMiddleware(cfg.BackendSecret))
-		r.With(RateLimitIP(10/60, 10, 5*time.Minute)).Post("/internal/companies", companyCreateHandler)
+		r.With(RateLimitIP(10, 60, 5*time.Minute)).Post("/internal/companies", companyCreateHandler)
 
 	})
 
@@ -157,4 +162,16 @@ func NewRouter(cfg config.Config, modules []modules.Module, lookup ApiKeyLookup,
 	})
 
 	return r
+}
+
+func allowsMissingTenantLookup(cfg config.Config) bool {
+	if strings.EqualFold(strings.TrimSpace(cfg.DeploymentMode), "test") {
+		return true
+	}
+	for _, name := range []string{"GO_ENV", "APP_ENV"} {
+		if strings.EqualFold(strings.TrimSpace(os.Getenv(name)), "test") {
+			return true
+		}
+	}
+	return false
 }

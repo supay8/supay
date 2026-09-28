@@ -182,10 +182,15 @@ Intentar emitirlo por `/v1/invoices/emit` o por ID devuelve una validación loca
 obligatoriedad y etiqueta. El esquema se completa con los setters del SDK; no
 es necesario añadir manualmente cada campo a un DTO distinto por sector.
 
-`soportado` significa cobertura técnica del constructor, no homologación.
+`estado` clasifica cada perfil como `soportado` o `experimental` para la beta.
+El booleano `soportado` se conserva por compatibilidad y significa cobertura
+técnica del constructor, no homologación. Un sector `experimental` forma parte
+del catálogo y puede evolucionar a partir del feedback de integración, pero no
+se presenta como homologado.
 `emision_individual` y `emision_masiva` indican los canales posibles.
-Con `?company_id=UUID`, `habilitado` indica lo registrado en el catálogo
-sincronizado de actividades/documentos de esa empresa.
+`habilitado` se calcula siempre para el tenant autenticado y refleja su catálogo
+sincronizado de actividades/documentos. El endpoint ignora selectores de tenant
+en query string.
 
 Hay 50 códigos con constructor y 51 perfiles (dos layouts del sector 24).
 El 33 sigue requiriendo XML externo mediante `/invoices` con `archivo`,

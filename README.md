@@ -63,6 +63,9 @@ Supay no es solo un SDK. Es **una API + Dashboard + motor fiscal** pensada para 
 
 > **Modelo de producto:** cada tenant se registra con `POST /internal/companies` (bootstrap con `BACKEND_SECRET`), recibe su `X-API-Key` y desde ahí todo se aísla por `tenant_id`: sucursales, puntos de venta, certificados, clientes, productos, facturas, CUIS/CUFD y paquetes.
 
+El flujo y las exclusiones de la beta están congelados en
+[`backend/docs/beta-scope.md`](./backend/docs/beta-scope.md).
+
 ---
 
 ## 🏗️ Arquitectura

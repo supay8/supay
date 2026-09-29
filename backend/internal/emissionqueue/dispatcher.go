@@ -40,7 +40,7 @@ func NewDispatcher(repo domain.OutboxRepository, publisher OutboxPublisher, inte
 		batchSize = 100
 	}
 	if lockTimeout <= 0 {
-		lockTimeout = time.Minute
+		lockTimeout = 30 * time.Second
 	}
 	return &Dispatcher{
 		repo: repo, publisher: publisher, owner: "outbox-" + uuid.NewString(),

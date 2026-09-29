@@ -34,12 +34,13 @@ type Config struct {
 }
 
 type Service struct {
-	db         *sql.DB
-	client     *river.Client[*sql.Tx]
-	dispatcher *Dispatcher
-	cancel     context.CancelFunc
-	mu         sync.Mutex
-	started    bool
+	db               *sql.DB
+	client           *river.Client[*sql.Tx]
+	dispatcher       *Dispatcher
+	riverCancel      context.CancelFunc
+	dispatcherCancel context.CancelFunc
+	mu               sync.Mutex
+	started          bool
 }
 
 func NewService(db *gorm.DB, outbox domain.OutboxRepository, processor InvoiceEmissionProcessor, cfg Config) (*Service, error) {
@@ -61,6 +62,9 @@ func NewService(db *gorm.DB, outbox domain.OutboxRepository, processor InvoiceEm
 	}
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 8
+	}
+	if cfg.SoftStopTimeout <= 0 || cfg.SoftStopTimeout > 10*time.Second {
+		cfg.SoftStopTimeout = 10 * time.Second
 	}
 
 	limiter := NewTenantRateLimiter(cfg.RatePerSecond, cfg.RateBurst)
@@ -103,14 +107,17 @@ func (s *Service) Start(parent context.Context) error {
 	if err := s.validateSchema(parent); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(parent)
-	if err := s.client.Start(ctx); err != nil {
-		cancel()
+	riverCtx, riverCancel := context.WithCancel(parent)
+	dispatcherCtx, dispatcherCancel := context.WithCancel(parent)
+	if err := s.client.Start(riverCtx); err != nil {
+		riverCancel()
+		dispatcherCancel()
 		return fmt.Errorf("iniciar River: %w", err)
 	}
-	s.cancel = cancel
+	s.riverCancel = riverCancel
+	s.dispatcherCancel = dispatcherCancel
 	s.started = true
-	go s.dispatcher.Run(ctx)
+	go s.dispatcher.Run(dispatcherCtx)
 	slog.Info("cola de emisión iniciada", "queue", InvoiceEmissionQueue)
 	return nil
 }
@@ -134,13 +141,20 @@ func (s *Service) Stop(ctx context.Context) error {
 		s.mu.Unlock()
 		return nil
 	}
-	cancel := s.cancel
+	riverCancel := s.riverCancel
+	dispatcherCancel := s.dispatcherCancel
 	s.started = false
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	// Stop claiming outbox events first, then let River finish jobs already
+	// fetched. Cancelling River before Stop would turn this into a hard stop.
+	if dispatcherCancel != nil {
+		dispatcherCancel()
 	}
-	return s.client.Stop(ctx)
+	err := s.client.Stop(ctx)
+	if riverCancel != nil {
+		riverCancel()
+	}
+	return err
 }
 
 type riverInserter interface {

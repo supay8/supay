@@ -26,7 +26,7 @@ type InvoiceEmissionArgs struct {
 func (InvoiceEmissionArgs) Kind() string { return InvoiceEmissionJobKind }
 
 type InvoiceEmissionProcessor interface {
-	ProcessEmission(ctx context.Context, invoiceID string) (*domain.Invoice, error)
+	ProcessEmission(ctx context.Context, tenantID, invoiceID string) (*domain.Invoice, error)
 }
 
 type InvoiceEmissionWorker struct {
@@ -82,7 +82,7 @@ func (w *InvoiceEmissionWorker) Work(ctx context.Context, job *river.Job[Invoice
 		}
 	}
 
-	_, err := w.processor.ProcessEmission(ctx, args.InvoiceID)
+	_, err := w.processor.ProcessEmission(ctx, args.TenantID, args.InvoiceID)
 	if err == nil {
 		if w.breaker != nil {
 			w.breaker.Success(args.TenantID)

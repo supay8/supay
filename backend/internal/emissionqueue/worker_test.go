@@ -18,7 +18,7 @@ type fakeProcessor struct {
 	err   error
 }
 
-func (f *fakeProcessor) ProcessEmission(context.Context, string) (*domain.Invoice, error) {
+func (f *fakeProcessor) ProcessEmission(context.Context, string, string) (*domain.Invoice, error) {
 	f.calls++
 	return &domain.Invoice{Status: domain.InvoiceAccepted}, f.err
 }

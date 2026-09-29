@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	Port               string
+	RunMode            RunMode
 	CORSAllowedOrigins []string
 	// SIAT y SiatModalidad se mantienen por compatibilidad pero están
 	// desacoplados: ya no se valida NIT/Token/Cert al iniciar. El
@@ -55,6 +56,24 @@ type Config struct {
 	Maintenance          MaintenanceConfig
 	Queue                QueueConfig
 }
+
+// RunMode controls which long-lived components run in this process. The beta
+// defaults to both so a single dormible Cloud Run service serves HTTP and River.
+type RunMode string
+
+const (
+	RunModeWeb    RunMode = "web"
+	RunModeWorker RunMode = "worker"
+	RunModeBoth   RunMode = "both"
+)
+
+func (m RunMode) Valid() bool {
+	return m == RunModeWeb || m == RunModeWorker || m == RunModeBoth
+}
+
+func (m RunMode) RunsWeb() bool { return m == RunModeWeb || m == RunModeBoth }
+
+func (m RunMode) RunsWorker() bool { return m == RunModeWorker || m == RunModeBoth }
 
 // BetterAuthConfig es el contrato cloud entre Next.js/Better Auth y la API Go.
 // Go nunca necesita la llave privada: descarga y cachea únicamente el JWKS
@@ -123,6 +142,7 @@ type QueueConfig struct {
 }
 
 func Load() Config {
+	runMode := RunMode(strings.ToLower(strings.TrimSpace(getEnv("RUN_MODE", string(RunModeBoth)))))
 	ambiente := parseInt(getEnv("SIAT_AMBIENTE", "2"), siat.AmbientePruebas)
 	if ambiente != siat.AmbienteProduccion {
 		ambiente = siat.AmbientePruebas
@@ -219,15 +239,19 @@ func Load() Config {
 		NotificationTimeout:   parseDuration(getEnv("CERTIFICATE_NOTIFICATION_TIMEOUT", "10s"), 10*time.Second),
 		CertificateWebhookURL: strings.TrimSpace(os.Getenv("CERTIFICATE_ALERT_WEBHOOK_URL")),
 	}
+	softStopTimeout := parseDuration(getEnv("EMISSION_SOFT_STOP_TIMEOUT", "10s"), 10*time.Second)
+	if softStopTimeout <= 0 || softStopTimeout > 10*time.Second {
+		softStopTimeout = 10 * time.Second
+	}
 	queue := QueueConfig{
 		Enabled:             parseBoolEnv("EMISSION_QUEUE_ENABLED", true),
 		DispatchInterval:    parseDuration(getEnv("OUTBOX_DISPATCH_INTERVAL", "500ms"), 500*time.Millisecond),
 		DispatchBatchSize:   parseInt(getEnv("OUTBOX_DISPATCH_BATCH_SIZE", "100"), 100),
-		OutboxLockTimeout:   parseDuration(getEnv("OUTBOX_LOCK_TIMEOUT", "1m"), time.Minute),
+		OutboxLockTimeout:   parseDuration(getEnv("OUTBOX_LOCK_TIMEOUT", "30s"), 30*time.Second),
 		MaxWorkers:          parseInt(getEnv("EMISSION_QUEUE_WORKERS", "10"), 10),
 		MaxAttempts:         parseInt(getEnv("EMISSION_MAX_ATTEMPTS", "8"), 8),
 		JobTimeout:          parseDuration(getEnv("EMISSION_JOB_TIMEOUT", "2m"), 2*time.Minute),
-		SoftStopTimeout:     parseDuration(getEnv("EMISSION_SOFT_STOP_TIMEOUT", "30s"), 30*time.Second),
+		SoftStopTimeout:     softStopTimeout,
 		RetryBase:           parseDuration(getEnv("EMISSION_RETRY_BASE", "2s"), 2*time.Second),
 		RetryMax:            parseDuration(getEnv("EMISSION_RETRY_MAX", "5m"), 5*time.Minute),
 		TenantRatePerSecond: parseFloat(getEnv("SIAT_TENANT_RATE_PER_SECOND", "2"), 2),
@@ -249,7 +273,8 @@ func Load() Config {
 	}
 
 	return Config{
-		Port: getEnv("PORT", "8081"),
+		Port:    getEnv("PORT", "8081"),
+		RunMode: runMode,
 		CORSAllowedOrigins: parseCSVEnv("CORS_ALLOWED_ORIGINS", []string{
 			"http://localhost:3000",
 			"http://127.0.0.1:3000",
@@ -287,6 +312,13 @@ func Load() Config {
 		Maintenance:          maintenance,
 		Queue:                queue,
 	}
+}
+
+func (c Config) ValidateRunMode() error {
+	if !c.RunMode.Valid() {
+		return fmt.Errorf("RUN_MODE debe ser web, worker o both")
+	}
+	return nil
 }
 
 func (c Config) ValidateStorage() error {

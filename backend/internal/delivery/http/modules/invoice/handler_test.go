@@ -356,7 +356,7 @@ func (m *mockInvoiceService) EmitSimplified(ctx context.Context, req usecase.Min
 	inv.Status = domain.InvoicePending
 	return inv, nil
 }
-func (m *mockInvoiceService) GetByID(id string) (*domain.Invoice, error) {
+func (m *mockInvoiceService) GetByID(_ context.Context, id string) (*domain.Invoice, error) {
 	if m.getByIDFunc != nil {
 		return m.getByIDFunc(id)
 	}

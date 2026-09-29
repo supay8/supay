@@ -27,7 +27,7 @@ type invoiceService interface {
 	CreateSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, idempotencyKey string) (*domain.Invoice, error)
 	PreviewSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*usecase.InvoicePreview, error)
 	EmitSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, idempotencyKey string) (*domain.Invoice, error)
-	GetByID(id string) (*domain.Invoice, error)
+	GetByID(ctx context.Context, id string) (*domain.Invoice, error)
 	ListInvoices(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error)
 	Emit(ctx context.Context, id string) (*domain.Invoice, error)
 	VerifyStatus(ctx context.Context, id string) (*domain.Invoice, error)
@@ -405,7 +405,7 @@ func (h *handler) downloadFile(w http.ResponseWriter, r *http.Request, kind stri
 		body, info, err := h.files.Open(r.Context(), companyID, id, kind)
 		if errors.Is(err, domain.ErrNotFound) {
 			if kind == "pdf" && h.uc != nil && h.pdfGenerator != nil {
-				inv, lookupErr := h.uc.GetByID(id)
+				inv, lookupErr := h.uc.GetByID(r.Context(), id)
 				if lookupErr == nil && inv != nil && inv.CompanyId == companyID && inv.Cuf != nil {
 					if _, generateErr := h.pdfGenerator.GenerateInvoicePDFWithContext(r.Context(), id); generateErr == nil {
 						body, info, err = h.files.Open(r.Context(), companyID, id, kind)
@@ -507,7 +507,7 @@ func (h *handler) requireOwnedInvoice(w http.ResponseWriter, r *http.Request, id
 		deliveryHttp.RespondError(w, domain.NewNotFoundError("factura no encontrada"))
 		return "", nil, false
 	}
-	inv, err := h.uc.GetByID(id)
+	inv, err := h.uc.GetByID(r.Context(), id)
 	if err != nil {
 		deliveryHttp.RespondError(w, err)
 		return "", nil, false

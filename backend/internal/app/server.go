@@ -16,7 +16,13 @@ import (
 func RunServer(srv *http.Server) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return RunServerContext(ctx, srv)
+}
 
+// RunServerContext serves HTTP until the shared application context is
+// cancelled. Using the same signal context as River keeps shutdown ordering
+// deterministic in RUN_MODE=both.
+func RunServerContext(ctx context.Context, srv *http.Server) error {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- srv.ListenAndServe()

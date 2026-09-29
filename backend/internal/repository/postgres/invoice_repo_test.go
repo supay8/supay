@@ -151,6 +151,8 @@ func TestInvoiceTenantIsolation(t *testing.T) {
 
 	invoiceA := nuevaFacturaPendiente(tenantA)
 	invoiceB := nuevaFacturaPendiente(tenantB)
+	idemB := "idem-tenant-b"
+	invoiceB.IdempotencyKey = &idemB
 	for _, inv := range []*domain.Invoice{invoiceA, invoiceB} {
 		if err := repo.Create(inv); err != nil {
 			t.Fatalf("create: %v", err)
@@ -177,6 +179,47 @@ func TestInvoiceTenantIsolation(t *testing.T) {
 	if _, err := repo.ListByPointOfSale("", tenantA.posID); !errors.Is(err, domain.ErrMissingCompanyID) {
 		t.Fatalf("listado por POS sin tenant: err=%v", err)
 	}
+
+	if _, err := repo.GetByID(tenantA.companyID, invoiceB.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("tenant A no debe leer factura de B: err=%v", err)
+	}
+	byIDs, err := repo.GetByIDs(tenantA.companyID, []string{invoiceA.ID, invoiceB.ID})
+	if err != nil || len(byIDs) != 1 || byIDs[0].ID != invoiceA.ID {
+		t.Fatalf("GetByIDs debe aislar tenant A: len=%d err=%v", len(byIDs), err)
+	}
+	if existing, err := repo.GetByIdempotencyKey(tenantA.companyID, tenantB.posID, idemB); err != nil || existing != nil {
+		t.Fatalf("idempotencia de B no debe ser visible por A: invoice=%v err=%v", existing, err)
+	}
+	if claimed, err := repo.ClaimForEmission(tenantA.companyID, invoiceB.ID); !errors.Is(err, gorm.ErrRecordNotFound) || claimed {
+		t.Fatalf("tenant A no debe reclamar factura de B: claimed=%v err=%v", claimed, err)
+	}
+	if transitioned, err := repo.TransitionStatus(tenantA.companyID, invoiceB.ID, domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart, nil, nil); !errors.Is(err, gorm.ErrRecordNotFound) || transitioned {
+		t.Fatalf("tenant A no debe transicionar factura de B: transitioned=%v err=%v", transitioned, err)
+	}
+	unchangedB, err := repo.GetByID(tenantB.companyID, invoiceB.ID)
+	if err != nil || unchangedB == nil || unchangedB.Status != domain.InvoicePending {
+		var status domain.InvoiceStatus
+		if unchangedB != nil {
+			status = unchangedB.Status
+		}
+		t.Fatalf("factura de B fue alterada: status=%v err=%v", status, err)
+	}
+
+	if _, err := repo.GetByID("", invoiceA.ID); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("GetByID sin tenant: err=%v", err)
+	}
+	if _, err := repo.GetByIDs("", []string{invoiceA.ID}); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("GetByIDs sin tenant: err=%v", err)
+	}
+	if _, err := repo.ClaimForEmission("", invoiceA.ID); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("ClaimForEmission sin tenant: err=%v", err)
+	}
+	if _, err := repo.TransitionStatus("", invoiceA.ID, domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart, nil, nil); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("TransitionStatus sin tenant: err=%v", err)
+	}
+	if _, err := repo.GetByIdempotencyKey("", tenantA.posID, "key"); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("GetByIdempotencyKey sin tenant: err=%v", err)
+	}
 }
 
 func TestClaimForEmissionEsAtomica(t *testing.T) {
@@ -189,11 +232,11 @@ func TestClaimForEmissionEsAtomica(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	claimed, err := repo.ClaimForEmission(inv.ID)
+	claimed, err := repo.ClaimForEmission(f.companyID, inv.ID)
 	if err != nil || !claimed {
 		t.Fatalf("primer claim debe ser true, got claimed=%v err=%v", claimed, err)
 	}
-	claimed, err = repo.ClaimForEmission(inv.ID)
+	claimed, err = repo.ClaimForEmission(f.companyID, inv.ID)
 	if err != nil || claimed {
 		t.Fatalf("segundo claim debe ser false, got claimed=%v err=%v", claimed, err)
 	}
@@ -210,7 +253,7 @@ func TestReleaseStaleSendingSoloLiberaAntiguas(t *testing.T) {
 		if err := repo.Create(inv); err != nil {
 			t.Fatalf("create: %v", err)
 		}
-		if _, err := repo.ClaimForEmission(inv.ID); err != nil {
+		if _, err := repo.ClaimForEmission(f.companyID, inv.ID); err != nil {
 			t.Fatalf("claim: %v", err)
 		}
 	}
@@ -227,11 +270,11 @@ func TestReleaseStaleSendingSoloLiberaAntiguas(t *testing.T) {
 		t.Fatalf("esperaba liberar exactamente 1 factura, got %d", released)
 	}
 
-	gotVieja, _ := repo.GetByID(vieja.ID)
+	gotVieja, _ := repo.GetByID(f.companyID, vieja.ID)
 	if gotVieja.Status != domain.InvoicePending {
 		t.Errorf("la factura antigua debe volver a PENDING, got %s", gotVieja.Status)
 	}
-	gotReciente, _ := repo.GetByID(reciente.ID)
+	gotReciente, _ := repo.GetByID(f.companyID, reciente.ID)
 	if gotReciente.Status != domain.InvoiceSending {
 		t.Errorf("la factura reciente debe seguir SENDING, got %s", gotReciente.Status)
 	}
@@ -250,16 +293,16 @@ func TestClaimStatusTransicionCondicional(t *testing.T) {
 
 	cancelledAt := time.Now()
 	cancellationFields := map[string]any{"motivo_anulacion": 1, "fecha_anulacion": cancelledAt}
-	ok, err := repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, cancellationFields, nil)
+	ok, err := repo.TransitionStatus(f.companyID, inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, cancellationFields, nil)
 	if err != nil || !ok {
 		t.Fatalf("primera transición debe ser true, got ok=%v err=%v", ok, err)
 	}
-	ok, err = repo.TransitionStatus(inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, cancellationFields, nil)
+	ok, err = repo.TransitionStatus(f.companyID, inv.ID, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, cancellationFields, nil)
 	if err != nil || ok {
 		t.Fatalf("segunda transición debe ser false, got ok=%v err=%v", ok, err)
 	}
 
-	got, _ := repo.GetByID(inv.ID)
+	got, _ := repo.GetByID(f.companyID, inv.ID)
 	if got.Status != domain.InvoiceCancelled {
 		t.Errorf("estado esperado CANCELLED, got %s", got.Status)
 	}
@@ -295,7 +338,7 @@ func TestUpdateEsParcialYNoPisaCamposAjenos(t *testing.T) {
 		t.Fatalf("update stale: %v", err)
 	}
 
-	got, err := repo.GetByID(inv.ID)
+	got, err := repo.GetByID(f.companyID, inv.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

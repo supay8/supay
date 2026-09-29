@@ -79,7 +79,7 @@ func (uc *SiatUsecase) selectBatchInvoices(repo domain.FiscalBatchRepository, co
 			}
 			seen[id] = true
 		}
-		invoices, err = uc.invoiceRepo.GetByIDs(ids)
+		invoices, err = uc.invoiceRepo.GetByIDs(companyID, ids)
 		if err == nil && len(invoices) != len(ids) {
 			return nil, domain.NewNotFoundError("No se encontraron todas las facturas seleccionadas")
 		}

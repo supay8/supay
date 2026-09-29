@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"strconv"
@@ -67,7 +66,11 @@ func (e *EmissionRejectedError) Error() string {
 // receive the SIAT result (or its offline contingency document) immediately;
 // it must not wait for an internal retry queue.
 func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice, error) {
-	return uc.ProcessEmission(ctx, id)
+	tenantID, ok := siat.CompanyIDFromContext(ctx)
+	if !ok {
+		return nil, domain.ErrMissingCompanyID
+	}
+	return uc.ProcessEmission(ctx, tenantID, id)
 }
 
 // ProcessEmission emite al SIAT una factura en estado PENDING usando el SDK go-siat.
@@ -75,8 +78,11 @@ func (uc *InvoiceUsecase) Emit(ctx context.Context, id string) (*domain.Invoice,
 // ítems mapeados a catálogos SIN), la construcción con builders del SDK, la
 // firma digital automática (modalidad electrónica) y la persistencia del
 // resultado (CUF, XML, hash, código de recepción y estado).
-func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*domain.Invoice, error) {
-	inv, err := uc.invoiceRepo.GetByID(id)
+func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, tenantID, id string) (*domain.Invoice, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, domain.ErrMissingCompanyID
+	}
+	inv, err := uc.invoiceRepo.GetByID(tenantID, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")
@@ -87,11 +93,7 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 		return nil, domain.NewBadRequestError("el sector 30 requiere emisión masiva; use /v1/siat/masiva/{companyId}/{pointOfSaleId}")
 	}
 	if inv.Status != domain.InvoicePending {
-		log.Println("DEBUG 1")
-
 		if inv.Status == domain.InvoiceSending {
-			log.Println("DEBUG 2")
-
 			return nil, &EmissionInProgressError{}
 		}
 		return nil, domain.NewConflictError("solo se pueden emitir facturas en estado PENDING")
@@ -104,7 +106,7 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 	}
 
 	// Claim atómico PENDING->SENDING: evita emisiones duplicadas concurrentes.
-	claimed, err := uc.invoiceRepo.ClaimForEmission(id)
+	claimed, err := uc.invoiceRepo.ClaimForEmission(tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +118,7 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, id string) (*doma
 	// una caida de red se resuelve mediante la contingencia oficial mas abajo.
 	rollback := func() {
 		event := invoiceTransitionEvent(inv, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, map[string]any{"source": "Emit"})
-		if _, err := uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, nil, event); err != nil {
+		if _, err := uc.invoiceRepo.TransitionStatus(tenantID, inv.ID, domain.InvoiceSending, domain.InvoicePending, domain.TransitionTransportFailure, nil, event); err != nil {
 			slog.Error("emisión: no se pudo revertir la factura a PENDING",
 				"invoice_id", inv.ID, "error", err)
 		}
@@ -295,7 +297,7 @@ func (uc *InvoiceUsecase) processOfflineContingency(
 		"source": "Emit", "contingency_event_id": event.ID, "trigger": "SIAT_CONNECTIVITY_FAILURE",
 	})
 	claimed, err := uc.invoiceRepo.TransitionStatus(
-		inv.ID, domain.InvoiceSending, domain.InvoiceOffline,
+		inv.CompanyId, inv.ID, domain.InvoiceSending, domain.InvoiceOffline,
 		domain.TransitionContingency, fields, transitionEvent,
 	)
 	if err != nil {
@@ -388,7 +390,7 @@ func (uc *InvoiceUsecase) persistResultadoConReintentos(inv *domain.Invoice, res
 			"codigo_recepcion": result.CodigoRecepcion, "transaccion": result.Transaccion,
 		})
 		var claimed bool
-		claimed, err = uc.invoiceRepo.TransitionStatus(inv.ID, domain.InvoiceSending, inv.Status, reason, fields, event)
+		claimed, err = uc.invoiceRepo.TransitionStatus(inv.CompanyId, inv.ID, domain.InvoiceSending, inv.Status, reason, fields, event)
 		if err == nil && !claimed {
 			return domain.NewConflictError("la factura cambió de estado mientras se persistía la respuesta del SIAT")
 		}
@@ -435,7 +437,11 @@ func (uc *InvoiceUsecase) persistSignedXML(ctx context.Context, inv *domain.Invo
 // CodigoEstado devuelto (según el catálogo mensajesServicios). Un error de
 // transporte no modifica el estado local.
 func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.Invoice, error) {
-	inv, err := uc.invoiceRepo.GetByID(id)
+	tenantID, ok := siat.CompanyIDFromContext(ctx)
+	if !ok {
+		return nil, domain.ErrMissingCompanyID
+	}
+	inv, err := uc.invoiceRepo.GetByID(tenantID, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")
@@ -461,7 +467,7 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 
 	if estado, ok := siatEstadoToDomain(result.CodigoEstado); ok && inv.Status != estado {
 		event := invoiceTransitionEvent(inv, inv.Status, estado, domain.TransitionSIATReconciliation, map[string]any{"source": "VerifyStatus", "codigo_estado": result.CodigoEstado})
-		claimed, err := uc.invoiceRepo.TransitionStatus(inv.ID, inv.Status, estado, domain.TransitionSIATReconciliation, nil, event)
+		claimed, err := uc.invoiceRepo.TransitionStatus(tenantID, inv.ID, inv.Status, estado, domain.TransitionSIATReconciliation, nil, event)
 		if err != nil {
 			return nil, err
 		}
@@ -478,7 +484,11 @@ func (uc *InvoiceUsecase) VerifyStatus(ctx context.Context, id string) (*domain.
 // del catálogo sincronizado motivoAnulacion. Al ser aceptada (905 ANULACION
 // CONFIRMADA) se persiste el estado, el motivo y la fecha de anulación.
 func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error) {
-	inv, err := uc.invoiceRepo.GetByID(id)
+	tenantID, ok := siat.CompanyIDFromContext(ctx)
+	if !ok {
+		return nil, domain.ErrMissingCompanyID
+	}
+	inv, err := uc.invoiceRepo.GetByID(tenantID, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")
@@ -529,7 +539,7 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 	// Transición condicional ACCEPTED->CANCELLED: si otra anulación concurrente
 	// ya la aplicó, aquí llega false en lugar de pisar el estado.
 	event := invoiceTransitionEvent(inv, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, map[string]any{"source": "Annul", "codigo_motivo": codigoMotivo})
-	claimed, err := uc.invoiceRepo.TransitionStatus(id, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, fields, event)
+	claimed, err := uc.invoiceRepo.TransitionStatus(tenantID, id, domain.InvoiceAccepted, domain.InvoiceCancelled, domain.TransitionCancellation, fields, event)
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +563,11 @@ func (uc *InvoiceUsecase) Annul(ctx context.Context, id string, codigoMotivo int
 // devolviendo la factura a ACCEPTED y limpiando el motivo y la fecha de
 // anulación persistidos.
 func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.Invoice, error) {
-	inv, err := uc.invoiceRepo.GetByID(id)
+	tenantID, ok := siat.CompanyIDFromContext(ctx)
+	if !ok {
+		return nil, domain.ErrMissingCompanyID
+	}
+	inv, err := uc.invoiceRepo.GetByID(tenantID, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")
@@ -597,7 +611,7 @@ func (uc *InvoiceUsecase) RevertAnnul(ctx context.Context, id string) (*domain.I
 	}
 	// Transición condicional CANCELLED->ACCEPTED (simétrica a Annul).
 	event := invoiceTransitionEvent(inv, domain.InvoiceCancelled, domain.InvoiceAccepted, domain.TransitionCancellationRevert, map[string]any{"source": "RevertAnnul"})
-	claimed, err := uc.invoiceRepo.TransitionStatus(id, domain.InvoiceCancelled, domain.InvoiceAccepted, domain.TransitionCancellationRevert, fields, event)
+	claimed, err := uc.invoiceRepo.TransitionStatus(tenantID, id, domain.InvoiceCancelled, domain.InvoiceAccepted, domain.TransitionCancellationRevert, fields, event)
 	if err != nil {
 		return nil, err
 	}
@@ -925,7 +939,7 @@ func (uc *InvoiceUsecase) buildSolicitudFactura(ctx context.Context, inv *domain
 		if strings.TrimSpace(valueOrEmpty(inv.AjustaFacturaId)) == "" {
 			return nil, domain.NewConflictError("el documento de ajuste no tiene factura original asociada")
 		}
-		original, originalErr := uc.invoiceRepo.GetByID(*inv.AjustaFacturaId)
+		original, originalErr := uc.invoiceRepo.GetByID(inv.CompanyId, *inv.AjustaFacturaId)
 		if originalErr != nil {
 			return nil, fmt.Errorf("no se pudo cargar la factura original del ajuste: %w", originalErr)
 		}

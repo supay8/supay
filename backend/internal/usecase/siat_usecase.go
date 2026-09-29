@@ -287,8 +287,8 @@ func (uc *SiatUsecase) LoadCompanyAndPointOfSale(companyID, pointOfSaleID string
 
 	return company, pointOfSale, nil
 }
-func (uc *SiatUsecase) LoadInvoicesIDs(invoiceIDs []string) ([]*domain.Invoice, error) {
-	invoices, err := uc.invoiceRepo.GetByIDs(invoiceIDs)
+func (uc *SiatUsecase) LoadInvoicesIDs(companyID string, invoiceIDs []string) ([]*domain.Invoice, error) {
+	invoices, err := uc.invoiceRepo.GetByIDs(companyID, invoiceIDs)
 	if err != nil {
 		return nil, domain.NewBadRequestError("Error al obtener facturas por IDs: " + err.Error())
 	}

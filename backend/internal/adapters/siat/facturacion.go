@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"log"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -221,22 +220,17 @@ type ResultadoDocumento struct {
 // recepcionDocumentoAjuste. El SDK serializa el XML, lo firma con XMLDSig cuando
 // la modalidad es electrónica, lo comprime en gzip y calcula el hash SHA-256.
 func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*ResultadoEmision, error) {
-	log.Println("Funcion de facturacion EmitirFactura")
 	if s.sdk == nil {
 		return nil, fmt.Errorf("siat emision: servicio SIAT no inicializado")
 	}
 	if err := s.applyIdentity(&req); err != nil {
-		log.Println("DEBUG EF1")
 		return nil, err
 	}
 	if err := req.validate(); err != nil {
-		log.Println("DEBUG EF2", err)
-
 		return nil, err
 	}
 	perfil, err := PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
 	if err != nil {
-		log.Println("DEBUG EF3", err)
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 	// CUF: debe usar el MISMO timestamp de la cabecera y el MISMO correlativo,
@@ -252,7 +246,6 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	if perfil.HasBuilder() {
 		factura, cuf, tipoDoc, err = buildFacturaSDK(req, goSiat.EmisionOnline)
 		if err != nil {
-			log.Println("error al construir la factura", err)
 			return nil, err
 		}
 		xmlData, marshalErr := xml.Marshal(factura)
@@ -269,7 +262,6 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		}
 		archivo, hash, err = empaquetaArchivo(xmlToSend)
 		if err != nil {
-			log.Println("DEBUG EF4", err)
 			return nil, fmt.Errorf("siat emision: %w", err)
 		}
 		xmlSent = xmlToSend
@@ -325,14 +317,12 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 		resp, err = s.recepcionFacturaParaPerfil(ctx, perfil, req.Modalidad, rcp.Build())
 	}
 	if err != nil {
-		log.Println("DEBUG EF5", err)
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 	// Nota: RespuestaRecepcion no implementa common.Result, por lo que
 	// goSiat.Verify no aplica; la verificación es manual (Transaccion/CodigoEstado).
 	transaccion, codigoEstado, codigoRecepcion, mensajes, err := extraerResultadoFacturacion(resp)
 	if err != nil {
-		log.Println("DEBUG EF6", err)
 		return nil, fmt.Errorf("siat emision: %w", err)
 	}
 	return &ResultadoEmision{

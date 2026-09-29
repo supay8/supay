@@ -69,11 +69,12 @@ func TestOutboxEnqueueClaimRetryAndPublish(t *testing.T) {
 	if _, err := repo.EnqueueInvoiceEmission(context.Background(), invoice.ID, fixture.companyID, fixture.cufd.ID); err != nil {
 		t.Fatalf("reencolar evento publicado: %v", err)
 	}
-	events, err = repo.ClaimPending(context.Background(), domain.OutboxEventInvoiceEmit, "worker-caido", 10, next, time.Minute)
+	const crashLease = 30 * time.Second
+	events, err = repo.ClaimPending(context.Background(), domain.OutboxEventInvoiceEmit, "worker-caido", 10, next, crashLease)
 	if err != nil || len(events) != 1 {
 		t.Fatalf("claim para simular crash eventos=%+v err=%v", events, err)
 	}
-	events, err = repo.ClaimPending(context.Background(), domain.OutboxEventInvoiceEmit, "worker-recuperacion", 10, next.Add(2*time.Minute), time.Minute)
+	events, err = repo.ClaimPending(context.Background(), domain.OutboxEventInvoiceEmit, "worker-recuperacion", 10, next.Add(crashLease+time.Second), crashLease)
 	if err != nil || len(events) != 1 || events[0].LockedBy == nil || *events[0].LockedBy != "worker-recuperacion" {
 		t.Fatalf("recuperación de lock eventos=%+v err=%v", events, err)
 	}

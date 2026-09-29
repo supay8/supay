@@ -116,7 +116,7 @@ func (r *PostgresOutboxRepository) ClaimPending(ctx context.Context, eventType, 
 		limit = 100
 	}
 	if lockTimeout <= 0 {
-		lockTimeout = time.Minute
+		lockTimeout = 30 * time.Second
 	}
 	staleBefore := now.Add(-lockTimeout)
 	var rows []models.OutboxEvent

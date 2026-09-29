@@ -378,7 +378,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		if len(req.IdempotencyKey) > 100 {
 			return nil, domain.NewBadRequestError("Idempotency-Key no puede exceder 100 caracteres")
 		}
-		existing, err := uc.invoiceRepo.GetByIdempotencyKey(req.PointOfSaleId, req.IdempotencyKey)
+		existing, err := uc.invoiceRepo.GetByIdempotencyKey(req.CompanyId, req.PointOfSaleId, req.IdempotencyKey)
 		if err != nil {
 			return nil, err
 		}
@@ -532,7 +532,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		ref := refFactura
 		if ref == nil {
 			var loadErr error
-			ref, loadErr = uc.invoiceRepo.GetByID(strings.TrimSpace(*req.ReferenciaFacturaId))
+			ref, loadErr = uc.invoiceRepo.GetByID(req.CompanyId, strings.TrimSpace(*req.ReferenciaFacturaId))
 			if loadErr != nil {
 				return nil, domain.NewNotFoundError("la factura referenciada no existe")
 			}
@@ -688,7 +688,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		// misma Idempotency-Key (idx_invoice_idem_key). Se devuelve la
 		// existente para que el cliente reciba el replay en vez de un 500.
 		if req.IdempotencyKey != "" && isUniqueViolation(err) {
-			if existing, err2 := uc.invoiceRepo.GetByIdempotencyKey(req.PointOfSaleId, req.IdempotencyKey); err2 == nil && existing != nil {
+			if existing, err2 := uc.invoiceRepo.GetByIdempotencyKey(req.CompanyId, req.PointOfSaleId, req.IdempotencyKey); err2 == nil && existing != nil {
 				existing.IdempotencyKey = &req.IdempotencyKey
 				return existing, nil
 			}
@@ -725,8 +725,12 @@ func (uc *InvoiceUsecase) ensureCatalogReadiness(companyID, pointOfSaleID string
 	return nil
 }
 
-func (uc *InvoiceUsecase) GetByID(id string) (*domain.Invoice, error) {
-	inv, err := uc.invoiceRepo.GetByID(id)
+func (uc *InvoiceUsecase) GetByID(ctx context.Context, id string) (*domain.Invoice, error) {
+	tenantID, ok := siat.CompanyIDFromContext(ctx)
+	if !ok {
+		return nil, domain.ErrMissingCompanyID
+	}
+	inv, err := uc.invoiceRepo.GetByID(tenantID, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")

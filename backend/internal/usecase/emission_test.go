@@ -66,10 +66,10 @@ func (r *fakeInvoiceFileRepo) DeleteFile(_ context.Context, companyID, invoiceID
 	return nil
 }
 
-func (f *fakeInvoiceRepo) GetByIDs(ids []string) ([]*domain.Invoice, error) {
+func (f *fakeInvoiceRepo) GetByIDs(tenantID string, ids []string) ([]*domain.Invoice, error) {
 	var result []*domain.Invoice
 	for _, id := range ids {
-		if inv, exists := f.invoices[id]; exists {
+		if inv, exists := f.invoices[id]; exists && inv.CompanyId == tenantID {
 			result = append(result, inv)
 		}
 	}
@@ -105,9 +105,9 @@ func (f *fakeInvoiceRepo) Create(inv *domain.Invoice) error {
 	return nil
 }
 
-func (f *fakeInvoiceRepo) GetByID(id string) (*domain.Invoice, error) {
+func (f *fakeInvoiceRepo) GetByID(tenantID, id string) (*domain.Invoice, error) {
 	inv, ok := f.invoices[id]
-	if !ok {
+	if !ok || inv.CompanyId != tenantID {
 		return nil, gorm.ErrRecordNotFound
 	}
 	return inv, nil
@@ -116,7 +116,7 @@ func (f *fakeInvoiceRepo) GetByID(id string) (*domain.Invoice, error) {
 func (f *fakeInvoiceRepo) ListFiltered(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
 	out := make([]*domain.Invoice, 0)
 	for _, inv := range f.invoices {
-		if inv.PointOfSaleId != filter.PointOfSaleID {
+		if inv.CompanyId != filter.TenantID || inv.PointOfSaleId != filter.PointOfSaleID {
 			continue
 		}
 		if filter.Status != nil && inv.Status != *filter.Status {
@@ -145,10 +145,10 @@ func (f *fakeInvoiceRepo) Update(inv *domain.Invoice) error {
 	return nil
 }
 
-func (f *fakeInvoiceRepo) ClaimForEmission(id string) (bool, error) {
+func (f *fakeInvoiceRepo) ClaimForEmission(tenantID, id string) (bool, error) {
 	f.claimCalls++
 	inv, ok := f.invoices[id]
-	if !ok {
+	if !ok || inv.CompanyId != tenantID {
 		return false, nil
 	}
 	if inv.Status != domain.InvoicePending {
@@ -160,9 +160,13 @@ func (f *fakeInvoiceRepo) ClaimForEmission(id string) (bool, error) {
 	return true, nil
 }
 
-func (f *fakeInvoiceRepo) TransitionStatus(id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
+func (f *fakeInvoiceRepo) TransitionStatus(tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
 	if err := (domain.InvoiceStateMachine{}).Transition(from, to, reason); err != nil {
 		return false, err
+	}
+	inv, ok := f.invoices[id]
+	if !ok || inv.CompanyId != tenantID {
+		return false, nil
 	}
 	claimed, err := f.ClaimStatus(id, from, to, fields)
 	if claimed {
@@ -222,13 +226,21 @@ func (f *fakeInvoiceRepo) FindActiveCufdForPointOfSale(string, time.Time) (*doma
 	return f.activeCufd, nil
 }
 
-func (f *fakeInvoiceRepo) GetByIdempotencyKey(pointOfSaleID, key string) (*domain.Invoice, error) {
+func (f *fakeInvoiceRepo) GetByIdempotencyKey(tenantID, pointOfSaleID, key string) (*domain.Invoice, error) {
 	for _, inv := range f.invoices {
-		if inv.PointOfSaleId == pointOfSaleID && inv.IdempotencyKey != nil && *inv.IdempotencyKey == key {
+		if inv.CompanyId == tenantID && inv.PointOfSaleId == pointOfSaleID && inv.IdempotencyKey != nil && *inv.IdempotencyKey == key {
 			return inv, nil
 		}
 	}
 	return nil, nil
+}
+
+func invoiceContext() context.Context {
+	return invoiceContextFor("comp-1")
+}
+
+func invoiceContextFor(tenantID string) context.Context {
+	return siat.WithCompanyID(context.Background(), tenantID)
 }
 
 type fakeCatalogRepo struct {
@@ -573,6 +585,55 @@ func newTestUsecase(repo *fakeInvoiceRepo, catalog *fakeCatalogRepo, svc ports.F
 	return uc
 }
 
+func TestInvoiceUsecaseDeniesCrossTenantDirectCalls(t *testing.T) {
+	repo := newFakeInvoiceRepo()
+	inv := testInvoice()
+	repo.invoices[inv.ID] = inv
+	uc := newTestUsecase(repo, &fakeCatalogRepo{}, &fakeEmissionService{})
+	wrongTenant := invoiceContextFor("comp-2")
+
+	operations := map[string]func() error{
+		"GetByID": func() error {
+			_, err := uc.GetByID(wrongTenant, inv.ID)
+			return err
+		},
+		"Emit": func() error {
+			_, err := uc.Emit(wrongTenant, inv.ID)
+			return err
+		},
+		"ProcessEmission": func() error {
+			_, err := uc.ProcessEmission(context.Background(), "comp-2", inv.ID)
+			return err
+		},
+		"VerifyStatus": func() error {
+			_, err := uc.VerifyStatus(wrongTenant, inv.ID)
+			return err
+		},
+		"Annul": func() error {
+			_, err := uc.Annul(wrongTenant, inv.ID, 1)
+			return err
+		},
+		"RevertAnnul": func() error {
+			_, err := uc.RevertAnnul(wrongTenant, inv.ID)
+			return err
+		},
+	}
+	for name, operation := range operations {
+		t.Run(name, func(t *testing.T) {
+			var notFound *domain.NotFoundError
+			if err := operation(); !errors.As(err, &notFound) {
+				t.Fatalf("se esperaba not found sin revelar pertenencia, got %T: %v", err, err)
+			}
+		})
+	}
+	if repo.claimCalls != 0 || inv.Status != domain.InvoicePending {
+		t.Fatalf("una llamada cross-tenant intentó mutar la factura: claims=%d status=%s", repo.claimCalls, inv.Status)
+	}
+	if _, err := uc.GetByID(context.Background(), inv.ID); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("GetByID sin tenant debe fallar cerrado: %v", err)
+	}
+}
+
 type fakeDocSectorRepo struct {
 	items []*domain.SiatActividadDocSector
 }
@@ -800,7 +861,7 @@ func TestEmitAccepted(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	got, err := uc.Emit(context.Background(), "inv-1")
+	got, err := uc.Emit(invoiceContext(), "inv-1")
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -831,7 +892,7 @@ func TestEmitSiempreProcesaSincrono(t *testing.T) {
 	svc := &fakeEmissionService{result: &ports.FiscalResult{Cuf: "CUF-1", Xml: "<xml/>", Transaccion: true, CodigoEstado: 908}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	got, err := uc.Emit(context.Background(), "inv-1")
+	got, err := uc.Emit(invoiceContext(), "inv-1")
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -853,7 +914,7 @@ func TestEmitTimeoutActivaContingenciaOffline(t *testing.T) {
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 	uc.SetContingencyRepository(contingencies)
 
-	got, err := uc.Emit(context.Background(), "inv-1")
+	got, err := uc.Emit(invoiceContext(), "inv-1")
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -912,7 +973,7 @@ func TestProcessEmissionGeneraPDFDentroDelWorker(t *testing.T) {
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 	uc.pdfService = pdf
 
-	if _, err := uc.ProcessEmission(context.Background(), "inv-1"); err != nil {
+	if _, err := uc.ProcessEmission(context.Background(), "comp-1", "inv-1"); err != nil {
 		t.Fatalf("ProcessEmission: %v", err)
 	}
 	if pdf.calls != 1 {
@@ -932,7 +993,7 @@ func TestEmitObserved(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	got, err := uc.Emit(context.Background(), "inv-1")
+	got, err := uc.Emit(invoiceContext(), "inv-1")
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -958,7 +1019,7 @@ func TestEmitRejected(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	_, err := uc.Emit(context.Background(), "inv-1")
+	_, err := uc.Emit(invoiceContext(), "inv-1")
 	var rejected *EmissionRejectedError
 	if !errors.As(err, &rejected) {
 		t.Fatalf("se esperaba EmissionRejectedError, se obtuvo: %v", err)
@@ -978,7 +1039,7 @@ func TestEmitTransportErrorRevierteAPending(t *testing.T) {
 	svc := &fakeEmissionService{err: errors.New("connection reset")}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	if _, err := uc.Emit(context.Background(), "inv-1"); err == nil {
+	if _, err := uc.Emit(invoiceContext(), "inv-1"); err == nil {
 		t.Fatal("se esperaba error de transporte")
 	}
 	stored := repo.invoices["inv-1"]
@@ -992,7 +1053,7 @@ func TestEmitNoDisponibleRevierteAPending(t *testing.T) {
 	_ = repo.Create(testInvoice())
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, nil)
 
-	if _, err := uc.Emit(context.Background(), "inv-1"); err == nil {
+	if _, err := uc.Emit(invoiceContext(), "inv-1"); err == nil {
 		t.Fatal("se esperaba error de servicio SIAT no disponible")
 	}
 	if repo.invoices["inv-1"].Status != domain.InvoicePending {
@@ -1008,7 +1069,7 @@ func TestEmitNoPending(t *testing.T) {
 	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	if _, err := uc.Emit(context.Background(), "inv-1"); err == nil {
+	if _, err := uc.Emit(invoiceContext(), "inv-1"); err == nil {
 		t.Fatal("se esperaba error por estado no PENDING")
 	}
 	if repo.claimCalls != 0 {
@@ -1024,7 +1085,7 @@ func TestEmitClaimPerdido(t *testing.T) {
 	svc := &fakeEmissionService{result: &ports.FiscalResult{Transaccion: true}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	if _, err := uc.Emit(context.Background(), "inv-1"); err == nil {
+	if _, err := uc.Emit(invoiceContext(), "inv-1"); err == nil {
 		t.Fatal("se esperaba error de claim perdido (SENDING)")
 	}
 }
@@ -1069,7 +1130,7 @@ func TestVerifyStatusReconciliaEstado(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	got, err := uc.VerifyStatus(context.Background(), "inv-1")
+	got, err := uc.VerifyStatus(invoiceContext(), "inv-1")
 	if err != nil {
 		t.Fatalf("VerifyStatus: %v", err)
 	}
@@ -1090,7 +1151,7 @@ func TestVerifyStatusSinCambioNoActualiza(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	got, err := uc.VerifyStatus(context.Background(), "inv-1")
+	got, err := uc.VerifyStatus(invoiceContext(), "inv-1")
 	if err != nil {
 		t.Fatalf("VerifyStatus: %v", err)
 	}
@@ -1107,7 +1168,7 @@ func TestVerifyStatusSinCuf(t *testing.T) {
 	_ = repo.Create(testInvoice())
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, &fakeEmissionService{})
 
-	if _, err := uc.VerifyStatus(context.Background(), "inv-1"); err == nil {
+	if _, err := uc.VerifyStatus(invoiceContext(), "inv-1"); err == nil {
 		t.Fatal("se esperaba error por falta de CUF")
 	}
 }
@@ -1127,7 +1188,7 @@ func TestAnnulAccepted(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, catalog, svc)
 
-	got, err := uc.Annul(context.Background(), "inv-1", 1)
+	got, err := uc.Annul(invoiceContext(), "inv-1", 1)
 	if err != nil {
 		t.Fatalf("Annul: %v", err)
 	}
@@ -1158,7 +1219,7 @@ func TestAnnulRechazado(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, catalog, svc)
 
-	_, err := uc.Annul(context.Background(), "inv-1", 1)
+	_, err := uc.Annul(invoiceContext(), "inv-1", 1)
 	var rejected *EmissionRejectedError
 	if !errors.As(err, &rejected) {
 		t.Fatalf("se esperaba EmissionRejectedError, se obtuvo: %v", err)
@@ -1175,7 +1236,7 @@ func TestAnnulNoAccepted(t *testing.T) {
 	_ = repo.Create(inv)
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, &fakeEmissionService{})
 
-	if _, err := uc.Annul(context.Background(), "inv-1", 1); err == nil {
+	if _, err := uc.Annul(invoiceContext(), "inv-1", 1); err == nil {
 		t.Fatal("se esperaba error por estado no ACCEPTED")
 	}
 }
@@ -1188,7 +1249,7 @@ func TestAnnulMotivoInvalido(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, catalog, &fakeEmissionService{})
 
-	if _, err := uc.Annul(context.Background(), "inv-1", 99); err == nil || !strings.Contains(err.Error(), "motivo") {
+	if _, err := uc.Annul(invoiceContext(), "inv-1", 99); err == nil || !strings.Contains(err.Error(), "motivo") {
 		t.Fatalf("se esperaba error de motivo inválido, se obtuvo: %v", err)
 	}
 }
@@ -1209,7 +1270,7 @@ func TestRevertAnnul(t *testing.T) {
 	}}
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, svc)
 
-	got, err := uc.RevertAnnul(context.Background(), "inv-1")
+	got, err := uc.RevertAnnul(invoiceContext(), "inv-1")
 	if err != nil {
 		t.Fatalf("RevertAnnul: %v", err)
 	}
@@ -1229,7 +1290,7 @@ func TestRevertAnnulNoCancelled(t *testing.T) {
 	_ = repo.Create(emittedInvoice())
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, &fakeEmissionService{})
 
-	if _, err := uc.RevertAnnul(context.Background(), "inv-1"); err == nil {
+	if _, err := uc.RevertAnnul(invoiceContext(), "inv-1"); err == nil {
 		t.Fatal("se esperaba error por estado no CANCELLED")
 	}
 }
@@ -1244,7 +1305,7 @@ func TestAnnulUsaCufdVigente(t *testing.T) {
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica,
 		nil, nil, nil, nil, nil, false, nil)
 
-	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
+	if _, err := uc.Annul(invoiceContext(), "inv-1", 1); err != nil {
 		t.Fatalf("Annul: %v", err)
 	}
 	if svc.captured == nil || svc.captured.Cufd != "CUFD-VIGENTE" {
@@ -1262,7 +1323,7 @@ func TestAnnulCaeAlCufdDeEmisionSinVigente(t *testing.T) {
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, catalog, &fakeCufdRepo{}, svc, siat.ModalidadElectronica,
 		nil, nil, nil, nil, nil, false, nil)
 
-	if _, err := uc.Annul(context.Background(), "inv-1", 1); err != nil {
+	if _, err := uc.Annul(invoiceContext(), "inv-1", 1); err != nil {
 		t.Fatalf("Annul: %v", err)
 	}
 	if svc.captured == nil || svc.captured.Cufd != "CUFD-XYZ" {
@@ -1281,7 +1342,7 @@ func TestRevertAnnulUsaCufdVigente(t *testing.T) {
 	uc := NewInvoiceUsecase(repo, nil, nil, nil, &fakeCatalogRepo{}, &fakeCufdRepo{vigente: &domain.Cufd{Cufd: "CUFD-VIGENTE", ValidFrom: time.Now().Add(-time.Hour), ValidTo: time.Now().Add(time.Hour)}}, svc, siat.ModalidadElectronica,
 		nil, nil, nil, nil, nil, false, nil)
 
-	if _, err := uc.RevertAnnul(context.Background(), "inv-1"); err != nil {
+	if _, err := uc.RevertAnnul(invoiceContext(), "inv-1"); err != nil {
 		t.Fatalf("RevertAnnul: %v", err)
 	}
 	if svc.captured == nil || svc.captured.Cufd != "CUFD-VIGENTE" {
@@ -1584,7 +1645,7 @@ func TestEmitEsperaCufdAntesDeClaim(t *testing.T) {
 	uc := newTestUsecase(repo, &fakeCatalogRepo{}, &fakeEmissionService{})
 	uc.credentials = provider
 
-	if _, err := uc.Emit(context.Background(), inv.ID); err == nil {
+	if _, err := uc.Emit(invoiceContext(), inv.ID); err == nil {
 		t.Fatal("se esperaba que la emisión esperara la renovación del CUFD")
 	}
 	if repo.claimCalls != 0 {
@@ -1610,7 +1671,7 @@ func TestListInvoices(t *testing.T) {
 	_ = repo.Create(pending)
 
 	t.Run("sin filtro de estado devuelve todo", func(t *testing.T) {
-		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1"})
+		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{TenantID: "comp-1", PointOfSaleID: "pos-1"})
 		if err != nil || total != 2 || len(list) != 2 {
 			t.Fatalf("list=%d total=%d err=%v", len(list), total, err)
 		}
@@ -1618,7 +1679,7 @@ func TestListInvoices(t *testing.T) {
 
 	t.Run("filtra por estado", func(t *testing.T) {
 		status := domain.InvoiceAccepted
-		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1", Status: &status})
+		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{TenantID: "comp-1", PointOfSaleID: "pos-1", Status: &status})
 		if err != nil || total != 1 || len(list) != 1 || list[0].ID != "inv-ok" {
 			t.Fatalf("list=%d total=%d err=%v", len(list), total, err)
 		}
@@ -1632,13 +1693,13 @@ func TestListInvoices(t *testing.T) {
 
 	t.Run("estado inválido rechazado", func(t *testing.T) {
 		status := domain.InvoiceStatus("NO_EXISTE")
-		if _, _, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1", Status: &status}); err == nil {
+		if _, _, err := uc.ListInvoices(domain.InvoiceListFilter{TenantID: "comp-1", PointOfSaleID: "pos-1", Status: &status}); err == nil {
 			t.Fatal("se esperaba error por estado inválido")
 		}
 	})
 
 	t.Run("paginación respeta limit/offset", func(t *testing.T) {
-		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{PointOfSaleID: "pos-1", Limit: 1, Offset: 1})
+		list, total, err := uc.ListInvoices(domain.InvoiceListFilter{TenantID: "comp-1", PointOfSaleID: "pos-1", Limit: 1, Offset: 1})
 		if err != nil || total != 2 || len(list) != 1 {
 			t.Fatalf("list=%d total=%d err=%v", len(list), total, err)
 		}

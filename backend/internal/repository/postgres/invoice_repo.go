@@ -96,9 +96,12 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 	return res, total, nil
 }
 
-func (r *PostgresInvoiceRepository) GetByID(id string) (*domain.Invoice, error) {
+func (r *PostgresInvoiceRepository) GetByID(tenantID, id string) (*domain.Invoice, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, domain.ErrMissingCompanyID
+	}
 	var m models.Invoice
-	if err := r.db.Preload("Items").Preload("Events").Preload("PointOfSale").Preload("Company.Config").Preload("CufdRecord").First(&m, "id = ?", id).Error; err != nil {
+	if err := r.db.Preload("Items").Preload("Events").Preload("PointOfSale").Preload("Company.Config").Preload("CufdRecord").First(&m, "tenant_id = ? AND id = ?", tenantID, id).Error; err != nil {
 		return nil, err
 	}
 	return toDomainInvoice(&m), nil
@@ -161,17 +164,20 @@ func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
 	return nil
 }
 
-func (r *PostgresInvoiceRepository) TransitionStatus(id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
+func (r *PostgresInvoiceRepository) TransitionStatus(tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return false, domain.ErrMissingCompanyID
+	}
 	if err := (domain.InvoiceStateMachine{}).Transition(from, to, reason); err != nil {
 		return false, err
 	}
 	claimed := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		var tenantID string
-		if err := tx.Model(&models.Invoice{}).Select("tenant_id").Where("id = ?", id).Scan(&tenantID).Error; err != nil {
+		var storedTenantID string
+		if err := tx.Model(&models.Invoice{}).Select("tenant_id").Where("tenant_id = ? AND id = ?", tenantID, id).Scan(&storedTenantID).Error; err != nil {
 			return err
 		}
-		if tenantID == "" {
+		if storedTenantID == "" {
 			return gorm.ErrRecordNotFound
 		}
 		values := make(map[string]any, len(fields)+1)
@@ -182,7 +188,7 @@ func (r *PostgresInvoiceRepository) TransitionStatus(id string, from, to domain.
 		}
 		values["status"] = models.InvoiceStatus(to)
 		result := tx.Model(&models.Invoice{}).
-			Where("id = ? AND status = ?", id, models.InvoiceStatus(from)).
+			Where("tenant_id = ? AND id = ? AND status = ?", tenantID, id, models.InvoiceStatus(from)).
 			Updates(values)
 		if result.Error != nil {
 			return result.Error
@@ -198,7 +204,10 @@ func (r *PostgresInvoiceRepository) TransitionStatus(id string, from, to domain.
 			event.InvoiceID = id
 		}
 		if event.TenantID == "" {
-			event.TenantID = tenantID
+			event.TenantID = storedTenantID
+		}
+		if event.TenantID != storedTenantID {
+			return gorm.ErrRecordNotFound
 		}
 		model := models.InvoiceEvent{
 			ID: event.ID, InvoiceId: event.InvoiceID, TenantID: event.TenantID,
@@ -218,13 +227,13 @@ func (r *PostgresInvoiceRepository) TransitionStatus(id string, from, to domain.
 	return claimed, err
 }
 
-func (r *PostgresInvoiceRepository) ClaimForEmission(id string) (bool, error) {
+func (r *PostgresInvoiceRepository) ClaimForEmission(tenantID, id string) (bool, error) {
 	event := &domain.InvoiceEvent{
 		Type:    "STATUS_TRANSITION",
 		Message: "invoice status changed from PENDING to SENDING",
 		Payload: []byte(`{"from_status":"PENDING","to_status":"SENDING","reason":"EMISSION_START","source":"ClaimForEmission"}`),
 	}
-	return r.TransitionStatus(id, domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart, nil, event)
+	return r.TransitionStatus(tenantID, id, domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart, nil, event)
 }
 
 func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration) (int64, error) {
@@ -268,10 +277,13 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 	return released, nil
 }
 
-func (r *PostgresInvoiceRepository) GetByIdempotencyKey(pointOfSaleID, key string) (*domain.Invoice, error) {
+func (r *PostgresInvoiceRepository) GetByIdempotencyKey(tenantID, pointOfSaleID, key string) (*domain.Invoice, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, domain.ErrMissingCompanyID
+	}
 	var m models.Invoice
 	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company.Config").Preload("CufdRecord").
-		First(&m, "point_of_sale_id = ? AND idempotency_key = ?", pointOfSaleID, key).Error; err != nil {
+		First(&m, "tenant_id = ? AND point_of_sale_id = ? AND idempotency_key = ?", tenantID, pointOfSaleID, key).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -289,10 +301,13 @@ func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID s
 }
 
 // get list of invoices by  IDS
-func (r *PostgresInvoiceRepository) GetByIDs(ids []string) ([]*domain.Invoice, error) {
+func (r *PostgresInvoiceRepository) GetByIDs(tenantID string, ids []string) ([]*domain.Invoice, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, domain.ErrMissingCompanyID
+	}
 	var ms []models.Invoice
 	if err := r.db.Preload("Items").Preload("CufdRecord").
-		Where("id IN ?", ids).
+		Where("tenant_id = ? AND id IN ?", tenantID, ids).
 		Order("invoice_number ASC").Find(&ms).Error; err != nil {
 		return nil, err
 	}

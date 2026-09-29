@@ -29,7 +29,7 @@ func (uc *InvoiceUsecase) autofillDocumentoAjusteDescuento(req *CreateInvoiceReq
 	}
 
 	refID := strings.TrimSpace(*req.ReferenciaFacturaId)
-	ref, err := uc.invoiceRepo.GetByID(refID)
+	ref, err := uc.invoiceRepo.GetByID(companyID, refID)
 	if err != nil {
 		return nil, domain.NewNotFoundError("la factura referenciada no existe")
 	}

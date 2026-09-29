@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/brandsrx/supay/internal/ports"
 )
@@ -38,8 +37,6 @@ var _ ports.OfflineFiscalService = (*FiscalAdapter)(nil)
 func (a *FiscalAdapter) Emit(ctx context.Context, doc ports.FiscalDocument) (ports.FiscalResult, error) {
 	res, err := a.svc.EmitirFactura(ctx, toSiatSolicitudFactura(doc))
 	if err != nil {
-		log.Println("DEBUG F1", err)
-
 		return ports.FiscalResult{}, err
 	}
 	return fromSiatResultadoEmision(res), nil

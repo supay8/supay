@@ -1,0 +1,56 @@
+name: Rechazo SIAT
+description: Registra feedback fiscal sanitizado para convertirlo en un fixture de regresión.
+title: "[SIAT] rechazo sector "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        No incluya NIT, razón social, nombre, documento, email, CUF, XML, payloads ni códigos de recepción.
+        Use solamente los campos del log `event=siat_rejection_feedback` y datos sintéticos.
+  - type: input
+    id: sector
+    attributes:
+      label: Sector
+      description: Código numérico de documento-sector.
+      placeholder: "1"
+    validations:
+      required: true
+  - type: input
+    id: codigo_estado
+    attributes:
+      label: Código de estado
+      placeholder: "902"
+    validations:
+      required: true
+  - type: input
+    id: mensajes
+    attributes:
+      label: Códigos de mensajes
+      description: Lista de códigos numéricos del campo mensajes; no copie descripciones sin redactarlas.
+      placeholder: "[42, 1001]"
+    validations:
+      required: true
+  - type: dropdown
+    id: canal
+    attributes:
+      label: Canal
+      options:
+        - Emisión individual
+        - Masiva
+        - Paquete de contingencia
+        - Validación de lote
+    validations:
+      required: true
+  - type: textarea
+    id: reproduccion
+    attributes:
+      label: Reproducción sintética
+      description: Explique cómo reproducir sin datos de contribuyentes ni documentos reales.
+    validations:
+      required: true
+  - type: input
+    id: fixture
+    attributes:
+      label: Fixture de regresión
+      description: Ruta o PR del fixture que debe pasar antes de promover el sector.
+      placeholder: internal/adapters/siat/...

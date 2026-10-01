@@ -30,18 +30,29 @@ services:
     profiles: ["selfhosted", "cloud"]
     restart: unless-stopped
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-supay}?sslmode=disable
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-selfhosted}
+      RUN_MODE: both
+      PORT: "8080"
+      # Self-hosted usa una sola réplica y conserva la migración automática.
+      # Para profile cloud establezca AUTO_MIGRATE=false y ejecute supay-migrate.
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
     ports:
-      - "${PORT:-8081}:8081"
+      - "${PORT:-8081}:8080"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ./storage:/app/storage
       - filedata:/app/data/files
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   minio:
     image: quay.io/minio/minio:latest

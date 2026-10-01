@@ -1,0 +1,108 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: supay-beta
+  namespace: PROJECT_NUMBER
+  labels:
+    cloud.googleapis.com/location: REGION
+  annotations:
+    run.googleapis.com/ingress: internal-and-cloud-load-balancing
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/cpu-throttling: "true"
+        run.googleapis.com/startup-cpu-boost: "true"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      containerConcurrency: 40
+      timeoutSeconds: 120
+      serviceAccountName: supay-runtime@PROJECT_ID.iam.gserviceaccount.com
+      containers:
+        - name: supay
+          image: REGION-docker.pkg.dev/PROJECT_ID/supay/backend:TAG
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: DEPLOYMENT_MODE
+              value: cloud
+            - name: RUN_MODE
+              value: both
+            - name: AUTO_MIGRATE
+              value: "false"
+            - name: STORAGE_DRIVER
+              value: r2
+            - name: STORAGE_PRESIGN_TTL
+              value: 5m
+            - name: DB_MAX_OPEN
+              value: "10"
+            - name: DB_MAX_IDLE
+              value: "5"
+            - name: BETTER_AUTH_URL
+              value: https://AUTH_HOST
+            - name: BETTER_AUTH_ISSUER
+              value: https://AUTH_HOST
+            - name: BETTER_AUTH_AUDIENCE
+              value: https://AUTH_HOST
+            - name: CORS_ALLOWED_ORIGINS
+              value: https://APP_HOST
+            - name: R2_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: supay-r2-account-id
+                  key: latest
+            - name: R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: supay-r2-access-key-id
+                  key: latest
+            - name: R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supay-r2-secret-access-key
+                  key: latest
+            - name: R2_BUCKET
+              value: supay-beta-private
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: supay-database-url
+                  key: latest
+            - name: BACKEND_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: supay-backend-secret
+                  key: latest
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supay-encryption-key
+                  key: latest
+            - name: SIAT_CODIGO_SISTEMA
+              valueFrom:
+                secretKeyRef:
+                  name: supay-siat-codigo-sistema
+                  key: latest
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3

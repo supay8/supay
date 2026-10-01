@@ -1,0 +1,39 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: supay-migrate
+  namespace: PROJECT_NUMBER
+  labels:
+    cloud.googleapis.com/location: REGION
+spec:
+  template:
+    spec:
+      taskCount: 1
+      template:
+        spec:
+          maxRetries: 1
+          timeoutSeconds: "600"
+          serviceAccountName: supay-runtime@PROJECT_ID.iam.gserviceaccount.com
+          containers:
+            - name: migrate
+              image: REGION-docker.pkg.dev/PROJECT_ID/supay/backend:TAG
+              command:
+                - /app/supay-migrate
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              env:
+                - name: DEPLOYMENT_MODE
+                  value: cloud
+                - name: AUTO_MIGRATE
+                  value: "false"
+                - name: DB_MAX_OPEN
+                  value: "5"
+                - name: DB_MAX_IDLE
+                  value: "2"
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: supay-database-url
+                      key: latest

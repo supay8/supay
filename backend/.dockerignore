@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+graphify-out
+storage
+data
+coverage.out
+*.log
+*.tmp

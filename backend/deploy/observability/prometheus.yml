@@ -5,4 +5,4 @@ scrape_configs:
   - job_name: supay-backend
     metrics_path: /metrics
     static_configs:
-      - targets: ["backend:8081"]
+      - targets: ["api:8080"]

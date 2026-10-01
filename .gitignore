@@ -1,12 +1,15 @@
 # dependencies
 node_modules
 .pnpm-store
-/graphify-out
+
+#ignore graphify-out folder
+backend/graphify-out/
+**/graphify-out/
+
 # environment
 .env
 .env.*
 !.env.example
-
 # build
 dist
 .next

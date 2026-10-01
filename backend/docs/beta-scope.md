@@ -38,6 +38,10 @@ tenant. Los fallos SIAT de perfiles experimentales son feedback de producto.
 
 - Se despliega un único servicio con web y River juntos.
 - Usa `DEPLOYMENT_MODE=cloud` y almacenamiento privado Cloudflare R2.
+- `AUTO_MIGRATE=false`; un Cloud Run Job ejecuta `/app/supay-migrate` antes de
+  actualizar el servicio.
+- El pool PostgreSQL usa 10 conexiones abiertas por instancia por defecto y no
+  acepta más de 15 en modo cloud.
 - Las restricciones exclusivas del SaaS solo pueden activarse con
   `DEPLOYMENT_MODE=cloud`; nunca deben endurecer globalmente el modo self-hosted.
 

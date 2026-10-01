@@ -123,6 +123,25 @@ y cabecera. Su envío se realiza por
 `POST /v1/siat/masiva/{companyId}/{pointOfSaleId}`, usando el contrato de lotes;
 no por la ruta de emisión individual.
 
+## Loop de feedback de rechazos SIAT
+
+Cada respuesta fiscal rechazada genera un log estructurado con
+`event=siat_rejection_feedback`, `sector`, `codigo_estado` y `mensajes`. El
+último campo contiene únicamente códigos numéricos deduplicados; no se registran
+descripciones, payloads, NIT, razón social, CUF ni otros identificadores.
+
+El flujo de triage es:
+
+1. Crear un issue con la plantilla **Rechazo SIAT** copiando solo esos campos.
+2. Reproducir el rechazo con datos sintéticos y añadir un fixture de regresión.
+3. Corregir el adaptador o esquema y ejecutar las pruebas del sector afectado.
+4. Cambiar el perfil de `experimental` a `soportado` únicamente cuando el
+   fixture pasa y existe evidencia de integración; la marca sigue sin implicar
+   homologación tributaria.
+
+Las descripciones originales del SIAT pueden usarse durante el análisis local,
+pero deben redactarse antes de entrar al issue.
+
 ## Verificación local
 
 ```sh

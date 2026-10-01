@@ -5,35 +5,26 @@
 - **selfhosted** = Bring Your Own Infra, con salida a internet (obligatorio para SIAT SOAP). `DEPLOYMENT_MODE=selfhosted` (default).
 - **cloud** = Infra administrada (R2 + DB gestionada). `DEPLOYMENT_MODE=cloud`.
 
-PDFs: `STORAGE_DRIVER=local` (disco, default selfhosted) | `none` (on-demand) | `r2` (Cloudflare R2, default cloud). Emisión genera PDF automáticamente en disco/R2.
+PDFs/XML: `STORAGE_DRIVER=local` es el default self-hosted. `r2` queda disponible como opción explícita; el SaaS cloud lo exige. La aplicación falla al arrancar si el driver elegido está incompleto.
 
 ## Quickstart selfhosted (disco por defecto)
 
 ```bash
 cp backend/.env.example backend/.env
-# Edita backend/.env: DATABASE_URL, API_KEY, SIAT_* (STORAGE_DRIVER=local ya por defecto)
+# Edita backend/.env: JWT_SECRET, BACKEND_SECRET, STORAGE_SIGNING_SECRET y SIAT_*.
+# DATABASE_URL dentro de Compose es configurado por docker-compose.yml.
 docker compose --profile selfhosted up --build
 # o con wrapper legacy:
 ./scripts/run.sh --build
 # PDF queda en ./storage/pdfs/{id}.pdf tras POST /invoices/{id}/emit
 ```
 
-`docker-compose.yml` ya mapea `./storage:/app/storage` y `STORAGE_PATH=/app/storage/pdfs`. El driver `local` (`internal/pdf/storage_local.go`) escribe atómicamente (`tmp+rename`).
+`docker-compose.yml` ya configura `AUTO_MIGRATE=true` para la única réplica, escucha internamente en `8080` y publica `8081` por defecto. También mapea `./storage:/app/storage` y `filedata:/app/data/files`.
 
-## On-demand sin disco (opt-in)
-
-```bash
-# backend/.env
-STORAGE_DRIVER=none
-```
-
-Sin volumen: `GET /invoices/{id}/pdf` genera al vuelo en `internal/pdf/service.go:41` sin persistir.
-
-## Modo cloud (R2)
+## R2 opcional
 
 ```bash
 # backend/.env
-DEPLOYMENT_MODE=cloud
 STORAGE_DRIVER=r2
 R2_ACCOUNT_ID=...
 R2_ACCESS_KEY_ID=...
@@ -43,10 +34,12 @@ R2_BUCKET=supay-pdfs
 ```
 
 ```bash
-docker compose --profile cloud up --build
+docker compose --profile selfhosted up --build
 ```
 
-`internal/pdf/storage_r2.go` usa API S3 compatible. `selfhosted + r2` se fuerza a `local` con warn (no exigir R2 a self-hosted).
+`internal/pdf/storage_r2.go` usa la API S3 compatible. Configurar `r2` nunca degrada silenciosamente a almacenamiento noop: credenciales o bucket faltantes detienen el arranque.
+
+El despliegue SaaS en Cloud Run está documentado en `backend/deploy/cloudrun/README.md`; allí `DEPLOYMENT_MODE=cloud` exige R2 y las migraciones se ejecutan mediante un Job separado.
 
 ## Compose profiles
 
@@ -60,9 +53,11 @@ docker compose --profile cloud up --build
 |-----|---------|-------|
 | `DEPLOYMENT_MODE` | `selfhosted` | `selfhosted|cloud` |
 | `SELF_HOSTED` | - | Legacy alias `true|1` => `selfhosted` |
-| `STORAGE_DRIVER` | `local` en selfhosted, `r2` en cloud | `local|none|r2` (vacío => auto según modo) |
+| `STORAGE_DRIVER` | `local` | `local|r2`; cloud exige `r2` |
 | `STORAGE_PATH` | `/app/storage/pdfs` (container) | Solo `local` |
-| `R2_*` | - | Solo `cloud+r2` |
+| `R2_*` | - | Necesario cuando `STORAGE_DRIVER=r2` |
+| `AUTO_MIGRATE` | `true` en Compose | Válido solo para self-hosted de una réplica |
+| `DB_MAX_OPEN` | `60` self-hosted | Opcional; Cloud Run usa `10` y rechaza valores mayores a `15` |
 
 ## Verificación
 

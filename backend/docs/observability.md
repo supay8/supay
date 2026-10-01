@@ -4,6 +4,12 @@ Supay expone métricas Prometheus en `GET /metrics` y `GET /v1/metrics`. El
 endpoint no requiere credenciales y debe publicarse solamente en la red interna
 del despliegue.
 
+En Cloud Run el template `deploy/cloudrun/service.yaml` usa ingress
+`internal-and-cloud-load-balancing`. El Load Balancer público debe enrutar la API
+pero excluir `/metrics` y `/v1/metrics`; el scraper accede por una ruta interna.
+No se debe conceder acceso público directo al dominio `run.app` como atajo para
+recolectar métricas.
+
 ## Métricas
 
 | Métrica | Uso |
@@ -30,6 +36,8 @@ Alertas iniciales recomendadas:
 - tasa de 5xx mayor a 2% durante 10 minutos;
 - emisiones con `result="retry"` o `result="circuit_open"` sostenidas;
 - ausencia de `result="published"` en outbox mientras hay tráfico;
+- más de 50 filas `outbox.status='PENDING'` durante cinco minutos (consulta DB o
+  métrica externa hasta incorporar el gauge al proceso);
 - p95 HTTP o de emisión por encima del SLO acordado.
 
 ## Logs

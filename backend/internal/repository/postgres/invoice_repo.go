@@ -3,6 +3,7 @@ package postgres
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -173,58 +174,72 @@ func (r *PostgresInvoiceRepository) TransitionStatus(tenantID, id string, from, 
 	}
 	claimed := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		var storedTenantID string
-		if err := tx.Model(&models.Invoice{}).Select("tenant_id").Where("tenant_id = ? AND id = ?", tenantID, id).Scan(&storedTenantID).Error; err != nil {
-			return err
-		}
-		if storedTenantID == "" {
-			return gorm.ErrRecordNotFound
-		}
-		values := make(map[string]any, len(fields)+1)
-		for key, value := range fields {
-			if key != "status" {
-				values[key] = value
-			}
-		}
-		values["status"] = models.InvoiceStatus(to)
-		result := tx.Model(&models.Invoice{}).
-			Where("tenant_id = ? AND id = ? AND status = ?", tenantID, id, models.InvoiceStatus(from)).
-			Updates(values)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return nil
-		}
-		claimed = true
-		if event == nil {
-			return nil
-		}
-		if event.InvoiceID == "" {
-			event.InvoiceID = id
-		}
-		if event.TenantID == "" {
-			event.TenantID = storedTenantID
-		}
-		if event.TenantID != storedTenantID {
-			return gorm.ErrRecordNotFound
-		}
-		model := models.InvoiceEvent{
-			ID: event.ID, InvoiceId: event.InvoiceID, TenantID: event.TenantID,
-			EventKey: event.EventKey, Type: event.Type, Message: event.Message,
-			Payload: datatypes.JSON(event.Payload),
-		}
-		if model.ID == "" {
-			model.ID = uuid.NewString()
-		}
-		if err := tx.Create(&model).Error; err != nil {
-			return err
-		}
-		event.ID = model.ID
-		event.CreatedAt = model.CreatedAt
-		return nil
+		var err error
+		claimed, err = transitionInvoiceStatus(tx, tenantID, id, from, to, reason, fields, event)
+		return err
 	})
 	return claimed, err
+}
+
+// transitionInvoiceStatus aplica la misma transición protegida dentro de una
+// transacción existente. Los lotes la reutilizan para que el estado fiscal y
+// el evento queden atómicos con el resultado del paquete.
+func transitionInvoiceStatus(tx *gorm.DB, tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return false, domain.ErrMissingCompanyID
+	}
+	if err := (domain.InvoiceStateMachine{}).Transition(from, to, reason); err != nil {
+		return false, err
+	}
+	var storedTenantID string
+	if err := tx.Model(&models.Invoice{}).Select("tenant_id").Where("tenant_id = ? AND id = ?", tenantID, id).Scan(&storedTenantID).Error; err != nil {
+		return false, err
+	}
+	if storedTenantID == "" {
+		return false, gorm.ErrRecordNotFound
+	}
+	values := make(map[string]any, len(fields)+1)
+	for key, value := range fields {
+		if key != "status" {
+			values[key] = value
+		}
+	}
+	values["status"] = models.InvoiceStatus(to)
+	result := tx.Model(&models.Invoice{}).
+		Where("tenant_id = ? AND id = ? AND status = ?", tenantID, id, models.InvoiceStatus(from)).
+		Updates(values)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return false, nil
+	}
+	if event == nil {
+		return true, nil
+	}
+	if event.InvoiceID == "" {
+		event.InvoiceID = id
+	}
+	if event.TenantID == "" {
+		event.TenantID = storedTenantID
+	}
+	if event.TenantID != storedTenantID {
+		return false, gorm.ErrRecordNotFound
+	}
+	model := models.InvoiceEvent{
+		ID: event.ID, InvoiceId: event.InvoiceID, TenantID: event.TenantID,
+		EventKey: event.EventKey, Type: event.Type, Message: event.Message,
+		Payload: datatypes.JSON(event.Payload),
+	}
+	if model.ID == "" {
+		model.ID = uuid.NewString()
+	}
+	if err := tx.Create(&model).Error; err != nil {
+		return false, err
+	}
+	event.ID = model.ID
+	event.CreatedAt = model.CreatedAt
+	return true, nil
 }
 
 func (r *PostgresInvoiceRepository) ClaimForEmission(tenantID, id string) (bool, error) {
@@ -351,9 +366,9 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		SectorData:             datatypes.JSON(inv.SectorData),
 		AjustaFacturaId:        inv.AjustaFacturaId,
 		IssueDate:              inv.IssueDate,
-		Subtotal:               decimal.NewFromFloat(inv.Subtotal),
-		Discount:               decimal.NewFromFloat(inv.Discount),
-		Total:                  decimal.NewFromFloat(inv.Total),
+		Subtotal:               decimalFromFloat(inv.Subtotal, 2),
+		Discount:               decimalFromFloat(inv.Discount, 2),
+		Total:                  decimalFromFloat(inv.Total, 2),
 		XmlHash:                inv.XmlHash,
 		SiatReceptionCode:      inv.SiatReceptionCode,
 		SiatMensajes:           inv.SiatMensajes,
@@ -376,10 +391,10 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 			CodigoActividad:   item.CodigoActividad,
 			CodigoProductoSin: item.CodigoProductoSin,
 			UnitCode:          item.UnitCode,
-			Quantity:          decimal.NewFromFloat(item.Quantity),
-			UnitPrice:         decimal.NewFromFloat(item.UnitPrice),
-			Discount:          decimal.NewFromFloat(item.Discount),
-			Subtotal:          decimal.NewFromFloat(item.Subtotal),
+			Quantity:          decimalFromFloat(item.Quantity, 5),
+			UnitPrice:         decimalFromFloat(item.UnitPrice, 5),
+			Discount:          decimalFromFloat(item.Discount, 2),
+			Subtotal:          decimalFromFloat(item.Subtotal, 2),
 			SectorData:        datatypes.JSON(item.SectorData),
 		}
 		if mi.ID == "" {
@@ -480,7 +495,18 @@ func positiveDecimalOrDefault(value, fallback float64) decimal.Decimal {
 	if value <= 0 {
 		value = fallback
 	}
-	return decimal.NewFromFloat(value)
+	return decimalFromFloat(value, 5)
+}
+
+func decimalFromFloat(value float64, places int32) decimal.Decimal {
+	// FormatFloat conserva el valor decimal ingresado sin introducir los dígitos
+	// binarios espurios de NewFromFloat. Round replica la escala NUMERIC de BD.
+	text := strconv.FormatFloat(value, 'f', -1, 64)
+	parsed, err := decimal.NewFromString(text)
+	if err != nil {
+		panic("importe decimal inválido: " + text)
+	}
+	return parsed.Round(places)
 }
 
 func toDomainCufd(m *models.Cufd) *domain.Cufd {

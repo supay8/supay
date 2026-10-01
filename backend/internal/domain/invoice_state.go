@@ -6,6 +6,7 @@ type InvoiceTransitionReason string
 
 const (
 	TransitionEmissionStart      InvoiceTransitionReason = "EMISSION_START"
+	TransitionBatchReserved      InvoiceTransitionReason = "BATCH_RESERVED"
 	TransitionSIATAccepted       InvoiceTransitionReason = "SIAT_ACCEPTED"
 	TransitionSIATObserved       InvoiceTransitionReason = "SIAT_OBSERVED"
 	TransitionSIATRejected       InvoiceTransitionReason = "SIAT_REJECTED"
@@ -48,6 +49,10 @@ func transitionAllowed(from, to InvoiceStatus, reason InvoiceTransitionReason) b
 		return reason == TransitionTransportFailure || reason == TransitionStaleRecovery
 	case from == InvoiceSending && to == InvoiceOffline:
 		return reason == TransitionContingency
+	case from == InvoiceSending && to == InvoiceSent:
+		return reason == TransitionBatchReserved
+	case from == InvoiceOffline && to == InvoiceSent:
+		return reason == TransitionBatchReserved
 	case from == InvoiceSending && to == InvoiceAccepted:
 		return reason == TransitionSIATAccepted || reason == TransitionSIATReconciliation
 	case from == InvoiceSending && to == InvoiceObserved:
@@ -57,6 +62,12 @@ func transitionAllowed(from, to InvoiceStatus, reason InvoiceTransitionReason) b
 	case from == InvoiceObserved && to == InvoiceAccepted:
 		return reason == TransitionSIATAccepted || reason == TransitionSIATReconciliation
 	case from == InvoiceObserved && to == InvoiceRejected:
+		return reason == TransitionSIATRejected || reason == TransitionSIATReconciliation
+	case from == InvoiceSent && to == InvoiceAccepted:
+		return reason == TransitionSIATAccepted || reason == TransitionSIATReconciliation
+	case from == InvoiceSent && to == InvoiceObserved:
+		return reason == TransitionSIATObserved || reason == TransitionSIATReconciliation
+	case from == InvoiceSent && to == InvoiceRejected:
 		return reason == TransitionSIATRejected || reason == TransitionSIATReconciliation
 	case from == InvoiceAccepted && to == InvoiceCancelled:
 		return reason == TransitionCancellation || reason == TransitionSIATReconciliation

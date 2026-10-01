@@ -300,9 +300,14 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 		if err := tx.Create(&members).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&models.Invoice{}).Where("id IN ?", orderedIDs).
-			Update("status", models.StatusSending).Error; err != nil {
-			return err
+		// Una factura OFFLINE ya está fiscalmente emitida y firmada: reservarla
+		// mediante la membresía del lote no debe fingir un nuevo SENDING. Así el
+		// happy path posterior expresa la transición real OFFLINE -> SENT.
+		if expectedStatus == domain.InvoicePending {
+			if err := tx.Model(&models.Invoice{}).Where("id IN ?", orderedIDs).
+				Update("status", models.StatusSending).Error; err != nil {
+				return err
+			}
 		}
 		for _, invoice := range invoices {
 			if document, ok := documents[invoice.ID]; ok {
@@ -321,8 +326,10 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 					return err
 				}
 			}
-			if err := recordBatchTransition(tx, invoice, m.ID, domain.InvoiceSending, "BATCH_RESERVATION"); err != nil {
-				return err
+			if expectedStatus == domain.InvoicePending {
+				if err := recordBatchTransition(tx, invoice, m.ID, domain.InvoiceSending, "BATCH_RESERVATION"); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -407,13 +414,10 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 			if cuf, ok := cufs[invoice.ID]; ok && invoice.Cuf != nil && *invoice.Cuf != "" && *invoice.Cuf != cuf {
 				return fmt.Errorf("el CUF de la factura %s es inmutable", invoice.ID)
 			}
-			if invoice.Status != models.StatusSending && invoice.Status != models.StatusSent {
+			if invoice.Status != models.StatusSending && invoice.Status != models.StatusSent && invoice.Status != models.StatusOffline {
 				continue // La conciliación individual puede haberse adelantado al lote.
 			}
 			values := map[string]any{}
-			if invoiceStatus != nil {
-				values["status"] = models.InvoiceStatus(*invoiceStatus)
-			}
 			if pkg.CodigoRecepcion != "" {
 				values["siat_reception_code"] = pkg.CodigoRecepcion
 			}
@@ -429,20 +433,63 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 					values["cufd_id"] = pkg.CufdID
 				}
 			}
-			if len(values) > 0 {
-				if err := tx.Model(&models.Invoice{}).Where("id = ? AND status IN ?", invoice.ID,
-					[]models.InvoiceStatus{models.StatusSending, models.StatusSent}).Updates(values).Error; err != nil {
+			if invoiceStatus != nil && domain.InvoiceStatus(invoice.Status) != *invoiceStatus {
+				reason, err := batchTransitionReason(*invoiceStatus)
+				if err != nil {
 					return err
 				}
-			}
-			if invoiceStatus != nil && domain.InvoiceStatus(invoice.Status) != *invoiceStatus {
-				if err := recordBatchTransition(tx, invoice, pkg.ID, *invoiceStatus, "BATCH_RECONCILIATION"); err != nil {
+				event, err := newBatchTransitionEvent(invoice, pkg.ID, *invoiceStatus, reason)
+				if err != nil {
+					return err
+				}
+				claimed, err := transitionInvoiceStatus(tx, pkg.CompanyId, invoice.ID,
+					domain.InvoiceStatus(invoice.Status), *invoiceStatus, reason, values, event)
+				if err != nil {
+					return err
+				}
+				if !claimed {
+					return fmt.Errorf("la factura %s cambió de estado durante la conciliación", invoice.ID)
+				}
+			} else if len(values) > 0 {
+				if err := tx.Model(&models.Invoice{}).
+					Where("tenant_id = ? AND id = ? AND status = ?", pkg.CompanyId, invoice.ID, invoice.Status).
+					Updates(values).Error; err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	})
+}
+
+func batchTransitionReason(status domain.InvoiceStatus) (domain.InvoiceTransitionReason, error) {
+	switch status {
+	case domain.InvoiceSent:
+		return domain.TransitionBatchReserved, nil
+	case domain.InvoiceAccepted:
+		return domain.TransitionSIATAccepted, nil
+	case domain.InvoiceObserved:
+		return domain.TransitionSIATObserved, nil
+	case domain.InvoiceRejected:
+		return domain.TransitionSIATRejected, nil
+	default:
+		return "", fmt.Errorf("estado de conciliación no permitido: %s", status)
+	}
+}
+
+func newBatchTransitionEvent(invoice models.Invoice, packageID string, status domain.InvoiceStatus, reason domain.InvoiceTransitionReason) (*domain.InvoiceEvent, error) {
+	payload, err := json.Marshal(map[string]string{
+		"from_status": string(invoice.Status), "to_status": string(status),
+		"reason": string(reason), "source": "FiscalBatchRepository", "sent_package_id": packageID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &domain.InvoiceEvent{
+		InvoiceID: invoice.ID, TenantID: invoice.CompanyId, Type: "STATUS_TRANSITION",
+		Message: fmt.Sprintf("invoice status changed from %s to %s", invoice.Status, status),
+		Payload: payload,
+	}, nil
 }
 
 // La consulta de un lote utiliza el contexto fiscal capturado en su reserva;

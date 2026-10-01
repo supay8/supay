@@ -430,6 +430,9 @@ func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID 
 			messages, _ := json.Marshal(result.Mensajes)
 			text := string(messages)
 			pkg.Mensajes = &text
+			if !result.Transaccion || result.CodigoEstado == 902 {
+				logSIATRejection(pkg.CodigoDocumentoSector, result.CodigoEstado, result.Mensajes)
+			}
 			if result.Transaccion && result.CodigoRecepcion != "" {
 				pkg.Status = domain.PackageStatusPending
 				sent := domain.InvoiceSent
@@ -515,6 +518,7 @@ func (uc *SiatUsecase) validateInvoiceBatch(ctx context.Context, companyID, posI
 		accepted := domain.InvoiceAccepted
 		invoiceStatus = &accepted
 	} else if result.CodigoEstado == 902 && pkg.Status != domain.PackageStatusAccepted {
+		logSIATRejection(pkg.CodigoDocumentoSector, result.CodigoEstado, result.Mensajes)
 		pkg.Status = domain.PackageStatusRejected
 		rejected := domain.InvoiceRejected
 		invoiceStatus = &rejected

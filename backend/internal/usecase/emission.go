@@ -192,6 +192,7 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, tenantID, id stri
 		return nil, err
 	}
 	if !result.Transaccion {
+		logSIATRejection(inv.CodigoDocumentoSector, result.CodigoEstado, result.Mensajes)
 		return nil, &EmissionRejectedError{
 			CodigoEstado:    result.CodigoEstado,
 			CodigoRecepcion: result.CodigoRecepcion,

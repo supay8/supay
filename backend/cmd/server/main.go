@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/brandsrx/supay/internal/app"
@@ -40,9 +41,13 @@ func run() error {
 	if err := cfg.ValidateStorage(); err != nil {
 		return fmt.Errorf("configuración de storage inválida: %w", err)
 	}
+	autoMigrate := strings.EqualFold(strings.TrimSpace(os.Getenv("AUTO_MIGRATE")), "true")
+	if err := cfg.ValidateAutoMigrate(autoMigrate); err != nil {
+		return fmt.Errorf("configuración de migraciones inválida: %w", err)
+	}
 	db := database.ConnectDB()
 
-	if os.Getenv("AUTO_MIGRATE") == "true" {
+	if autoMigrate {
 		log.Println("AUTO_MIGRATE=true: ejecutando migraciones de esquema y datos...")
 		if err := database.Migrate(); err != nil {
 			return fmt.Errorf("ejecutar migraciones: %w", err)

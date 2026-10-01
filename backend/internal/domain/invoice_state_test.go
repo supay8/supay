@@ -14,10 +14,15 @@ func TestInvoiceStateMachineAllowsExpectedTransitions(t *testing.T) {
 		{"start emission", InvoicePending, InvoiceSending, TransitionEmissionStart},
 		{"transport recovery", InvoiceSending, InvoicePending, TransitionTransportFailure},
 		{"offline contingency", InvoiceSending, InvoiceOffline, TransitionContingency},
+		{"batch reserved", InvoiceSending, InvoiceSent, TransitionBatchReserved},
+		{"offline batch sent", InvoiceOffline, InvoiceSent, TransitionBatchReserved},
 		{"stale recovery", InvoiceSending, InvoicePending, TransitionStaleRecovery},
 		{"accepted", InvoiceSending, InvoiceAccepted, TransitionSIATAccepted},
 		{"observed", InvoiceSending, InvoiceObserved, TransitionSIATObserved},
 		{"rejected", InvoiceSending, InvoiceRejected, TransitionSIATRejected},
+		{"sent accepted", InvoiceSent, InvoiceAccepted, TransitionSIATAccepted},
+		{"sent observed", InvoiceSent, InvoiceObserved, TransitionSIATObserved},
+		{"sent rejected", InvoiceSent, InvoiceRejected, TransitionSIATRejected},
 		{"observed accepted", InvoiceObserved, InvoiceAccepted, TransitionSIATAccepted},
 		{"observed rejected", InvoiceObserved, InvoiceRejected, TransitionSIATRejected},
 		{"cancel", InvoiceAccepted, InvoiceCancelled, TransitionCancellation},
@@ -43,6 +48,7 @@ func TestInvoiceStateMachineRejectsInvalidTransitions(t *testing.T) {
 	}{
 		{"rejected is terminal", InvoiceRejected, InvoiceAccepted, TransitionSIATReconciliation, ErrInvalidInvoiceTransition},
 		{"cancel requires explicit reason", InvoiceAccepted, InvoiceCancelled, TransitionSIATAccepted, ErrInvalidInvoiceTransition},
+		{"sent requires batch reason", InvoiceSending, InvoiceSent, TransitionSIATAccepted, ErrInvalidInvoiceTransition},
 		{"missing reason", InvoicePending, InvoiceSending, "", ErrInvalidTransitionReason},
 		{"unknown source", InvoiceStatus("UNKNOWN"), InvoiceSending, TransitionEmissionStart, ErrInvalidInvoiceStatus},
 	}

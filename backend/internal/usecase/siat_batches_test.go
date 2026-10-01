@@ -60,7 +60,9 @@ func (r *batchTestRepository) ReserveBatch(pkg *domain.SentPackage, ids []string
 	pkg.SentAt = time.Now()
 	for i, id := range ids {
 		inv := r.invoices.invoices[id]
-		inv.Status = domain.InvoiceSending
+		if status == domain.InvoicePending {
+			inv.Status = domain.InvoiceSending
+		}
 		doc := pkg.Documents[i]
 		inv.Cuf = strPtr(doc.Cuf)
 	}
@@ -75,7 +77,24 @@ func (r *batchTestRepository) UpdateBatch(pkg *domain.SentPackage, status *domai
 	r.packages[pkg.ID] = *pkg
 	if status != nil {
 		for _, id := range pkg.InvoiceIDs {
-			r.invoices.invoices[id].Status = *status
+			inv := r.invoices.invoices[id]
+			reason := domain.TransitionSIATReconciliation
+			switch *status {
+			case domain.InvoiceSent:
+				reason = domain.TransitionBatchReserved
+			case domain.InvoiceAccepted:
+				reason = domain.TransitionSIATAccepted
+			case domain.InvoiceObserved:
+				reason = domain.TransitionSIATObserved
+			case domain.InvoiceRejected:
+				reason = domain.TransitionSIATRejected
+			}
+			if inv.Status != *status {
+				if err := (domain.InvoiceStateMachine{}).Transition(inv.Status, *status, reason); err != nil {
+					return err
+				}
+			}
+			inv.Status = *status
 		}
 	}
 	return nil
@@ -326,7 +345,7 @@ func TestPaquetePreservaXMLHistoricoSinDependerDelClienteActual(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := svc.lastPackage.Facturas[0]
-	if !out.Response.Transaccion || doc.XML != "<original-firmado/>" || doc.Cuf != "original-cuf" || doc.Cufd != historical.Cufd || svc.lastPackage.Cufd != current.Cufd || !doc.FechaEmision.Equal(originalDate) {
+	if !out.Response.Transaccion || doc.XML != "<original-firmado/>" || doc.Cuf != "original-cuf" || doc.Cufd != historical.Cufd || svc.lastPackage.Cufd != current.Cufd || !doc.FechaEmision.Equal(originalDate) || inv.Status != domain.InvoiceSent {
 		t.Fatalf("se alteró identidad histórica: %+v", doc)
 	}
 	if svc.lastPackage.CodigoEvento != 12345 || svc.lastPackage.CodigoEmision != 2 {

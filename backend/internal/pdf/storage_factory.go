@@ -9,7 +9,6 @@ import (
 )
 
 // NewStorageFromConfig crea el Storage según config.StorageDriver.
-// selfhosted + r2 => ya normalizado a none en config, pero se defiende de nuevo.
 func NewStorageFromConfig(cfg config.Config) (Storage, error) {
 	driver := strings.ToLower(strings.TrimSpace(cfg.StorageDriver))
 	if driver == "" {
@@ -26,13 +25,11 @@ func NewStorageFromConfig(cfg config.Config) (Storage, error) {
 		slog.Info("pdf storage: local", "path", cfg.StoragePath)
 		return st, nil
 	case "r2":
-		if strings.EqualFold(strings.TrimSpace(cfg.DeploymentMode), "selfhosted") {
-			return nil, fmt.Errorf("pdf storage: STORAGE_DRIVER=r2 incompatible con DEPLOYMENT_MODE=selfhosted (self-hosted solo local; para SaaS use DEPLOYMENT_MODE=cloud con R2_BUCKET)")
-		}
-		// Si R2 está incompleto (sin bucket), no hacer fatal: warn + fallback a noop para no bloquear arranque en dev.
-		if strings.TrimSpace(cfg.R2.Bucket) == "" {
-			slog.Warn("pdf storage: R2_BUCKET vacío, usando none (on-demand) hasta configurar R2")
-			return NewNoopStorage(), nil
+		if strings.TrimSpace(cfg.R2.Bucket) == "" ||
+			strings.TrimSpace(cfg.R2.AccessKeyID) == "" ||
+			strings.TrimSpace(cfg.R2.SecretAccessKey) == "" ||
+			(strings.TrimSpace(cfg.R2.AccountID) == "" && strings.TrimSpace(cfg.R2.Endpoint) == "") {
+			return nil, fmt.Errorf("pdf storage: STORAGE_DRIVER=r2 requiere R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY y R2_ACCOUNT_ID (o R2_ENDPOINT)")
 		}
 		r2Cfg := R2StorageConfig{
 			AccountID:       cfg.R2.AccountID,
@@ -49,7 +46,6 @@ func NewStorageFromConfig(cfg config.Config) (Storage, error) {
 		slog.Info("pdf storage: r2", "bucket", cfg.R2.Bucket, "endpoint", cfg.R2.Endpoint)
 		return st, nil
 	default:
-		slog.Warn("pdf storage: driver desconocido, usando none", "driver", driver)
-		return NewNoopStorage(), nil
+		return nil, fmt.Errorf("pdf storage: driver desconocido %q", driver)
 	}
 }

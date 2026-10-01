@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/shopspring/decimal"
 )
@@ -64,6 +65,18 @@ func TestGenerate_Validaciones(t *testing.T) {
 	}
 	if _, err := Generate(InvoicePDFData{Invoice: &models.Invoice{}}); err == nil {
 		t.Fatal("se esperaba error con factura sin datos precargados")
+	}
+}
+
+func TestTotalFixtureBaseCoincideEnPDFBaseDeDatosYSIAT(t *testing.T) {
+	dbTotal := decimal.RequireFromString("150.50")
+	siatTotal, _ := siat.CalcularTotales([]siat.ItemFactura{
+		{Cantidad: 1, PrecioUnitario: 100.25, SubTotal: 100.25},
+		{Cantidad: 2, PrecioUnitario: 25.125, SubTotal: 50.25},
+	}, false)
+	pdfTotal := formatMoney(dbTotal.InexactFloat64())
+	if pdfTotal != dbTotal.StringFixed(2) || pdfTotal != formatMoney(siatTotal) {
+		t.Fatalf("total PDF=%s total DB=%s total SIAT=%s", pdfTotal, dbTotal.StringFixed(2), formatMoney(siatTotal))
 	}
 }
 

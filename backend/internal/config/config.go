@@ -321,7 +321,19 @@ func (c Config) ValidateRunMode() error {
 	return nil
 }
 
+// ValidateAutoMigrate keeps the convenient single-replica self-hosted startup
+// path while forcing the SaaS deployment to use the explicit migration Job.
+func (c Config) ValidateAutoMigrate(enabled bool) error {
+	if enabled && c.DeploymentMode == "cloud" {
+		return fmt.Errorf("AUTO_MIGRATE=true no está permitido con DEPLOYMENT_MODE=cloud; ejecute el Job de migración antes del servicio")
+	}
+	return nil
+}
+
 func (c Config) ValidateStorage() error {
+	if c.DeploymentMode == "cloud" && c.StorageDriver != "r2" {
+		return fmt.Errorf("DEPLOYMENT_MODE=cloud requiere STORAGE_DRIVER=r2")
+	}
 	switch c.StorageDriver {
 	case "local":
 		if strings.TrimSpace(c.StorageLocalPath) == "" {

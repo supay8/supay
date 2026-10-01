@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,11 @@ import (
 )
 
 var DB *gorm.DB
+
+type poolConfig struct {
+	maxOpen int
+	maxIdle int
+}
 
 // migrationFiles forma parte del binario para que el servidor pueda ejecutar
 // migraciones sin depender del directorio de trabajo ni de archivos externos.
@@ -62,17 +68,19 @@ func ConnectDB() *gorm.DB {
 		log.Fatalf("Error of connection to PostgreSQL: %v", err)
 	}
 
-	// Tuning del pool database/sql para 50 VUs / 1-2 instancias.
-	// max_connections en nube ~100; 60 deja margen para overhead y 2da instancia (60*2=120 -> ajustar max_connections a 150 si escalas).
 	sqlDB, err := DB.DB()
 	if err != nil {
 		log.Fatalf("No se pudo obtener sql.DB del pool GORM: %v", err)
 	}
-	sqlDB.SetMaxOpenConns(60)                  // 50 VUs * 1.2 buffer
-	sqlDB.SetMaxIdleConns(15)                  // 25% de MaxOpen, cubre burst sin churn
+	pool, err := poolConfigFromEnv()
+	if err != nil {
+		log.Fatalf("Configuración inválida del pool PostgreSQL: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(pool.maxOpen)
+	sqlDB.SetMaxIdleConns(pool.maxIdle)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute) // recicla antes que LB/RDS cierre conns stale
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)  // libera idles tras burst nocturno
-	log.Printf("🔌 Pool DB configurado: MaxOpen=60 MaxIdle=15 MaxLifetime=30m MaxIdleTime=5m")
+	log.Printf("🔌 Pool DB configurado: MaxOpen=%d MaxIdle=%d MaxLifetime=30m MaxIdleTime=5m", pool.maxOpen, pool.maxIdle)
 
 	// Configurar la zona horaria de la sesión PostgreSQL a America/La_Paz para
 	// que las consultas y visualizaciones de timestamps muestren la hora de Bolivia.
@@ -84,6 +92,42 @@ func ConnectDB() *gorm.DB {
 
 	return DB
 }
+
+func poolConfigFromEnv() (poolConfig, error) {
+	cloud := strings.EqualFold(strings.TrimSpace(os.Getenv("DEPLOYMENT_MODE")), "cloud")
+	defaults := poolConfig{maxOpen: 60, maxIdle: 15}
+	if cloud {
+		defaults = poolConfig{maxOpen: 10, maxIdle: 5}
+	}
+	maxOpen, err := positiveEnvInt("DB_MAX_OPEN", defaults.maxOpen)
+	if err != nil {
+		return poolConfig{}, err
+	}
+	maxIdle, err := positiveEnvInt("DB_MAX_IDLE", defaults.maxIdle)
+	if err != nil {
+		return poolConfig{}, err
+	}
+	if cloud && maxOpen > 15 {
+		return poolConfig{}, fmt.Errorf("DB_MAX_OPEN=%d excede el máximo 15 para Cloud Run", maxOpen)
+	}
+	if maxIdle > maxOpen {
+		return poolConfig{}, fmt.Errorf("DB_MAX_IDLE=%d no puede superar DB_MAX_OPEN=%d", maxIdle, maxOpen)
+	}
+	return poolConfig{maxOpen: maxOpen, maxIdle: maxIdle}, nil
+}
+
+func positiveEnvInt(key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s debe ser un entero mayor a cero", key)
+	}
+	return value, nil
+}
+
 func Migrate() error {
 	log.Println("🔄 Ejecutando migraciones de base de datos...")
 	if DB == nil {

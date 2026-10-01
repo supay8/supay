@@ -31,3 +31,28 @@ func TestStorageConfigurationFailsFast(t *testing.T) {
 		t.Fatal("incomplete R2 config accepted")
 	}
 }
+
+func TestCloudStorageRequiresR2(t *testing.T) {
+	cfg := Config{
+		DeploymentMode:       "cloud",
+		StorageDriver:        "local",
+		StorageLocalPath:     "/tmp/files",
+		StorageSigningSecret: strings.Repeat("s", 32),
+		StoragePresignTTL:    5,
+	}
+	if err := cfg.ValidateStorage(); err == nil || !strings.Contains(err.Error(), "STORAGE_DRIVER=r2") {
+		t.Fatalf("cloud local debe fallar, err=%v", err)
+	}
+}
+
+func TestAutoMigrateOnlyRejectedInCloud(t *testing.T) {
+	if err := (Config{DeploymentMode: "selfhosted"}).ValidateAutoMigrate(true); err != nil {
+		t.Fatalf("self-hosted debe conservar AUTO_MIGRATE: %v", err)
+	}
+	if err := (Config{DeploymentMode: "cloud"}).ValidateAutoMigrate(true); err == nil {
+		t.Fatal("cloud debe exigir el Job de migración")
+	}
+	if err := (Config{DeploymentMode: "cloud"}).ValidateAutoMigrate(false); err != nil {
+		t.Fatalf("cloud sin AUTO_MIGRATE debe ser válido: %v", err)
+	}
+}

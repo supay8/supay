@@ -14,7 +14,8 @@ Este documento cubre el flujo mínimo para que un agente configure el punto de v
 
 | Header | Requerido | Descripción |
 |---|---|---|
-| `X-API-Key` | Sí | `sup_<prefix>_<random>`. Falta → `401 {"error":{"code":"UNAUTHORIZED","message":"no autorizado: falta el header X-API-Key"}}` (`backend/internal/delivery/http/middleware.go:27`). Inválida/inactiva → `401` `API key inválida o inactiva`. Inyecta `company_id` al contexto; no existe `X-Company-Id`. |
+| `X-API-Key` | Condicional | Integraciones máquina-a-máquina: `sup_<prefix>_<random>`. Falta o inválida → `401`. La key inyecta el tenant al contexto. |
+| `Authorization` + `X-Company-ID` | Condicional | Sesión humana: `Authorization: Bearer <JWT>` y empresa activa en `X-Company-ID`. Es la alternativa a `X-API-Key`; omitir la empresa activa → `401`. |
 | `Idempotency-Key` | No | Solo `POST /v1/invoices` y `POST /v1/invoices/emit`. Máx 100 chars (`backend/internal/delivery/http/modules/invoice/handler.go:54`). Mismo `point_of_sale_id` + key → replay `200 OK`. Sin key → `201 Created`. |
 | `Content-Type` | Sí | `application/json` |
 

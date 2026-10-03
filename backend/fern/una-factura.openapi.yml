@@ -3,6 +3,10 @@ info:
   title: Supay Invoicing v1 — Una factura
   version: 1.0.0
   description: |
+    CONTRATO PARCIAL: este archivo describe únicamente el flujo "una factura".
+    No representa todos los endpoints de Supay. El contrato HTTP general está
+    documentado en docs/api-v1.md.
+
     Contrato mínimo para el primer test del SDK: emitir UNA factura de
     compra-venta estándar (sector 1, `sector: "auto"`).
     Auth única: header `X-API-Key`. Fuera de alcance: borradores separados,

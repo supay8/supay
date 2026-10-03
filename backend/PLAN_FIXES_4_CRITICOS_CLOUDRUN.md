@@ -106,15 +106,17 @@ go test ./internal/adapters/siat -run 'TestTotales|TestCalcular' -count=1 -v
 
 ---
 
-## F5 — Contrato frontend v1 (bloquea la beta tanto como el backend)
+## F5 — Contrato frontend v1 — completada
 
-Verificado: el dashboard (`packages/dashboard`, modo self-hosted, `VITE_API_URL` + `X-API-Key`/`Bearer+X-Company-ID`) consume ~30 endpoints `/v1` que sí existen, pero:
+Implementado y verificado para la beta self-hosted:
 
-- Descargas PDF/XML rotas con auth: `<a href=/v1/invoices/{id}/pdf|/xml download>` no puede enviar headers → `401`. Resolver vía `fetch→blob→objectURL` autenticado o migrar a `/storage/download` firmado (hoy sin uso desde el frontend).
-- UI no envía `Idempotency-Key` (`invoice-new-page.tsx:365`): doble click = factura duplicada. Conectar `emitInvoiceDirect(payload, key)`.
-- Payload `preview/emit` contradictorio: la UI manda `{sku,quantity,price}` + `customer:{id}`, pero `invoice_simplifier.go` exige `description, codigo_producto_sin>0, unidad_medida>0` y prohíbe `customer.id` (400). Alinear UI con `sdk-facturacion-una-factura.md` o el día 1 todo es `400`.
-- Auth Cloud sin frontend: el dashboard solo sabe login simétrico self-hosted; modo cloud (Better Auth org + JWT 15m) necesita `BetterAuthHost` nuevo. Beta = self-hosted frontend únicamente; cloud queda fuera de beta.
-- Docs que inducen error: `docs/API_SPEC.md` niega `X-Company-Id` (contradice `api-v1.md`+middleware), postman documenta CRUD inexistente (`/v1/customers`, `/v1/products`), `fern/openapi.yml` cubre 5 paths y parece contrato completo. Marcar postman `deprecated`, ampliar o renombrar openapi a `una-factura`.
+- PDF/XML se descargan con `fetch` autenticado y `Blob`; ya no se usan enlaces sin headers.
+- Emisión directa usa una `Idempotency-Key` estable por intento para evitar duplicados por doble click o reintento de red.
+- `preview/emit` envía snapshot completo de cliente e ítems (`description`, actividad, código SIN, unidad de medida) y `payment.exchange_rate`.
+- La beta queda declarada como self-hosted; `BetterAuthHost` y modo cloud permanecen fuera de alcance hasta v1.1.
+- Documentación corregida: auth JWT + `X-Company-ID`, Postman histórico marcado deprecated y OpenAPI parcial renombrado a `fern/una-factura.openapi.yml`.
+
+Verificación: `pnpm --dir packages/dashboard typecheck`, `lint`, `build`; `pnpm --dir frontend test`.
 
 ## v1.1 (con tracción, fuera de beta)
 

@@ -1,8 +1,8 @@
 {
   "info": {
-    "name": "Supay API v1 - Cuaderno completo",
+    "name": "[DEPRECATED] Supay API v1 - Cuaderno histórico",
     "_postman_id": "supay-v1-cuaderno-completo",
-    "description": "Cuaderno generado para pruebas directas de TODOS los endpoints /v1.\n\nAuth:\n- Negocio: header X-API-Key: {{apiKey}} (ya preconfigurado).\n- Bootstrap: POST /v1/internal/companies usa X-Backend-Token: {{backendToken}}.\n- Idempotencia: POST /v1/invoices y /emit aceptan Idempotency-Key (preconfigurado test-key-001, quitalo para 201).\n\nOrden sugerido: 0-System > Companies > POS > Customers > Products > Catalogs > Invoices-v1 (preview>create>emit) > SIAT (cuis>cufd>sincronizar>firma>evento>paquete/masiva) > Certificates > Branches/API-Keys.\n\nVars: baseUrl=http://localhost:8080, companyId, pointOfSaleId, invoiceId, batchId, productId, customerId.",
+    "description": "DEPRECATED: colección histórica, no es el contrato v1 canónico y contiene rutas CRUD de customers/products que el backend ya no expone. Para facturación use docs/sdk-facturacion-una-factura.md y fern/una-factura.openapi.yml.\n\nAuth vigente: X-API-Key o Authorization: Bearer <JWT> + X-Company-ID.\n\nVars: baseUrl=http://localhost:8081, companyId, pointOfSaleId, invoiceId, batchId.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -745,8 +745,8 @@
       ]
     },
     {
-      "name": "Customers",
-      "description": "",
+      "name": "[DEPRECATED / NO DISPONIBLE] Customers",
+      "description": "Estas rutas no existen en /v1. El receptor se crea o reutiliza mediante el snapshot customer de POST /v1/invoices/emit.",
       "item": [
         {
           "name": "Crear cliente",
@@ -851,8 +851,8 @@
       ]
     },
     {
-      "name": "Products",
-      "description": "",
+      "name": "[DEPRECATED / NO DISPONIBLE] Products",
+      "description": "Estas rutas no existen en /v1. Use GET /v1/companies/{id}/catalogs/productos-sin y envíe el snapshot fiscal en cada ítem.",
       "item": [
         {
           "name": "Crear producto",

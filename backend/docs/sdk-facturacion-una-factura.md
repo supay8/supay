@@ -62,9 +62,8 @@ Idempotency-Key: <opcional, max 100 chars>   # solo en POST /emit
 > Verificado contra código (`internal/usecase/invoice_simplifier.go:Simplify` + `invoice_usecase.go:Create`):
 > el ítem NO se resuelve por `sku` desde el catálogo — `description`, `codigo_producto_sin`
 > y `unidad_medida` son obligatorios en el payload y se congelan como snapshot fiscal.
-> `customer.id` está prohibido (400); enviar snapshot completo. Los ejemplos de
-> `docs/api-v1.md` y Postman que envían solo `sku/quantity/price` devuelven
-> `400 "items[0].description es obligatorio"`.
+> `customer.id` está prohibido (400); envíe el snapshot completo como muestran
+> este documento, `docs/api-v1.md` y la colección Postman.
 
 Reglas:
 
@@ -156,6 +155,7 @@ Estados posibles a manejar en el SDK:
 |---|---|---|
 | `ACCEPTED` | SIAT aceptó | guardar `id`, `cuf`, `invoice_number` |
 | `OBSERVED` | SIAT observó (ver `siat_mensajes`) | loguear observaciones, no re-emitir |
+| `REJECTED` | SIAT rechazó | corregir y crear una factura nueva con otra `Idempotency-Key`; no re-emitir el mismo ID durante la beta |
 | `OFFLINE` | timeout/caída SIAT; trae `xml` firmado + `contingency_event_id` | guardar XML local, reenviar luego por paquete |
 
 Quitar `Idempotency-Key` → el SDK debe igual funcionar (solo cambia que no hay replay seguro).

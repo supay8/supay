@@ -1003,7 +1003,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
+              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"description\": \"Plan profesional\",\n      \"codigo_actividad\": \"101010\",\n      \"codigo_producto_sin\": 5113100,\n      \"unidad_medida\": 58,\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1044,7 +1044,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
+              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"description\": \"Plan profesional\",\n      \"codigo_actividad\": \"101010\",\n      \"codigo_producto_sin\": 5113100,\n      \"unidad_medida\": 58,\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1086,7 +1086,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
+              "raw": "{\n  \"point_of_sale_id\": \"{{pointOfSaleId}}\",\n  \"customer\": {\n    \"document_type\": \"CI\",\n    \"document_number\": \"1234567\",\n    \"name\": \"Ada Lovelace\",\n    \"email\": \"ada@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"PLAN-PRO\",\n      \"description\": \"Plan profesional\",\n      \"codigo_actividad\": \"101010\",\n      \"codigo_producto_sin\": 5113100,\n      \"unidad_medida\": 58,\n      \"quantity\": 1,\n      \"price\": 150,\n      \"discount\": 0\n    }\n  ],\n  \"invoice_type\": \"sale\",\n  \"sector\": \"auto\",\n  \"data\": {}\n}",
               "options": {
                 "raw": {
                   "language": "json"

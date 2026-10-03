@@ -381,7 +381,7 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
         annulInvoice: (id, motivoAnulacion) =>
             request<Invoice>(`/invoices/${id}/annul`, {
                 method: "POST",
-                body: { motivo_anulacion: motivoAnulacion },
+                body: { codigo_motivo: motivoAnulacion },
             }),
         revertAnnul: (id) => request<Invoice>(`/invoices/${id}/annul/revert`, { method: "POST" }),
         getSiatStatus: (id) => request<Record<string, unknown>>(`/invoices/${id}/siat-status`),

@@ -20,6 +20,7 @@ recolectar métricas.
 | `supay_invoice_emissions_total` | Intentos de emisión por resultado acotado. |
 | `supay_invoice_emission_duration_seconds` | Histograma de duración de emisiones. |
 | `supay_outbox_events_total` | Publicación y errores del outbox. |
+| `supay_outbox_pending` | Filas actuales del outbox en estado `PENDING`, leídas desde PostgreSQL al hacer scrape. |
 
 Las etiquetas nunca contienen tenants, NIT, facturas, clientes, productos ni
 rutas concretas con IDs. Esto evita tanto PII como cardinalidad no acotada.
@@ -31,13 +32,16 @@ puede aprovisionar el datasource y el dashboard desde
 `deploy/observability/grafana/provisioning` y
 `deploy/observability/grafana/dashboards/supay-overview.json`.
 
-Alertas iniciales recomendadas:
+`deploy/observability/alerts.yml` contiene las alertas bloqueantes de la beta y
+`prometheus.yml` carga ese archivo. Antes de abrir el piloto, Prometheus debe
+mostrar las tres reglas en estado activo y Alertmanager debe tener un receptor.
+
+Alertas iniciales:
 
 - tasa de 5xx mayor a 2% durante 10 minutos;
 - emisiones con `result="retry"` o `result="circuit_open"` sostenidas;
 - ausencia de `result="published"` en outbox mientras hay tráfico;
-- más de 50 filas `outbox.status='PENDING'` durante cinco minutos (consulta DB o
-  métrica externa hasta incorporar el gauge al proceso);
+- más de 50 filas `outbox.status='PENDING'` durante cinco minutos;
 - p95 HTTP o de emisión por encima del SLO acordado.
 
 ## Logs

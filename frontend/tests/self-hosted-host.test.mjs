@@ -126,3 +126,66 @@ test("self-hosted host authenticates downloads and forwards idempotency keys", a
 
   assert.equal(calls[1].options.headers["Idempotency-Key"], "invoice-submit-1")
 })
+
+test("dashboard critical flow emits, checks, downloads, and annuls with the v1 contract", async () => {
+  const calls = []
+  const host = createSelfHostedHost({
+    baseUrl: "https://api.example.test",
+    apiKey: "sup_pilot_secret",
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url: String(url), options })
+      const path = new URL(String(url)).pathname
+      if (path.endsWith("/pdf")) {
+        return new Response(new Uint8Array([37, 80, 68, 70, 45]), {
+          status: 200,
+          headers: { "Content-Type": "application/pdf" },
+        })
+      }
+      if (path.endsWith("/xml")) {
+        return new Response("<facturaComputarizadaCompraVenta/>", {
+          status: 200,
+          headers: { "Content-Type": "application/xml" },
+        })
+      }
+      const body = path.endsWith("/siat-status")
+        ? { estado: "VALIDADA" }
+        : path.endsWith("/annul")
+          ? { id: "invoice-1", status: "CANCELLED" }
+          : { id: "invoice-1", status: "ACCEPTED" }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    },
+  })
+
+  await host.emitInvoiceDirect({
+    point_of_sale_id: "pos-1",
+    customer: { document_type: "CI", document_number: "1", name: "Piloto" },
+    items: [{
+      sku: "SKU-1",
+      description: "Producto piloto",
+      codigo_producto_sin: 1,
+      unidad_medida: 58,
+      quantity: 1,
+      price: 10.25,
+    }],
+  }, "pilot-flow-1")
+  await host.getSiatStatus("invoice-1")
+  await host.downloadInvoiceXml("invoice-1")
+  await host.downloadInvoicePdf("invoice-1")
+  await host.annulInvoice("invoice-1", 90)
+
+  assert.deepEqual(calls.map((call) => new URL(call.url).pathname), [
+    "/v1/invoices/emit",
+    "/v1/invoices/invoice-1/siat-status",
+    "/v1/invoices/invoice-1/xml",
+    "/v1/invoices/invoice-1/pdf",
+    "/v1/invoices/invoice-1/annul",
+  ])
+  assert.equal(calls[0].options.headers["Idempotency-Key"], "pilot-flow-1")
+  assert.equal(calls[4].options.body, JSON.stringify({ codigo_motivo: 90 }))
+  for (const call of calls) {
+    assert.equal(call.options.headers["X-API-Key"], "sup_pilot_secret")
+  }
+})

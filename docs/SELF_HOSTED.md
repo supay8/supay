@@ -37,6 +37,39 @@ R2_BUCKET=supay-pdfs
 docker compose --profile selfhosted up --build
 ```
 
+## Backup nocturno
+
+Ejecute `scripts/self-hosted-backup.sh` desde el host con `pg_dump` instalado. El
+script crea dumps custom con timestamp en `./backups/postgres` y falla si no se
+define `POSTGRES_PASSWORD`.
+
+Ejemplo de cron a las 02:00 UTC:
+
+```cron
+0 2 * * * cd /srv/supay && POSTGRES_PASSWORD='...' BACKUP_DIR=/srv/backups/supay ./scripts/self-hosted-backup.sh >>/var/log/supay-backup.log 2>&1
+```
+
+Proteja el archivo de cron y el directorio de backups; el dump contiene NITs y
+credenciales relacionadas con la operación fiscal.
+
+## Smoke después del despliegue
+
+Con el backend levantado, `scripts/self-hosted-smoke.sh` comprueba health, emite
+una factura, descarga XML/PDF desde el almacenamiento local y anula la factura.
+El script obtiene el ID de la respuesta de emisión y verifica el contenido de
+ambas descargas. Use una API key, un POS con CUFD vigente en PILOTO y datos de
+prueba; no lo ejecute con NITs reales. Requiere `curl` y `jq` en el host.
+
+```sh
+API_URL=http://localhost:8081 \
+SMOKE_INVOICE_JSON='...' \
+SMOKE_API_KEY='...' \
+./scripts/self-hosted-smoke.sh
+```
+
+Opcionalmente defina `SMOKE_IDEMPOTENCY_KEY` para reintentar el mismo smoke y
+`SMOKE_ANNUL_REASON` (default `1`) para seleccionar el motivo SIAT.
+
 `internal/pdf/storage_r2.go` usa la API S3 compatible. Configurar `r2` nunca degrada silenciosamente a almacenamiento noop: credenciales o bucket faltantes detienen el arranque.
 
 El despliegue SaaS en Cloud Run está documentado en `backend/deploy/cloudrun/README.md`; allí `DEPLOYMENT_MODE=cloud` exige R2 y las migraciones se ejecutan mediante un Job separado.

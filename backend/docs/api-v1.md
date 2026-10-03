@@ -86,6 +86,10 @@ campos originales siguen funcionando; las opciones sectoriales son aditivas:
   "items": [
     {
       "sku": "PLAN-PRO",
+      "description": "Plan profesional",
+      "codigo_actividad": "101010",
+      "codigo_producto_sin": 5113100,
+      "unidad_medida": 58,
       "quantity": 1,
       "price": 150,
       "discount": 0
@@ -97,7 +101,10 @@ campos originales siguen funcionando; las opciones sectoriales son aditivas:
 }
 ```
 
-Solo `point_of_sale_id`, `customer` e `items` son obligatorios. `invoice_type`
+`point_of_sale_id`, el snapshot de `customer` y `items` son obligatorios.
+Cada ítem debe incluir `sku`, `description`, `codigo_producto_sin`,
+`unidad_medida`, `quantity` y `price`; `codigo_actividad` puede omitirse solo
+cuando la empresa tiene una actividad principal configurada. `invoice_type`
 usa `sale` por defecto, `sector` usa `auto` y `data` contiene los campos
 adicionales exigidos por sectores especializados. Cada ítem puede incluir su
 propio objeto `data`.
@@ -118,11 +125,10 @@ sector 29 los montos de conciliación por línea se deben proporcionar mediante
 `items[].data`. Los demás sectores con detalle requieren al menos un ítem;
 los prevalorados 23 y 36 requieren exactamente uno.
 
-El cliente puede enviarse por `customer.id`. Si se envía su identidad fiscal,
-Supay reutiliza el cliente existente; `name` solo es obligatorio cuando debe
-registrarse uno nuevo. Cada producto se identifica por `sku`: nombre, código
-interno, actividad económica, producto SIN, unidad de medida y documento-sector
-se obtienen del catálogo vigente del tenant.
+No envíe `customer.id`: use `document_type`, `document_number`, `name` y,
+opcionalmente, `email`/`complement`. Supay reutiliza el cliente que coincida con
+esa identidad fiscal. Los datos del ítem no se resuelven únicamente por `sku`;
+la descripción y los códigos SIAT enviados se congelan como snapshot fiscal.
 
 En documentos de ajuste, los códigos fiscales y la descripción se obtienen de
 las líneas de la factura original. No se necesita un mapeo adicional del
@@ -169,6 +175,11 @@ o caída de red, devuelve `200 OK` con la factura `OFFLINE`, su XML firmado y el
 Una repetición idempotente no vuelve a emitir una factura ya terminada.
 Al restablecerse la conexión, el registro del evento significativo completa ese
 mismo evento local con su fecha de fin y el código de recepción del SIAT.
+
+Limitación de la beta: una factura `REJECTED` no se reencola. Corrija el payload
+y cree una factura nueva con otra `Idempotency-Key`; la factura rechazada se
+conserva para auditoría. Reintentar el mismo ID puede chocar con la unicidad
+actual de `(event_type, aggregate_id)` en el outbox.
 
 El sector 30 no admite emisión individual: use
 `POST /v1/siat/masiva/{companyId}/{pointOfSaleId}` y su operación de validación.

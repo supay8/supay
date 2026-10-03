@@ -5,5 +5,7 @@ firma_digital/
 *.pem
 *.key
 
+**/graphify-out
+
 /storage/
 tmp/

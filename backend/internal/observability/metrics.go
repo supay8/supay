@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"sync"
@@ -21,6 +22,9 @@ type Metrics struct {
 	emissions        *prometheus.CounterVec
 	emissionDuration *prometheus.HistogramVec
 	outboxEvents     *prometheus.CounterVec
+	outboxPending    prometheus.GaugeFunc
+	providerMu       sync.RWMutex
+	outboxPendingFn  func() (float64, error)
 }
 
 func NewMetrics() *Metrics {
@@ -53,6 +57,22 @@ func NewMetrics() *Metrics {
 			Help: "Eventos outbox procesados por resultado.",
 		}, []string{"result"}),
 	}
+	m.outboxPending = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "supay", Subsystem: "outbox", Name: "pending",
+		Help: "Cantidad actual de eventos outbox en estado PENDING.",
+	}, func() float64 {
+		m.providerMu.RLock()
+		provider := m.outboxPendingFn
+		m.providerMu.RUnlock()
+		if provider == nil {
+			return 0
+		}
+		value, err := provider()
+		if err != nil {
+			return math.NaN()
+		}
+		return value
+	})
 	m.registry.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -62,12 +82,24 @@ func NewMetrics() *Metrics {
 		m.emissions,
 		m.emissionDuration,
 		m.outboxEvents,
+		m.outboxPending,
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Namespace: "supay", Name: "build_info", Help: "Información de la versión pública de la API.",
 			ConstLabels: prometheus.Labels{"api_version": "v1"},
 		}, func() float64 { return 1 }),
 	)
 	return m
+}
+
+// SetOutboxPendingProvider connects the metrics registry to the durable outbox.
+// The provider is evaluated at scrape time so restarts cannot hide old rows.
+func (m *Metrics) SetOutboxPendingProvider(provider func() (float64, error)) {
+	if m == nil {
+		return
+	}
+	m.providerMu.Lock()
+	m.outboxPendingFn = provider
+	m.providerMu.Unlock()
 }
 
 var (

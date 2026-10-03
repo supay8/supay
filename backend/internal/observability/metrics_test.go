@@ -38,6 +38,7 @@ func TestMetricsExposeEmissionAndOutboxResults(t *testing.T) {
 	metrics := NewMetrics()
 	metrics.ObserveEmission("success", 250*time.Millisecond)
 	metrics.ObserveOutbox("published")
+	metrics.SetOutboxPendingProvider(func() (float64, error) { return 51, nil })
 
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -45,6 +46,7 @@ func TestMetricsExposeEmissionAndOutboxResults(t *testing.T) {
 	for _, expected := range []string{
 		`supay_invoice_emissions_total{result="success"} 1`,
 		`supay_outbox_events_total{result="published"} 1`,
+		`supay_outbox_pending 51`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("métrica %q ausente", expected)

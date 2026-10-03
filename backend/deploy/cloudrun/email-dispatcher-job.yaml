@@ -1,7 +1,7 @@
 apiVersion: run.googleapis.com/v1
 kind: Job
 metadata:
-  name: supay-migrate
+  name: supay-email-dispatcher
   namespace: "${PROJECT_NUMBER}"
   labels:
     cloud.googleapis.com/location: "${REGION}"
@@ -15,19 +15,29 @@ spec:
           timeoutSeconds: "600"
           serviceAccountName: supay-runtime@${PROJECT_ID}.iam.gserviceaccount.com
           containers:
-            - name: migrate
+            - name: email-dispatcher
               image: "${IMAGE}"
               command:
-                - /app/supay-migrate
+                - /app/supay-email-dispatcher
               resources:
                 limits:
                   cpu: "1"
-                  memory: 512Mi
+                  memory: 256Mi
               env:
                 - name: DEPLOYMENT_MODE
                   value: cloud
-                - name: AUTO_MIGRATE
-                  value: "false"
+                - name: INVOICE_EMAIL_ENABLED
+                  value: "true"
+                - name: GOOGLE_CLOUD_PROJECT
+                  value: "${PROJECT_ID}"
+                - name: CLOUD_TASKS_LOCATION
+                  value: "${REGION}"
+                - name: CLOUD_TASKS_INVOICE_EMAIL_QUEUE
+                  value: invoice-emails
+                - name: EMAIL_WORKER_URL
+                  value: "${EMAIL_WORKER_URL}"
+                - name: CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL
+                  value: supay-email-tasks@${PROJECT_ID}.iam.gserviceaccount.com
                 - name: DB_MAX_OPEN
                   value: "5"
                 - name: DB_MAX_IDLE

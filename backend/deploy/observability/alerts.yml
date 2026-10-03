@@ -1,0 +1,37 @@
+groups:
+  - name: supay-beta-launch
+    rules:
+      - alert: SupayAPIHigh5xxRate
+        expr: |
+          (
+            sum(rate(supay_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(supay_http_requests_total[5m])), 0.001)
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Supay supera 2% de respuestas 5xx"
+          description: "La API lleva cinco minutos sobre el umbral de errores del gate beta."
+
+      - alert: SupayOutboxNotPublishingWithTraffic
+        expr: |
+          sum(rate(supay_http_requests_total{route!~"/v1/health|/health|/v1/metrics|/metrics"}[10m])) > 0
+          and
+          (sum(increase(supay_outbox_events_total{result="published"}[10m])) or vector(0)) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "El outbox no publica mientras la API recibe tráfico"
+          description: "Hay tráfico de negocio pero no hubo publicaciones del outbox en diez minutos."
+
+      - alert: SupayOutboxPendingBacklog
+        expr: supay_outbox_pending > 50
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Más de 50 eventos PENDING en el outbox"
+          description: "El backlog del outbox excede el gate beta desde hace cinco minutos."

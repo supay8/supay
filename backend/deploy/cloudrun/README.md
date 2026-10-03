@@ -1,15 +1,16 @@
 # Cloud Run beta
 
-Estos manifiestos despliegan una sola revisión `RUN_MODE=both` y un Job separado
-para las migraciones. Reemplace `PROJECT_ID`, `PROJECT_NUMBER`, `REGION`, `TAG`,
-`AUTH_HOST` y `APP_HOST` antes de aplicarlos.
+Los YAML de este directorio son templates. `render.sh` genera manifiestos
+aplicables en `rendered/` y falla si queda una variable sin resolver. La beta
+arranca con email desactivado; el worker y el Job de recuperación solo se
+renderizan al definir `ENABLE_EMAIL=true`.
 
 ## Parámetros operativos
 
 - Puerto `8080`, concurrencia `40` y timeout HTTP `120s`.
-- CPU solo durante requests, `minScale=0`, `maxScale=10` y startup CPU boost.
-- Para la semana de lanzamiento cambie temporalmente `minScale` a `1`; vuelva a
-  `0` cuando el tráfico real confirme que el arranque en frío es aceptable.
+- CPU solo durante requests, `minScale=1` durante la semana de lanzamiento,
+  `maxScale=10` y startup CPU boost. Vuelva a `0` cuando el tráfico real
+  confirme que el arranque en frío es aceptable.
 - Pool PostgreSQL `10/5` por instancia; el backend rechaza `DB_MAX_OPEN > 15`
   cuando `DEPLOYMENT_MODE=cloud`.
 - `AUTO_MIGRATE=false` en el servicio. El mismo artefacto contiene
@@ -32,34 +33,54 @@ export PROJECT_ID="mi-proyecto"
 export REGION="us-central1"
 export TAG="$(git rev-parse --short HEAD)"
 export IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/supay/backend:${TAG}"
+export PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+export AUTH_HOST="auth.example.com"
+export APP_HOST="app.example.com"
 
 gcloud builds submit backend --tag "$IMAGE"
+backend/deploy/cloudrun/render.sh
 ```
 
-1. Sustituya los placeholders de ambos YAML por valores reales y por la misma
-   imagen inmutable.
-2. Cree o actualice los secretos `supay-database-url`, `supay-backend-secret`,
+`TAG=latest` se rechaza. Antes de continuar, inspeccione los manifiestos de
+`backend/deploy/cloudrun/rendered/` y confirme proyecto, región, dominios e
+imagen.
+
+1. Cree o actualice los secretos `supay-database-url`, `supay-backend-secret`,
    `supay-encryption-key`, `supay-r2-account-id`, `supay-r2-access-key-id` y
    `supay-r2-secret-access-key`, además de `supay-siat-codigo-sistema`. La cuenta
    `supay-runtime` necesita acceso de lectura a esas versiones.
-3. Ejecute migraciones antes de mover tráfico:
 
 ```bash
-gcloud run jobs replace backend/deploy/cloudrun/migrate-job.yaml --region "$REGION"
-gcloud run jobs execute supay-migrate --region "$REGION" --wait
+APPLY_GCP=yes backend/deploy/cloudrun/bootstrap-gcp.sh
+# Agregue una versión habilitada a cada secreto; el script nunca recibe valores.
+backend/deploy/cloudrun/check-gcp.sh
 ```
 
-4. Solo después del Job exitoso despliegue el servicio:
+2. Ejecute migraciones antes de mover tráfico. `deploy.sh` impone el orden y
+   termina si el Job falla; solo entonces reemplaza el servicio:
 
 ```bash
-gcloud run services replace backend/deploy/cloudrun/service.yaml --region "$REGION"
+APPLY_GCP=yes backend/deploy/cloudrun/deploy.sh
 ```
+
+El script equivale a `jobs replace` → `jobs execute --wait` → `services
+replace`; no continúe manualmente si la ejecución de `supay-migrate` falla.
+
+Email permanece apagado (`INVOICE_EMAIL_ENABLED=false`) durante la beta. La
+configuración opcional de Cloud Tasks, el worker privado y el Job que republica
+notificaciones pendientes se documentan en
+[`docs/invoice-email-cloud.md`](../../docs/invoice-email-cloud.md).
 
 El ingress del template es `internal-and-cloud-load-balancing`. Publique la API
 mediante un External Application Load Balancer y no cree rutas públicas para
 `/metrics` ni `/v1/metrics`; el backend de métricas debe ser interno. Si se usa
 el dominio `run.app` durante un smoke temporal, revierta esa excepción antes de
 abrir la beta.
+
+El URL map o la política de seguridad del LB debe rechazar explícitamente
+`/metrics` y `/v1/metrics`. Verifique desde internet que ambas rutas fallan y,
+desde el scraper interno, que siguen respondiendo. El ingress evita que el
+dominio `run.app` sea un bypass directo del balanceador.
 
 ## Smoke de release
 
@@ -74,11 +95,14 @@ API_KEY="$(printf '%s' "$BOOTSTRAP" | jq -r '.api_key')"
 test -n "$API_KEY" && test "$API_KEY" != null
 ```
 
-Continúe con el fixture piloto de `docs/sdk-facturacion-una-factura.md`: crear y
-emitir, comprobar estado, descargar XML/PDF desde R2 y anular. El release se
-detiene si cualquier paso falla.
+Continúe con el fixture piloto de `docs/sdk-facturacion-una-factura.md` usando
+`scripts/pilot-smoke.sh`. El script crea y emite, comprueba estado y aislamiento
+tenant, descarga XML/PDF desde R2 y anula. El release se detiene si cualquier
+paso falla. El walkthrough y la evidencia exigida están en
+[`docs/pilot-beta-runbook.md`](../../../docs/pilot-beta-runbook.md).
 
-Alertas mínimas de lanzamiento:
+Las reglas listas para Prometheus están en
+`deploy/observability/alerts.yml`. Alertas mínimas de lanzamiento:
 
 - tasa de respuestas `5xx` en POS;
 - ausencia de publicaciones del outbox con tráfico;

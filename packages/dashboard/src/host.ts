@@ -75,12 +75,14 @@ export interface InvoiceHost {
   annulInvoice(id: string, motivoAnulacion: number): Promise<Invoice>
   revertAnnul(id: string): Promise<Invoice>
   getSiatStatus(id: string): Promise<Record<string, unknown>>
-  getInvoicePdfUrl(id: string): string
+  /** Descarga autenticada; el host debe adjuntar sus headers de sesión/tenant. */
+  downloadInvoicePdf(id: string): Promise<Blob>
   /** Contrato v1: validación sin efectos (POST /v1/invoices/preview). */
   previewInvoice?(payload: V1InvoiceInput): Promise<InvoicePreview>
   /** Contrato v1: crear + emitir atómico (POST /v1/invoices/emit). */
-  emitInvoiceDirect?(payload: V1InvoiceInput): Promise<Invoice>
-  getInvoiceXmlUrl?(id: string): string
+  emitInvoiceDirect?(payload: V1InvoiceInput, idempotencyKey: string): Promise<Invoice>
+  /** Descarga autenticada del XML firmado. */
+  downloadInvoiceXml?(id: string): Promise<Blob>
 }
 
 export interface CatalogHost {

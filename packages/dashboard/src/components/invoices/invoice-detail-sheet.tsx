@@ -7,6 +7,7 @@ import { toast } from "sonner"
 
 import { ApiError } from "../../host"
 import { formatCurrency, formatDateTime } from "../../lib/format"
+import { saveBlob } from "../../lib/download"
 import type { Invoice } from "../../lib/types"
 import { StatusBadge } from "../../components/invoices/status-badge"
 import { AnnulDialog } from "../../components/invoices/annul-dialog"
@@ -112,6 +113,19 @@ export function InvoiceDetailSheet({
       toast.error(
         error instanceof ApiError ? error.message : "No se pudo verificar ante el SIAT"
       )
+    },
+  })
+
+  const downloadMutation = useMutation({
+    mutationFn: async (format: "pdf" | "xml") => {
+      const id = invoiceId!
+      const blob = format === "pdf"
+        ? await host.downloadInvoicePdf(id)
+        : await host.downloadInvoiceXml!(id)
+      saveBlob(blob, `factura-${id}.${format}`)
+    },
+    onError: (error) => {
+      toast.error(error instanceof ApiError ? error.message : "No se pudo descargar el comprobante")
     },
   })
 
@@ -267,11 +281,12 @@ export function InvoiceDetailSheet({
                         </p>
                       )}
                     <div className="flex flex-wrap gap-2 pt-1">
-                      {host.getInvoiceXmlUrl && invoice.cuf && (
+                      {host.downloadInvoiceXml && invoice.cuf && (
                         <Button
                           size="sm"
                           variant="outline"
-                          render={<a href={host.getInvoiceXmlUrl(invoice.id)} download />}
+                          disabled={downloadMutation.isPending}
+                          onClick={() => downloadMutation.mutate("xml")}
                         >
                           <Download data-icon="inline-start" />
                           XML firmado
@@ -293,7 +308,12 @@ export function InvoiceDetailSheet({
 
               <div className="flex items-center gap-2 border-t bg-background p-3">
                 {(invoice.status === "ACCEPTED" || invoice.status === "SENT") && (
-                  <Button size="sm" variant="outline" render={<a href={host.getInvoicePdfUrl(invoice.id)} download />}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={downloadMutation.isPending}
+                    onClick={() => downloadMutation.mutate("pdf")}
+                  >
                     <Download data-icon="inline-start" />
                     Descargar PDF
                   </Button>

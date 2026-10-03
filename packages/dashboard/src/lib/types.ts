@@ -150,21 +150,21 @@ export interface SectorInfo {
 // --- Contrato v1: preview / emisión directa (POST /v1/invoices/preview|emit) ---
 
 export interface V1CustomerInput {
-  id?: string
   document_type?: string
   document_number?: string
+  complement?: string | null
   name?: string
   email?: string
 }
 
 export interface V1ItemInput {
-  sku?: string
-  product_id?: string
-  code?: string
-  description?: string
+  sku: string
+  description: string
+  codigo_actividad?: string
+  codigo_producto_sin: number
+  unidad_medida: number
   quantity: number
-  price?: number
-  unit_price?: number
+  price: number
   discount?: number
   data?: Record<string, unknown>
 }
@@ -199,10 +199,11 @@ export interface InvoicePreview {
 
 export interface SinProduct {
   id?: string
-  codigo: number
+  codigo_producto_sin: number
   descripcion: string
-  codigo_actividad?: string | null
-  unidad_medida?: number | null
+  codigo_actividad?: string | number | null
+  /** Alias legado aceptado mientras se actualizan hosts externos. */
+  codigo?: number
 }
 
 export interface CatalogReadiness {

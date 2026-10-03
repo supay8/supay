@@ -56,7 +56,7 @@ test("self-hosted host exposes v1 preview and SIN catalog without legacy 404s", 
       calls.push({ url: String(url), options })
       const u = String(url)
       const body = u.includes("/catalogs/productos-sin")
-        ? { items: [{ codigo: 1, descripcion: "Producto SIN" }], total: 1, limit: 50, offset: 0 }
+        ? { items: [{ codigo_producto_sin: 1, codigo_actividad: 101010, descripcion: "Producto SIN" }], total: 1, limit: 50, offset: 0 }
         : { total: 100 }
       return new Response(JSON.stringify(body), {
         status: 200,
@@ -68,7 +68,14 @@ test("self-hosted host exposes v1 preview and SIN catalog without legacy 404s", 
   await host.previewInvoice({
     point_of_sale_id: "pos-1",
     customer: { document_type: "CI", document_number: "1", name: "Test" },
-    items: [{ quantity: 1, price: 10 }],
+    items: [{
+      sku: "SKU-1",
+      description: "Producto SIN",
+      codigo_producto_sin: 1,
+      unidad_medida: 58,
+      quantity: 1,
+      price: 10,
+    }],
   })
   assert.ok(calls[0].url.endsWith("/v1/invoices/preview"))
 
@@ -78,4 +85,44 @@ test("self-hosted host exposes v1 preview and SIN catalog without legacy 404s", 
 
   assert.throws(() => host.createCustomer({ name: "x" }), /POST \/customers/)
   assert.throws(() => host.createProduct({ name: "x" }), /POST \/products/)
+})
+
+test("self-hosted host authenticates downloads and forwards idempotency keys", async () => {
+  const calls = []
+  const host = createSelfHostedHost({
+    baseUrl: "http://backend.test:8081",
+    apiKey: "sup_test_secret",
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options })
+      if (String(url).endsWith("/pdf")) {
+        return new Response(new Uint8Array([37, 80, 68, 70]), {
+          status: 200,
+          headers: { "Content-Type": "application/pdf" },
+        })
+      }
+      return new Response(JSON.stringify({ id: "invoice-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    },
+  })
+
+  const blob = await host.downloadInvoicePdf("invoice-1")
+  assert.equal(blob.type, "application/pdf")
+  assert.equal(calls[0].options.headers["X-API-Key"], "sup_test_secret")
+
+  await host.emitInvoiceDirect({
+    point_of_sale_id: "pos-1",
+    customer: { document_type: "CI", document_number: "1", name: "Test" },
+    items: [{
+      sku: "SKU-1",
+      description: "Producto SIN",
+      codigo_producto_sin: 1,
+      unidad_medida: 58,
+      quantity: 1,
+      price: 10,
+    }],
+  }, "invoice-submit-1")
+
+  assert.equal(calls[1].options.headers["Idempotency-Key"], "invoice-submit-1")
 })

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
@@ -16,9 +16,9 @@ import { toast } from "sonner"
 import { ApiError } from "../host"
 import { useAuth } from "../auth-context"
 import { formatCurrency } from "../lib/format"
+import { saveBlob } from "../lib/download"
 import type {
   Customer,
-  DraftItemInput,
   Invoice,
   InvoicePreview,
   Product,
@@ -69,6 +69,9 @@ interface ItemRow {
   productId?: string
   code?: string
   description: string
+  codigoActividad: string
+  codigoProductoSin: string
+  unidadMedida: string
   quantity: string
   unitPrice: string
   discount: string
@@ -177,6 +180,7 @@ export function InvoiceNewPage() {
   const [rejectedMessages, setRejectedMessages] = useState<string>("")
   const [unavailableOpen, setUnavailableOpen] = useState(false)
   const [preview, setPreview] = useState<InvoicePreview | null>(null)
+  const emitIdempotencyKey = useRef<string | null>(null)
 
   const posQuery = useQuery({
     queryKey: ["point-of-sales", companyId],
@@ -222,6 +226,10 @@ export function InvoiceNewPage() {
     items.every(
       (i) =>
         i.description.trim() !== "" &&
+        (i.code?.trim() ?? "") !== "" &&
+        i.codigoActividad.trim() !== "" &&
+        parseNum(i.codigoProductoSin) > 0 &&
+        parseNum(i.unidadMedida) > 0 &&
         parseNum(i.quantity) > 0 &&
         parseNum(i.unitPrice) > 0
     )
@@ -233,6 +241,7 @@ export function InvoiceNewPage() {
 
   function addProductLine(product: Product) {
     const index = items.length
+    const mapping = product.mappings?.find((candidate) => candidate.is_default) ?? product.mappings?.[0]
     setItems((current) => [
       ...current,
       {
@@ -240,6 +249,9 @@ export function InvoiceNewPage() {
         productId: product.id,
         code: product.sku,
         description: product.name,
+        codigoActividad: mapping?.codigo_actividad ?? "",
+        codigoProductoSin: mapping ? String(mapping.codigo_producto_sin) : "",
+        unidadMedida: mapping?.unidad_medida ? String(mapping.unidad_medida) : "",
         quantity: "1",
         unitPrice: "",
         discount: "0",
@@ -258,6 +270,9 @@ export function InvoiceNewPage() {
       {
         key: newKey(),
         description: "",
+        codigoActividad: "",
+        codigoProductoSin: "",
+        unidadMedida: "",
         quantity: "1",
         unitPrice: "",
         discount: "0",
@@ -288,6 +303,7 @@ export function InvoiceNewPage() {
     setPreview(null)
     setResultInvoice(null)
     setPhase("idle")
+    emitIdempotencyKey.current = null
   }
 
   /** Payload v1 simplificado (POST /v1/invoices/preview|emit). */
@@ -297,15 +313,18 @@ export function InvoiceNewPage() {
     )
     return {
       point_of_sale_id: effectivePos,
-      customer: customer!.id.startsWith("manual-")
-        ? {
-            document_type: customer!.document_type,
-            document_number: customer!.document_number,
-            name: customer!.name,
-          }
-        : { id: customer!.id },
+      customer: {
+        document_type: customer!.document_type,
+        document_number: customer!.document_number,
+        complement: customer!.complement,
+        name: customer!.name,
+      },
       items: items.map((i) => ({
-        sku: i.code,
+        sku: i.code!.trim(),
+        description: i.description.trim(),
+        codigo_actividad: i.codigoActividad.trim(),
+        codigo_producto_sin: Number(i.codigoProductoSin),
+        unidad_medida: Number(i.unidadMedida),
         quantity: parseNum(i.quantity),
         price: parseNum(i.unitPrice),
         discount: parseNum(i.discount),
@@ -313,7 +332,11 @@ export function InvoiceNewPage() {
       })),
       sector: effectiveSector ? String(effectiveSector.codigo) : "auto",
       data: sectorData,
-      payment: { method_code: Number(metodoPago), currency_code: Number(moneda) },
+      payment: {
+        method_code: Number(metodoPago),
+        currency_code: Number(moneda),
+        exchange_rate: 1,
+      },
     }
   }
 
@@ -360,48 +383,20 @@ export function InvoiceNewPage() {
 
   const emitMutation = useMutation({
     mutationFn: async () => {
-      // Clientes transitorios (manual-*) o payload v1: emisión atómica.
-      if (customer!.id.startsWith("manual-") && host.emitInvoiceDirect) {
-        const emitted = await host.emitInvoiceDirect(buildV1Payload())
-        return { status: "accepted" as const, invoice: emitted }
+      if (!host.emitInvoiceDirect) {
+        throw new ApiError(405, "NOT_SUPPORTED", "Este host no expone POST /v1/invoices/emit")
       }
-      const payload = {
-        customer_id: customer!.id,
-        point_of_sale_id: effectivePos,
-        codigo_documento_sector: effectiveSector!.codigo,
-        codigo_metodo_pago: Number(metodoPago),
-        codigo_moneda: Number(moneda),
-        items: items.map<DraftItemInput>((i) => ({
-          product_id: i.productId,
-          code: i.code,
-          description: i.description.trim(),
-          quantity: parseNum(i.quantity),
-          unit_price: parseNum(i.unitPrice),
-          discount: parseNum(i.discount),
-        })),
-        sector_data: Object.fromEntries(
-          Object.entries(sectorValues).filter(([, v]) => v.trim() !== "")
-        ),
-      }
-      const draft = await host.createDraft(payload)
-      try {
-        const emitted = await host.emitInvoice(draft.id)
-        return { status: "accepted" as const, invoice: emitted }
-      } catch (error) {
-        if (
-          error instanceof ApiError &&
-          (error.code === "SIAT_REJECTED" || error.code === "SIAT_UNAVAILABLE")
-        ) {
-          return {
-            status: error.code === "SIAT_REJECTED" ? ("rejected" as const) : ("idle" as const),
-            invoice: draft,
-            error,
-          }
-        }
-        throw error
-      }
+      emitIdempotencyKey.current ??= crypto.randomUUID()
+      const emitted = await host.emitInvoiceDirect(
+        buildV1Payload(),
+        emitIdempotencyKey.current
+      )
+      return { status: "accepted" as const, invoice: emitted }
     },
-    onSuccess: handleResult,
+    onSuccess: (result) => {
+      emitIdempotencyKey.current = null
+      handleResult(result)
+    },
     onError: (error) => {
       if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
         const details = error.details ?? {}
@@ -412,6 +407,16 @@ export function InvoiceNewPage() {
       toast.error(
         error instanceof ApiError ? error.message : "No se pudo emitir la factura"
       )
+    },
+  })
+
+  const downloadMutation = useMutation({
+    mutationFn: async () => {
+      const blob = await host.downloadInvoicePdf(resultInvoice!.id)
+      saveBlob(blob, `factura-${resultInvoice!.id}.pdf`)
+    },
+    onError: (error) => {
+      toast.error(error instanceof ApiError ? error.message : "No se pudo descargar el PDF")
     },
   })
 
@@ -462,7 +467,8 @@ export function InvoiceNewPage() {
         <div className="flex flex-wrap justify-center gap-2">
           <Button
             variant="outline"
-            render={<a href={host.getInvoicePdfUrl(resultInvoice.id)} download />}
+            disabled={downloadMutation.isPending}
+            onClick={() => downloadMutation.mutate()}
           >
             <Download data-icon="inline-start" />
             Descargar PDF
@@ -710,7 +716,7 @@ export function InvoiceNewPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead>Descripción</TableHead>
+                  <TableHead>Producto / datos fiscales</TableHead>
                   <TableHead className="w-20 text-right">Cant.</TableHead>
                   <TableHead className="w-28 text-right">Precio</TableHead>
                   <TableHead className="w-24 text-right">Dto.</TableHead>
@@ -726,15 +732,51 @@ export function InvoiceNewPage() {
                   return (
                     <TableRow key={item.key}>
                       <TableCell className="p-1.5">
-                        <Input
-                          data-field={`items.${index}.description`}
-                          className="h-8 border-transparent bg-transparent shadow-none"
-                          placeholder="Descripción…"
-                          value={item.description}
-                          onChange={(e) =>
-                            updateItem(item.key, { description: e.target.value })
-                          }
-                        />
+                        <div className="flex min-w-[420px] flex-col gap-1">
+                          <Input
+                            data-field={`items.${index}.description`}
+                            className="h-8 border-transparent bg-transparent shadow-none"
+                            placeholder="Descripción…"
+                            value={item.description}
+                            onChange={(e) =>
+                              updateItem(item.key, { description: e.target.value })
+                            }
+                          />
+                          <div className="grid grid-cols-4 gap-1">
+                            <Input
+                              data-field={`items.${index}.sku`}
+                              className="h-7 text-xs"
+                              placeholder="SKU"
+                              value={item.code ?? ""}
+                              onChange={(e) => updateItem(item.key, { code: e.target.value })}
+                            />
+                            <Input
+                              data-field={`items.${index}.codigo_actividad`}
+                              className="h-7 text-xs"
+                              placeholder="Actividad"
+                              value={item.codigoActividad}
+                              onChange={(e) => updateItem(item.key, { codigoActividad: e.target.value })}
+                            />
+                            <Input
+                              data-field={`items.${index}.codigo_producto_sin`}
+                              className="h-7 text-xs"
+                              type="number"
+                              min="1"
+                              placeholder="Código SIN"
+                              value={item.codigoProductoSin}
+                              onChange={(e) => updateItem(item.key, { codigoProductoSin: e.target.value })}
+                            />
+                            <Input
+                              data-field={`items.${index}.unidad_medida`}
+                              className="h-7 text-xs"
+                              type="number"
+                              min="1"
+                              placeholder="Unidad"
+                              value={item.unidadMedida}
+                              onChange={(e) => updateItem(item.key, { unidadMedida: e.target.value })}
+                            />
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell className="p-1.5">
                         <Input

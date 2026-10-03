@@ -126,10 +126,10 @@ export function ProductsPage() {
               </TableHeader>
               <TableBody>
                 {products.map((p, i) => (
-                  <TableRow key={p.id ?? `${p.codigo}-${i}`}>
+                  <TableRow key={p.id ?? `${p.codigo_producto_sin ?? p.codigo}-${i}`}>
                     <TableCell className="font-medium">{p.descripcion}</TableCell>
                     <TableCell className="text-muted-foreground font-mono text-xs">
-                      {p.codigo}
+                      {p.codigo_producto_sin ?? p.codigo}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs">
                       {p.codigo_actividad ?? "—"}

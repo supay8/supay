@@ -90,13 +90,21 @@ interface RequestOptions {
  * Patrón Builder: los callers componen path + query + body sin concatenar strings.
  */
 class ApiClient {
-    constructor(
-        private baseUrl: string,
-        private getAuth: () => { apiKey: string; accessToken: string; companyId: string },
-        private fetchImpl: typeof fetch,
-    ) {}
+    private readonly baseUrl: string
+    private readonly getAuth: () => { apiKey: string; accessToken: string; companyId: string }
+    private readonly fetchImpl: typeof fetch
 
-    async request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+    constructor(
+        baseUrl: string,
+        getAuth: () => { apiKey: string; accessToken: string; companyId: string },
+        fetchImpl: typeof fetch,
+    ) {
+        this.baseUrl = baseUrl
+        this.getAuth = getAuth
+        this.fetchImpl = fetchImpl
+    }
+
+    private async send(path: string, opts: RequestOptions = {}): Promise<Response> {
         const { apiKey, accessToken, companyId } = this.getAuth()
         const headers: Record<string, string> = {}
 
@@ -119,14 +127,19 @@ class ApiClient {
         })
 
         if (!response.ok) throw await toHostError(response)
+        return response
+    }
+
+    async request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+        const response = await this.send(path, opts)
         if (response.status === 204) return undefined as T
         const text = await response.text()
         if (!text) return undefined as T
         return JSON.parse(text) as T
     }
 
-    url(path: string, query?: QueryParams): string {
-        return buildUrl(this.baseUrl, path, query)
+    async requestBlob(path: string, opts: RequestOptions = {}): Promise<Blob> {
+        return (await this.send(path, opts)).blob()
     }
 }
 
@@ -192,6 +205,7 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
     const request = <T>(path: string, opts?: RequestOptions) => client.request<T>(v1(path), { ...opts, requireAuth: true })
     const requestPublic = <T>(path: string, opts?: RequestOptions) => client.request<T>(v1(path), { ...opts, requireAuth: false })
     const requestForm = <T>(path: string, form: FormData) => client.request<T>(v1(path), { form, requireAuth: true })
+    const requestBlob = (path: string) => client.requestBlob(v1(path), { requireAuth: true })
 
     const siatResult = (raw: unknown): SiatOperationResult => {
         if (raw && typeof raw === "object") {
@@ -306,16 +320,31 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
                 { query: { limit: 50 } },
             ).catch((): Paginated<SinProduct> => ({ items: [], total: 0, limit: 0, offset: 0 }))
             const items = toPaginated<SinProduct>(sin).items
-            const adapted: Product[] = items.map((s, i) => ({
-                id: s.id ?? `sin-${s.codigo}-${i}`,
-                company_id: companyId,
-                sku: String(s.codigo),
-                name: s.descripcion,
-                active: true,
-                mappings: [],
-                created_at: new Date(0).toISOString(),
-                updated_at: new Date(0).toISOString(),
-            }))
+            const adapted: Product[] = items.map((s, i) => {
+                const codigoProductoSin = s.codigo_producto_sin ?? s.codigo
+                return {
+                    id: s.id ?? `sin-${codigoProductoSin}-${i}`,
+                    company_id: companyId,
+                    sku: String(codigoProductoSin),
+                    name: s.descripcion,
+                    active: true,
+                    mappings: codigoProductoSin
+                        ? [{
+                            id: `sin-${codigoProductoSin}`,
+                            product_id: s.id ?? `sin-${codigoProductoSin}-${i}`,
+                            codigo_producto_sin: codigoProductoSin,
+                            codigo_actividad: String(s.codigo_actividad ?? ""),
+                            codigo_documento_sector: 1,
+                            unidad_medida: 0,
+                            is_default: true,
+                            active: true,
+                            synced_at: new Date(0).toISOString(),
+                        }]
+                        : [],
+                    created_at: new Date(0).toISOString(),
+                    updated_at: new Date(0).toISOString(),
+                }
+            })
             return { items: adapted, total: adapted.length, limit: 50, offset: 0 }
         },
         createProduct: () => { throw notSupported("POST /products") },
@@ -356,8 +385,8 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
             }),
         revertAnnul: (id) => request<Invoice>(`/invoices/${id}/annul/revert`, { method: "POST" }),
         getSiatStatus: (id) => request<Record<string, unknown>>(`/invoices/${id}/siat-status`),
-        getInvoicePdfUrl: (id) => client.url(v1(`/invoices/${id}/pdf`)),
-        getInvoiceXmlUrl: (id) => client.url(v1(`/invoices/${id}/xml`)),
+        downloadInvoicePdf: (id) => requestBlob(`/invoices/${id}/pdf`),
+        downloadInvoiceXml: (id) => requestBlob(`/invoices/${id}/xml`),
 
         // Catálogos sincronizados
         listSinProducts: async (companyId, query?: string, limit = 50) => {

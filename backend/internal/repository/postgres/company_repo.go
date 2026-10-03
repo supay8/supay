@@ -49,7 +49,7 @@ func createCompany(db *gorm.DB, c *domain.Company) error {
 		PiePagina:          c.PiePagina,
 		UsuarioSiat:        c.UsuarioSiat,
 	}
-	settings, err := tenantSettingsWithCertificateWebhook(nil, c.CertificateWebhookURL)
+	settings, err := tenantSettings(nil, c.CertificateWebhookURL, c.InvoiceEmailEnabled)
 	if err != nil {
 		return err
 	}
@@ -122,6 +122,7 @@ func toDomainCompany(dbModel *models.Company) *domain.Company {
 		PiePagina:              dbModel.PiePagina,
 		UsuarioSiat:            dbModel.UsuarioSiat,
 		CertificateWebhookURL:  certificateWebhookURL(json.RawMessage(dbModel.Config.Settings)),
+		InvoiceEmailEnabled:    invoiceEmailEnabled(json.RawMessage(dbModel.Config.Settings)),
 		EncryptedTokenDelegado: dbModel.Config.TokenDelegado,
 		CreatedAt:              dbModel.CreatedAt,
 		UpdatedAt:              dbModel.UpdatedAt,
@@ -158,7 +159,7 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	tenant.PiePagina = c.PiePagina
 	tenant.UsuarioSiat = c.UsuarioSiat
 
-	settings, err := tenantSettingsWithCertificateWebhook(tenantConfig.Settings, c.CertificateWebhookURL)
+	settings, err := tenantSettings(tenantConfig.Settings, c.CertificateWebhookURL, c.InvoiceEmailEnabled)
 	if err != nil {
 		return err
 	}
@@ -184,7 +185,7 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	return nil
 }
 
-func tenantSettingsWithCertificateWebhook(raw datatypes.JSON, webhookURL string) (datatypes.JSON, error) {
+func tenantSettings(raw datatypes.JSON, webhookURL string, emailEnabled bool) (datatypes.JSON, error) {
 	settings := make(map[string]any)
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &settings); err != nil {
@@ -207,8 +208,23 @@ func tenantSettingsWithCertificateWebhook(raw datatypes.JSON, webhookURL string)
 	} else {
 		settings["certificate_alerts"] = alerts
 	}
+	emailConfig, _ := settings["invoice_email"].(map[string]any)
+	if emailConfig == nil {
+		emailConfig = make(map[string]any)
+	}
+	emailConfig["enabled"] = emailEnabled
+	settings["invoice_email"] = emailConfig
 	encoded, err := json.Marshal(settings)
 	return datatypes.JSON(encoded), err
+}
+
+func invoiceEmailEnabled(raw json.RawMessage) bool {
+	var settings struct {
+		InvoiceEmail struct {
+			Enabled bool `json:"enabled"`
+		} `json:"invoice_email"`
+	}
+	return json.Unmarshal(raw, &settings) == nil && settings.InvoiceEmail.Enabled
 }
 
 func (r *PostgresCompanyRepository) Delete(id string) error {

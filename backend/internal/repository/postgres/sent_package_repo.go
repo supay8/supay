@@ -17,13 +17,18 @@ import (
 )
 
 type PostgresSentPackageRepository struct {
-	db *gorm.DB
+	db                      *gorm.DB
+	queueEmailNotifications bool
 }
 
 var _ domain.FiscalBatchRepository = (*PostgresSentPackageRepository)(nil)
 
-func NewPostgresSentPackageRepository(db *gorm.DB) domain.SentPackageRepository {
+func NewPostgresSentPackageRepository(db *gorm.DB) *PostgresSentPackageRepository {
 	return &PostgresSentPackageRepository{db: db}
+}
+
+func (r *PostgresSentPackageRepository) EnableEmailNotifications(enabled bool) {
+	r.queueEmailNotifications = enabled
 }
 
 func (r *PostgresSentPackageRepository) Create(pkg *domain.SentPackage) error {
@@ -443,7 +448,7 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 					return err
 				}
 				claimed, err := transitionInvoiceStatus(tx, pkg.CompanyId, invoice.ID,
-					domain.InvoiceStatus(invoice.Status), *invoiceStatus, reason, values, event)
+					domain.InvoiceStatus(invoice.Status), *invoiceStatus, reason, values, event, r.queueEmailNotifications)
 				if err != nil {
 					return err
 				}

@@ -68,15 +68,40 @@ func TestGenerate_Validaciones(t *testing.T) {
 	}
 }
 
-func TestTotalFixtureBaseCoincideEnPDFBaseDeDatosYSIAT(t *testing.T) {
-	dbTotal := decimal.RequireFromString("150.50")
-	siatTotal, _ := siat.CalcularTotales([]siat.ItemFactura{
-		{Cantidad: 1, PrecioUnitario: 100.25, SubTotal: 100.25},
-		{Cantidad: 2, PrecioUnitario: 25.125, SubTotal: 50.25},
-	}, false)
-	pdfTotal := formatMoney(dbTotal.InexactFloat64())
-	if pdfTotal != dbTotal.StringFixed(2) || pdfTotal != formatMoney(siatTotal) {
-		t.Fatalf("total PDF=%s total DB=%s total SIAT=%s", pdfTotal, dbTotal.StringFixed(2), formatMoney(siatTotal))
+func TestTotalesSectoresPilotoCoincidenEnPDFBaseDeDatosYSIAT(t *testing.T) {
+	fixtures := []struct {
+		name   string
+		sector int
+		db     string
+		items  []siat.ItemFactura
+	}{
+		{
+			name: "sector 1 compra venta", sector: siat.SectorCompraVenta, db: "150.50",
+			items: []siat.ItemFactura{
+				{Cantidad: 1, PrecioUnitario: 100.25, SubTotal: 100.25},
+				{Cantidad: 2, PrecioUnitario: 25.125, SubTotal: 50.25},
+			},
+		},
+		{
+			name: "sector 11 educativo", sector: 11, db: "229.90",
+			items: []siat.ItemFactura{
+				{Cantidad: 1, PrecioUnitario: 199.955, SubTotal: 199.96},
+				{Cantidad: 3, PrecioUnitario: 9.98, SubTotal: 29.94},
+			},
+		},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			if _, err := siat.PerfilSector(fixture.sector); err != nil {
+				t.Fatalf("sector piloto no registrado: %v", err)
+			}
+			dbTotal := decimal.RequireFromString(fixture.db)
+			siatTotal, _ := siat.CalcularTotales(fixture.items, false)
+			pdfTotal := formatMoney(dbTotal.InexactFloat64())
+			if pdfTotal != dbTotal.StringFixed(2) || pdfTotal != formatMoney(siatTotal) {
+				t.Fatalf("sector=%d total PDF=%s total DB=%s total SIAT=%s", fixture.sector, pdfTotal, dbTotal.StringFixed(2), formatMoney(siatTotal))
+			}
+		})
 	}
 }
 

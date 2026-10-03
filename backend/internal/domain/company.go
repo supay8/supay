@@ -42,6 +42,7 @@ type Company struct {
 	PiePagina             string          `json:"pie_pagina,omitempty"`
 	UsuarioSiat           string          `json:"usuario_siat,omitempty"`
 	CertificateWebhookURL string          `json:"certificate_webhook_url,omitempty"`
+	InvoiceEmailEnabled   bool            `json:"invoice_email_enabled"`
 	// EncryptedTokenDelegado se persiste cifrado en tenant_configs y nunca se
 	// expone en respuestas JSON.
 	EncryptedTokenDelegado string    `json:"-"`

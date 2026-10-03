@@ -13,9 +13,9 @@ import (
 
 func TestTenantSettingsWithCertificateWebhookPreservesOtherSettings(t *testing.T) {
 	raw := datatypes.JSON([]byte(`{"feature_flag":true,"certificate_alerts":{"email":"ops@example.test","webhook_url":"https://old.example.test"}}`))
-	updated, err := tenantSettingsWithCertificateWebhook(raw, "https://new.example.test")
+	updated, err := tenantSettings(raw, "https://new.example.test", true)
 	if err != nil {
-		t.Fatalf("tenantSettingsWithCertificateWebhook: %v", err)
+		t.Fatalf("tenantSettings: %v", err)
 	}
 	var settings map[string]any
 	if err := json.Unmarshal(updated, &settings); err != nil {
@@ -27,6 +27,36 @@ func TestTenantSettingsWithCertificateWebhookPreservesOtherSettings(t *testing.T
 	alerts, ok := settings["certificate_alerts"].(map[string]any)
 	if !ok || alerts["email"] != "ops@example.test" || alerts["webhook_url"] != "https://new.example.test" {
 		t.Fatalf("certificate_alerts inesperado: %v", settings["certificate_alerts"])
+	}
+	emailConfig, ok := settings["invoice_email"].(map[string]any)
+	if !ok || emailConfig["enabled"] != true {
+		t.Fatalf("invoice_email inesperado: %v", settings["invoice_email"])
+	}
+}
+
+func TestCompanyRepositoryPersistsInvoiceEmailPreference(t *testing.T) {
+	db := newTestDB(t)
+	fixture := seedFixture(t, db)
+	repo := NewPostgresCompanyRepository(db)
+
+	company, err := repo.GetByID(fixture.companyID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if company.InvoiceEmailEnabled {
+		t.Fatal("la preferencia debe estar deshabilitada por defecto")
+	}
+	company.InvoiceEmailEnabled = true
+	if err := repo.Update(company); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	stored, err := repo.GetByID(fixture.companyID)
+	if err != nil {
+		t.Fatalf("GetByID after update: %v", err)
+	}
+	if !stored.InvoiceEmailEnabled {
+		t.Fatal("la preferencia habilitada no se recuperó")
 	}
 }
 

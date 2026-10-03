@@ -213,6 +213,11 @@ func (uc *InvoiceUsecase) ProcessEmission(ctx context.Context, tenantID, id stri
 			uc.pdfService.GenerateAndPersist(ctx, inv.ID)
 		}
 	}
+	if uc.emailDispatcher != nil {
+		if err := uc.emailDispatcher.DispatchOnce(ctx); err != nil {
+			slog.Warn("email de factura quedó pendiente de republicación", "invoice_id", inv.ID, "error", err)
+		}
+	}
 
 	return inv, nil
 }

@@ -17,11 +17,16 @@ import (
 )
 
 type PostgresInvoiceRepository struct {
-	db *gorm.DB
+	db                      *gorm.DB
+	queueEmailNotifications bool
 }
 
 func NewPostgresInvoiceRepository(db *gorm.DB) domain.InvoiceRepository {
 	return &PostgresInvoiceRepository{db: db}
+}
+
+func (r *PostgresInvoiceRepository) EnableEmailNotifications(enabled bool) {
+	r.queueEmailNotifications = enabled
 }
 
 func (r *PostgresInvoiceRepository) Create(inv *domain.Invoice) error {
@@ -143,21 +148,24 @@ func invoiceMutableFields(inv *domain.Invoice) map[string]any {
 }
 
 func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
+	if strings.TrimSpace(inv.CompanyId) == "" {
+		return domain.ErrMissingCompanyID
+	}
 	var current models.Invoice
-	if err := r.db.Select("status").Where("id = ?", inv.ID).First(&current).Error; err != nil {
+	if err := r.db.Select("status").Where("tenant_id = ? AND id = ?", inv.CompanyId, inv.ID).First(&current).Error; err != nil {
 		return err
 	}
 	if domain.InvoiceStatus(current.Status) != inv.Status {
 		return domain.ErrStatusUpdateRequiresTransition
 	}
 	res := r.db.Model(&models.Invoice{}).
-		Where("id = ? AND status = ?", inv.ID, models.InvoiceStatus(inv.Status)).
+		Where("tenant_id = ? AND id = ? AND status = ?", inv.CompanyId, inv.ID, models.InvoiceStatus(inv.Status)).
 		Updates(invoiceMutableFields(inv))
 	if res.Error != nil {
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		if err := r.db.Select("status").Where("id = ?", inv.ID).First(&current).Error; err != nil {
+		if err := r.db.Select("status").Where("tenant_id = ? AND id = ?", inv.CompanyId, inv.ID).First(&current).Error; err != nil {
 			return err
 		}
 		return domain.ErrStatusUpdateRequiresTransition
@@ -175,7 +183,7 @@ func (r *PostgresInvoiceRepository) TransitionStatus(tenantID, id string, from, 
 	claimed := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var err error
-		claimed, err = transitionInvoiceStatus(tx, tenantID, id, from, to, reason, fields, event)
+		claimed, err = transitionInvoiceStatus(tx, tenantID, id, from, to, reason, fields, event, r.queueEmailNotifications)
 		return err
 	})
 	return claimed, err
@@ -184,7 +192,7 @@ func (r *PostgresInvoiceRepository) TransitionStatus(tenantID, id string, from, 
 // transitionInvoiceStatus aplica la misma transición protegida dentro de una
 // transacción existente. Los lotes la reutilizan para que el estado fiscal y
 // el evento queden atómicos con el resultado del paquete.
-func transitionInvoiceStatus(tx *gorm.DB, tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
+func transitionInvoiceStatus(tx *gorm.DB, tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent, queueEmail bool) (bool, error) {
 	if strings.TrimSpace(tenantID) == "" {
 		return false, domain.ErrMissingCompanyID
 	}
@@ -213,6 +221,11 @@ func transitionInvoiceStatus(tx *gorm.DB, tenantID, id string, from, to domain.I
 	}
 	if result.RowsAffected != 1 {
 		return false, nil
+	}
+	if queueEmail && (to == domain.InvoiceAccepted || to == domain.InvoiceObserved) {
+		if err := queueInvoiceEmailNotification(tx, tenantID, id); err != nil {
+			return false, err
+		}
 	}
 	if event == nil {
 		return true, nil

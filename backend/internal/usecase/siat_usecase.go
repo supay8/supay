@@ -38,6 +38,7 @@ type SiatUsecase struct {
 	docSectorRepo   domain.SiatActividadDocSectorRepository
 	invoiceRepo     domain.InvoiceRepository
 	fileService     *InvoiceFileService
+	emailDispatcher domain.InvoiceEmailTaskDispatcher
 
 	siatService  ports.FiscalService
 	siatProvider siat.SiatClientProvider
@@ -46,6 +47,10 @@ type SiatUsecase struct {
 }
 
 func (uc *SiatUsecase) SetFileService(files *InvoiceFileService) { uc.fileService = files }
+
+func (uc *SiatUsecase) SetEmailDispatcher(dispatcher domain.InvoiceEmailTaskDispatcher) {
+	uc.emailDispatcher = dispatcher
+}
 
 func NewSiatUsecase(
 	companyRepo domain.CompanyRepository,

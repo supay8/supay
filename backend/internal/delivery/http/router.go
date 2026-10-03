@@ -41,6 +41,19 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok","message":"Supay API running"}`))
 }
 
+// NewEmailWorkerRouter exposes only the private Cloud Tasks target. Deploying
+// RUN_MODE=email-worker as a separate, IAM-private Cloud Run service allows
+// email delivery to scale independently from the public API.
+func NewEmailWorkerRouter(sendInvoiceEmail http.HandlerFunc) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(9 * time.Minute))
+	r.Get("/health", healthHandler)
+	r.Post("/internal/tasks/send-invoice-email", sendInvoiceEmail)
+	return r
+}
+
 func registerModules(r chi.Router, registered []modules.Module, v1 bool) {
 	for _, m := range registered {
 		register := m.RegisterRoutes

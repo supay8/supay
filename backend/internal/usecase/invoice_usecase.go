@@ -33,10 +33,15 @@ type InvoiceUsecase struct {
 	modalidad            int
 	pdfService           PdfGenerator
 	fileService          *InvoiceFileService
+	emailDispatcher      domain.InvoiceEmailTaskDispatcher
 	allowCustomIssueDate bool
 }
 
 func (uc *InvoiceUsecase) SetFileService(files *InvoiceFileService) { uc.fileService = files }
+
+func (uc *InvoiceUsecase) SetEmailDispatcher(dispatcher domain.InvoiceEmailTaskDispatcher) {
+	uc.emailDispatcher = dispatcher
+}
 
 // SetContingencyRepository enables the official offline contingency fallback
 // without expanding the constructor used by embedded consumers and tests.

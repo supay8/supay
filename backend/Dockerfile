@@ -5,13 +5,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /app/supay ./cmd/server \
-    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /app/supay-migrate ./cmd/migrate
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /app/supay-migrate ./cmd/migrate \
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /app/supay-email-dispatcher ./cmd/email-dispatcher
 
 FROM alpine:3.20
 RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /app/supay /app/supay
 COPY --from=builder /app/supay-migrate /app/supay-migrate
+COPY --from=builder /app/supay-email-dispatcher /app/supay-email-dispatcher
 # Storage dir for the self-hosted STORAGE_DRIVER=local path.
 RUN mkdir -p /app/storage/pdfs
 # Se mantiene root para que los bind mounts/volúmenes del compose self-hosted

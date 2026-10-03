@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"github.com/brandsrx/supay/internal/adapters/notification"
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/adapters/siat/sandbox"
@@ -27,6 +28,8 @@ import (
 	siatModule "github.com/brandsrx/supay/internal/delivery/http/modules/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/emissionqueue"
+	"github.com/brandsrx/supay/internal/invoiceemail"
+	"github.com/brandsrx/supay/internal/observability"
 	"github.com/brandsrx/supay/internal/pdf"
 	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/repository/postgres"
@@ -64,6 +67,7 @@ type Container struct {
 	certificateRepo            domain.CertificateRepository
 	maintenanceRepo            domain.MaintenanceRepository
 	outboxRepo                 domain.OutboxRepository
+	emailNotificationRepo      domain.InvoiceEmailNotificationRepository
 
 	// Servicios de infraestructura
 	cryptoSvc          *crypto.Service
@@ -92,6 +96,10 @@ type Container struct {
 	maintenanceService *usecase.MaintenanceService
 	maintenanceMetrics *usecase.MaintenanceMetrics
 	emissionQueue      *emissionqueue.Service
+	emailTasksClient   *cloudtasks.Client
+	emailDispatcher    *invoiceemail.Dispatcher
+	emailProcessor     *invoiceemail.Processor
+	emailTaskHandler   *invoiceemail.Handler
 
 	// HTTP
 	modules []deliveryModules.Module
@@ -101,6 +109,17 @@ type Container struct {
 
 // NewContainer construye un contenedor sin inicializar sus dependencias.
 func NewContainer(cfg appconfig.Config, db *gorm.DB) *Container {
+	if db != nil {
+		observability.DefaultMetrics().SetOutboxPendingProvider(func() (float64, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var count int64
+			err := db.WithContext(ctx).Table("outbox").
+				Where("status = ?", domain.OutboxStatusPending).
+				Count(&count).Error
+			return float64(count), err
+		})
+	}
 	return &Container{cfg: cfg, db: db}
 }
 
@@ -238,7 +257,9 @@ func (c *Container) BranchRepo() domain.BranchRepository {
 
 func (c *Container) SentPackageRepo() domain.SentPackageRepository {
 	if c.sentPackageRepo == nil {
-		c.sentPackageRepo = postgres.NewPostgresSentPackageRepository(c.db)
+		repo := postgres.NewPostgresSentPackageRepository(c.db)
+		repo.EnableEmailNotifications(c.cfg.InvoiceEmail.Enabled)
+		c.sentPackageRepo = repo
 	}
 	return c.sentPackageRepo
 }
@@ -252,9 +273,68 @@ func (c *Container) CustomerRepo() domain.CustomerRepository {
 
 func (c *Container) InvoiceRepo() domain.InvoiceRepository {
 	if c.invoiceRepo == nil {
-		c.invoiceRepo = postgres.NewPostgresInvoiceRepository(c.db)
+		repo := postgres.NewPostgresInvoiceRepository(c.db)
+		if configurable, ok := repo.(*postgres.PostgresInvoiceRepository); ok {
+			configurable.EnableEmailNotifications(c.cfg.InvoiceEmail.Enabled)
+		}
+		c.invoiceRepo = repo
 	}
 	return c.invoiceRepo
+}
+
+func (c *Container) EmailNotificationRepo() domain.InvoiceEmailNotificationRepository {
+	if c.emailNotificationRepo == nil {
+		c.emailNotificationRepo = postgres.NewPostgresInvoiceEmailNotificationRepository(c.db)
+	}
+	return c.emailNotificationRepo
+}
+
+func (c *Container) EmailDispatcher() *invoiceemail.Dispatcher {
+	if !c.cfg.InvoiceEmail.Enabled {
+		return nil
+	}
+	if c.emailDispatcher == nil {
+		client, err := cloudtasks.NewClient(context.Background())
+		if err != nil {
+			log.Fatalf("Cloud Tasks no disponible: %v", err)
+		}
+		publisher, err := invoiceemail.NewCloudTasksPublisher(client, invoiceemail.CloudTasksConfig{
+			ProjectID: c.cfg.InvoiceEmail.ProjectID, Location: c.cfg.InvoiceEmail.Location,
+			Queue: c.cfg.InvoiceEmail.Queue, WorkerURL: c.cfg.InvoiceEmail.WorkerURL,
+			ServiceAccountEmail: c.cfg.InvoiceEmail.TaskServiceAccountEmail,
+			Audience:            c.cfg.InvoiceEmail.Audience,
+		})
+		if err != nil {
+			_ = client.Close()
+			log.Fatalf("configurar publicación de emails: %v", err)
+		}
+		c.emailTasksClient = client
+		c.emailDispatcher = invoiceemail.NewDispatcher(c.EmailNotificationRepo(), publisher, c.cfg.InvoiceEmail.DispatchBatchSize, c.cfg.InvoiceEmail.PublishLockTimeout)
+	}
+	return c.emailDispatcher
+}
+
+func (c *Container) EmailProcessor() *invoiceemail.Processor {
+	if c.emailProcessor == nil {
+		sender, err := invoiceemail.NewSMTPSender(invoiceemail.SMTPConfig{
+			Host: c.cfg.InvoiceEmail.SMTPHost, Port: c.cfg.InvoiceEmail.SMTPPort,
+			Username: c.cfg.InvoiceEmail.SMTPUsername, Password: c.cfg.InvoiceEmail.SMTPPassword,
+			From: c.cfg.InvoiceEmail.From, FromName: c.cfg.InvoiceEmail.FromName,
+			Timeout: c.cfg.InvoiceEmail.SMTPTimeout,
+		})
+		if err != nil {
+			log.Fatalf("configurar SMTP de facturas: %v", err)
+		}
+		c.emailProcessor = invoiceemail.NewProcessor(c.EmailNotificationRepo(), c.InvoiceRepo(), c.InvoiceFileService(), c.PdfService(), sender, c.cfg.InvoiceEmail.DeliveryLockTimeout)
+	}
+	return c.emailProcessor
+}
+
+func (c *Container) EmailTaskHandler() *invoiceemail.Handler {
+	if c.emailTaskHandler == nil {
+		c.emailTaskHandler = invoiceemail.NewHandler(c.EmailProcessor(), nil, c.cfg.InvoiceEmail.Audience, c.cfg.InvoiceEmail.TaskServiceAccountEmail)
+	}
+	return c.emailTaskHandler
 }
 
 func (c *Container) InvoiceEventRepo() domain.InvoiceEventRepository {
@@ -508,6 +588,9 @@ func (c *Container) InvoiceUsecase() *usecase.InvoiceUsecase {
 		)
 		c.invoiceUsecase.SetContingencyRepository(c.ContingencyRepo())
 		c.invoiceUsecase.SetFileService(c.InvoiceFileService())
+		if c.cfg.InvoiceEmail.Enabled {
+			c.invoiceUsecase.SetEmailDispatcher(c.EmailDispatcher())
+		}
 	}
 	return c.invoiceUsecase
 }
@@ -549,6 +632,9 @@ func (c *Container) SiatUsecase() *usecase.SiatUsecase {
 			c.InvoiceRepo(), c.SiatProvider(),
 		)
 		c.siatUsecase.SetFileService(c.InvoiceFileService())
+		if c.cfg.InvoiceEmail.Enabled {
+			c.siatUsecase.SetEmailDispatcher(c.EmailDispatcher())
+		}
 	}
 	return c.siatUsecase
 }
@@ -588,6 +674,10 @@ func (c *Container) Modules() []deliveryModules.Module {
 
 func (c *Container) Router() http.Handler {
 	if c.router == nil {
+		if c.cfg.RunMode.RunsEmailWorker() {
+			c.router = deliveryHttp.NewEmailWorkerRouter(c.EmailTaskHandler().SendInvoiceEmail)
+			return c.router
+		}
 		deliveryHttp.SetVerifyAPIKey(postgres.VerifyKey)
 		companyCreateHandler := c.companyCreateHandler()
 		authOptions := deliveryHttp.AuthOptions{
@@ -629,12 +719,16 @@ func (c *Container) companyCreateHandler() http.HandlerFunc {
 
 func (c *Container) Server() *http.Server {
 	if c.server == nil {
+		writeTimeout := 60 * time.Second
+		if c.cfg.RunMode.RunsEmailWorker() {
+			writeTimeout = 10 * time.Minute
+		}
 		c.server = &http.Server{
 			Addr:              ":" + c.cfg.Port,
 			Handler:           c.Router(),
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      60 * time.Second,
+			WriteTimeout:      writeTimeout,
 			IdleTimeout:       120 * time.Second,
 		}
 	}

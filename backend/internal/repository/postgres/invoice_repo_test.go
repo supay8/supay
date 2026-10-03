@@ -11,6 +11,7 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/repository/database"
+	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -53,6 +54,7 @@ type repoFixture struct {
 
 func seedFixture(t *testing.T, db *gorm.DB) repoFixture {
 	t.Helper()
+	email := "cliente@example.com"
 	company := &domain.Company{
 		Nit:          fmt.Sprintf("%d", time.Now().UnixNano()%10000000000),
 		BusinessName: "Empresa Test",
@@ -83,6 +85,8 @@ func seedFixture(t *testing.T, db *gorm.DB) repoFixture {
 		DocumentType:   string(models.DocNIT),
 		DocumentNumber: "123456789",
 		Name:           "Cliente Test",
+		Email:          &email,
+		CodigoCliente:  "123456789",
 	}
 	customerRepo := NewPostgresCustomerRepository(db)
 	if err := customerRepo.Create(customer); err != nil {
@@ -196,6 +200,12 @@ func TestInvoiceTenantIsolation(t *testing.T) {
 	if transitioned, err := repo.TransitionStatus(tenantA.companyID, invoiceB.ID, domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart, nil, nil); !errors.Is(err, gorm.ErrRecordNotFound) || transitioned {
 		t.Fatalf("tenant A no debe transicionar factura de B: transitioned=%v err=%v", transitioned, err)
 	}
+	foreignUpdate := *invoiceB
+	foreignUpdate.CompanyId = tenantA.companyID
+	foreignUpdate.Cuf = ptrString("CUF-MALICIOSO")
+	if err := repo.Update(&foreignUpdate); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("tenant A no debe actualizar factura de B: err=%v", err)
+	}
 	unchangedB, err := repo.GetByID(tenantB.companyID, invoiceB.ID)
 	if err != nil || unchangedB == nil || unchangedB.Status != domain.InvoicePending {
 		var status domain.InvoiceStatus
@@ -216,6 +226,11 @@ func TestInvoiceTenantIsolation(t *testing.T) {
 	}
 	if _, err := repo.TransitionStatus("", invoiceA.ID, domain.InvoicePending, domain.InvoiceSending, domain.TransitionEmissionStart, nil, nil); !errors.Is(err, domain.ErrMissingCompanyID) {
 		t.Fatalf("TransitionStatus sin tenant: err=%v", err)
+	}
+	withoutTenant := *invoiceA
+	withoutTenant.CompanyId = ""
+	if err := repo.Update(&withoutTenant); !errors.Is(err, domain.ErrMissingCompanyID) {
+		t.Fatalf("Update sin tenant: err=%v", err)
 	}
 	if _, err := repo.GetByIdempotencyKey("", tenantA.posID, "key"); !errors.Is(err, domain.ErrMissingCompanyID) {
 		t.Fatalf("GetByIdempotencyKey sin tenant: err=%v", err)
@@ -239,6 +254,102 @@ func TestClaimForEmissionEsAtomica(t *testing.T) {
 	claimed, err = repo.ClaimForEmission(f.companyID, inv.ID)
 	if err != nil || claimed {
 		t.Fatalf("segundo claim debe ser false, got claimed=%v err=%v", claimed, err)
+	}
+}
+
+func TestAcceptedTransitionQueuesInvoiceEmailInSameTransaction(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewPostgresInvoiceRepository(db).(*PostgresInvoiceRepository)
+	repo.EnableEmailNotifications(true)
+	f := seedFixture(t, db)
+	if err := db.Model(&models.TenantConfig{}).Where("tenant_id = ?", f.companyID).
+		Update("settings", datatypes.JSON([]byte(`{"invoice_email":{"enabled":true}}`))).Error; err != nil {
+		t.Fatalf("enable invoice email: %v", err)
+	}
+
+	inv := nuevaFacturaPendiente(f)
+	if err := repo.Create(inv); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if claimed, err := repo.ClaimForEmission(f.companyID, inv.ID); err != nil || !claimed {
+		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+	}
+	accepted, err := repo.TransitionStatus(
+		f.companyID,
+		inv.ID,
+		domain.InvoiceSending,
+		domain.InvoiceAccepted,
+		domain.TransitionSIATAccepted,
+		nil,
+		nil,
+	)
+	if err != nil || !accepted {
+		t.Fatalf("accept: accepted=%v err=%v", accepted, err)
+	}
+
+	var notification invoiceEmailNotificationRow
+	if err := db.Where("invoice_id = ?", inv.ID).First(&notification).Error; err != nil {
+		t.Fatalf("notification: %v", err)
+	}
+	if notification.TenantID != f.companyID || notification.Recipient != *f.customer.Email || notification.Status != domain.InvoiceEmailPending {
+		t.Fatalf("notificación inesperada: tenant=%q recipient=%q status=%q", notification.TenantID, notification.Recipient, notification.Status)
+	}
+}
+
+func TestAcceptedTransitionDoesNotQueueInvoiceEmailWhenTenantDisabled(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewPostgresInvoiceRepository(db).(*PostgresInvoiceRepository)
+	repo.EnableEmailNotifications(true)
+	f := seedFixture(t, db)
+
+	inv := nuevaFacturaPendiente(f)
+	if err := repo.Create(inv); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if claimed, err := repo.ClaimForEmission(f.companyID, inv.ID); err != nil || !claimed {
+		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+	}
+	if accepted, err := repo.TransitionStatus(f.companyID, inv.ID, domain.InvoiceSending, domain.InvoiceAccepted, domain.TransitionSIATAccepted, nil, nil); err != nil || !accepted {
+		t.Fatalf("accept: accepted=%v err=%v", accepted, err)
+	}
+
+	var count int64
+	if err := db.Model(&invoiceEmailNotificationRow{}).Where("invoice_id = ?", inv.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count notification: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("empresa deshabilitada creó %d notificaciones", count)
+	}
+}
+
+func TestAcceptedTransitionDoesNotQueueInvoiceEmailWithoutRecipient(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewPostgresInvoiceRepository(db).(*PostgresInvoiceRepository)
+	repo.EnableEmailNotifications(true)
+	f := seedFixture(t, db)
+	if err := db.Model(&models.TenantConfig{}).Where("tenant_id = ?", f.companyID).
+		Update("settings", datatypes.JSON([]byte(`{"invoice_email":{"enabled":true}}`))).Error; err != nil {
+		t.Fatalf("enable invoice email: %v", err)
+	}
+
+	inv := nuevaFacturaPendiente(f)
+	inv.Customer.Email = nil
+	if err := repo.Create(inv); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if claimed, err := repo.ClaimForEmission(f.companyID, inv.ID); err != nil || !claimed {
+		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+	}
+	if accepted, err := repo.TransitionStatus(f.companyID, inv.ID, domain.InvoiceSending, domain.InvoiceAccepted, domain.TransitionSIATAccepted, nil, nil); err != nil || !accepted {
+		t.Fatalf("accept: accepted=%v err=%v", accepted, err)
+	}
+
+	var count int64
+	if err := db.Model(&invoiceEmailNotificationRow{}).Where("invoice_id = ?", inv.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count notification: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("factura sin email creó %d notificaciones", count)
 	}
 }
 
@@ -327,15 +438,16 @@ func TestUpdateEsParcialYNoPisaCamposAjenos(t *testing.T) {
 	stale.InvoiceNumber = inv.InvoiceNumber
 
 	inv.Cuf = ptrString("CUF-TEST-0001")
-	inv.Status = domain.InvoiceAccepted
 	if err := repo.Update(inv); err != nil {
 		t.Fatalf("update real: %v", err)
 	}
+	if claimed, err := repo.ClaimForEmission(f.companyID, inv.ID); err != nil || !claimed {
+		t.Fatalf("transición concurrente: claimed=%v err=%v", claimed, err)
+	}
 
-	// El update con datos obsoletos no debe revertir el CUF ni tocar montos.
-	stale.Status = domain.InvoiceSending
-	if err := repo.Update(stale); err != nil {
-		t.Fatalf("update stale: %v", err)
+	// El update con datos obsoletos no debe revertir el estado ni el CUF.
+	if err := repo.Update(stale); !errors.Is(err, domain.ErrStatusUpdateRequiresTransition) {
+		t.Fatalf("update stale debe exigir transición explícita: %v", err)
 	}
 
 	got, err := repo.GetByID(f.companyID, inv.ID)
@@ -349,7 +461,10 @@ func TestUpdateEsParcialYNoPisaCamposAjenos(t *testing.T) {
 		t.Errorf("el correlativo no debe cambiar, got %d", got.InvoiceNumber)
 	}
 	if got.Status != domain.InvoiceSending {
-		t.Errorf("el status sí debe actualizarce con el último update, got %s", got.Status)
+		t.Errorf("la transición concurrente debe conservarse, got %s", got.Status)
+	}
+	if got.Cuf == nil || *got.Cuf != "CUF-TEST-0001" {
+		t.Errorf("el CUF no debe perderse, got %v", got.Cuf)
 	}
 }
 

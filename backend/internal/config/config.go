@@ -55,6 +55,7 @@ type Config struct {
 	AllowCustomIssueDate bool // dev-only: permite POST /invoices con issue_date arbitrario
 	Maintenance          MaintenanceConfig
 	Queue                QueueConfig
+	InvoiceEmail         InvoiceEmailConfig
 }
 
 // RunMode controls which long-lived components run in this process. The beta
@@ -62,18 +63,25 @@ type Config struct {
 type RunMode string
 
 const (
-	RunModeWeb    RunMode = "web"
-	RunModeWorker RunMode = "worker"
-	RunModeBoth   RunMode = "both"
+	RunModeWeb         RunMode = "web"
+	RunModeWorker      RunMode = "worker"
+	RunModeBoth        RunMode = "both"
+	RunModeEmailWorker RunMode = "email-worker"
 )
 
 func (m RunMode) Valid() bool {
-	return m == RunModeWeb || m == RunModeWorker || m == RunModeBoth
+	return m == RunModeWeb || m == RunModeWorker || m == RunModeBoth || m == RunModeEmailWorker
 }
 
-func (m RunMode) RunsWeb() bool { return m == RunModeWeb || m == RunModeBoth }
+func (m RunMode) RunsWeb() bool {
+	return m == RunModeWeb || m == RunModeBoth || m == RunModeEmailWorker
+}
 
 func (m RunMode) RunsWorker() bool { return m == RunModeWorker || m == RunModeBoth }
+
+func (m RunMode) RunsAPI() bool { return m == RunModeWeb || m == RunModeBoth }
+
+func (m RunMode) RunsEmailWorker() bool { return m == RunModeEmailWorker }
 
 // BetterAuthConfig es el contrato cloud entre Next.js/Better Auth y la API Go.
 // Go nunca necesita la llave privada: descarga y cachea únicamente el JWKS
@@ -139,6 +147,26 @@ type QueueConfig struct {
 	TenantRateBurst     int
 	CircuitThreshold    int
 	CircuitCooldown     time.Duration
+}
+
+type InvoiceEmailConfig struct {
+	Enabled                 bool
+	ProjectID               string
+	Location                string
+	Queue                   string
+	WorkerURL               string
+	Audience                string
+	TaskServiceAccountEmail string
+	DispatchBatchSize       int
+	PublishLockTimeout      time.Duration
+	DeliveryLockTimeout     time.Duration
+	SMTPHost                string
+	SMTPPort                int
+	SMTPUsername            string
+	SMTPPassword            string
+	From                    string
+	FromName                string
+	SMTPTimeout             time.Duration
 }
 
 func Load() Config {
@@ -259,6 +287,28 @@ func Load() Config {
 		CircuitThreshold:    parseInt(getEnv("SIAT_CIRCUIT_FAILURE_THRESHOLD", "5"), 5),
 		CircuitCooldown:     parseDuration(getEnv("SIAT_CIRCUIT_COOLDOWN", "30s"), 30*time.Second),
 	}
+	invoiceEmail := InvoiceEmailConfig{
+		Enabled:                 deploymentMode == "cloud" && parseBoolEnv("INVOICE_EMAIL_ENABLED", true),
+		ProjectID:               strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT")),
+		Location:                getEnv("CLOUD_TASKS_LOCATION", "us-central1"),
+		Queue:                   getEnv("CLOUD_TASKS_INVOICE_EMAIL_QUEUE", "invoice-emails"),
+		WorkerURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("EMAIL_WORKER_URL")), "/"),
+		Audience:                strings.TrimSpace(os.Getenv("EMAIL_WORKER_OIDC_AUDIENCE")),
+		TaskServiceAccountEmail: strings.TrimSpace(os.Getenv("CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL")),
+		DispatchBatchSize:       parseInt(getEnv("EMAIL_TASK_DISPATCH_BATCH_SIZE", "100"), 100),
+		PublishLockTimeout:      parseDuration(getEnv("EMAIL_TASK_PUBLISH_LOCK_TIMEOUT", "30s"), 30*time.Second),
+		DeliveryLockTimeout:     parseDuration(getEnv("EMAIL_DELIVERY_LOCK_TIMEOUT", "10m"), 10*time.Minute),
+		SMTPHost:                strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:                parseInt(getEnv("SMTP_PORT", "587"), 587),
+		SMTPUsername:            strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:            os.Getenv("SMTP_PASSWORD"),
+		From:                    strings.TrimSpace(os.Getenv("EMAIL_FROM")),
+		FromName:                getEnv("EMAIL_FROM_NAME", "Supay"),
+		SMTPTimeout:             parseDuration(getEnv("SMTP_TIMEOUT", "30s"), 30*time.Second),
+	}
+	if invoiceEmail.Audience == "" {
+		invoiceEmail.Audience = invoiceEmail.WorkerURL
+	}
 
 	encryptionKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
 	if encryptionKey == "" {
@@ -311,12 +361,42 @@ func Load() Config {
 		AllowCustomIssueDate: allowCustomIssueDate,
 		Maintenance:          maintenance,
 		Queue:                queue,
+		InvoiceEmail:         invoiceEmail,
 	}
 }
 
 func (c Config) ValidateRunMode() error {
 	if !c.RunMode.Valid() {
-		return fmt.Errorf("RUN_MODE debe ser web, worker o both")
+		return fmt.Errorf("RUN_MODE debe ser web, worker, both o email-worker")
+	}
+	return nil
+}
+
+func (c Config) ValidateInvoiceEmail() error {
+	if !c.InvoiceEmail.Enabled {
+		return nil
+	}
+	if c.DeploymentMode != "cloud" {
+		return fmt.Errorf("el email de facturas solo está disponible con DEPLOYMENT_MODE=cloud")
+	}
+	for name, value := range map[string]string{
+		"GOOGLE_CLOUD_PROJECT":              c.InvoiceEmail.ProjectID,
+		"CLOUD_TASKS_LOCATION":              c.InvoiceEmail.Location,
+		"CLOUD_TASKS_INVOICE_EMAIL_QUEUE":   c.InvoiceEmail.Queue,
+		"EMAIL_WORKER_URL":                  c.InvoiceEmail.WorkerURL,
+		"CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL": c.InvoiceEmail.TaskServiceAccountEmail,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s es obligatorio para email de facturas", name)
+		}
+	}
+	if !strings.HasPrefix(c.InvoiceEmail.WorkerURL, "https://") {
+		return fmt.Errorf("EMAIL_WORKER_URL debe ser HTTPS")
+	}
+	if c.RunMode.RunsEmailWorker() {
+		if c.InvoiceEmail.SMTPHost == "" || c.InvoiceEmail.SMTPPort <= 0 || c.InvoiceEmail.From == "" {
+			return fmt.Errorf("email-worker requiere SMTP_HOST, SMTP_PORT y EMAIL_FROM")
+		}
 	}
 	return nil
 }

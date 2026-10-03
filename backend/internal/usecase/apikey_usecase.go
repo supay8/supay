@@ -184,6 +184,7 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 		CodigoActividad:       req.CodigoActividad,
 		PiePagina:             req.PiePagina,
 		CertificateWebhookURL: strings.TrimSpace(req.CertificateWebhookURL),
+		InvoiceEmailEnabled:   req.InvoiceEmailEnabled,
 	}
 
 	if company.Ambiente == "" {

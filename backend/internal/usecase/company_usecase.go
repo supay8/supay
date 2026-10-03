@@ -36,6 +36,7 @@ type RegisterCompanyRequest struct {
 	CodigoActividad       *string `json:"codigo_actividad,omitempty"`
 	PiePagina             string  `json:"pie_pagina,omitempty"`
 	CertificateWebhookURL string  `json:"certificate_webhook_url,omitempty"`
+	InvoiceEmailEnabled   bool    `json:"invoice_email_enabled,omitempty"`
 }
 
 type UpdateCompanyRequest struct {
@@ -50,6 +51,7 @@ type UpdateCompanyRequest struct {
 	CodigoActividad       *string                 `json:"codigo_actividad,omitempty"`
 	PiePagina             *string                 `json:"pie_pagina,omitempty"`
 	CertificateWebhookURL *string                 `json:"certificate_webhook_url,omitempty"`
+	InvoiceEmailEnabled   *bool                   `json:"invoice_email_enabled,omitempty"`
 	TokenDelegado         *string                 `json:"token_delegado,omitempty"`
 }
 
@@ -99,6 +101,7 @@ func (uc *CompanyUsecase) prepareRegistration(req RegisterCompanyRequest) (*doma
 		CodigoActividad:       req.CodigoActividad,
 		PiePagina:             req.PiePagina,
 		CertificateWebhookURL: strings.TrimSpace(req.CertificateWebhookURL),
+		InvoiceEmailEnabled:   req.InvoiceEmailEnabled,
 	}
 
 	if company.Ambiente == "" {
@@ -231,6 +234,9 @@ func (uc *CompanyUsecase) Update(req UpdateCompanyRequest, id string) (*domain.C
 			return nil, domain.NewBadRequestError("certificate_webhook_url debe ser una URL HTTP(S) válida")
 		}
 		existing.CertificateWebhookURL = webhookURL
+	}
+	if req.InvoiceEmailEnabled != nil {
+		existing.InvoiceEmailEnabled = *req.InvoiceEmailEnabled
 	}
 	if req.TokenDelegado != nil {
 		token := strings.TrimSpace(*req.TokenDelegado)

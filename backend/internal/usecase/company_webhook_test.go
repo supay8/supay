@@ -68,3 +68,26 @@ func TestCompanyRejectsInvalidCertificateWebhook(t *testing.T) {
 		t.Fatal("el webhook inválido no debe persistirse")
 	}
 }
+
+func TestCompanyUpdateConfiguresInvoiceEmail(t *testing.T) {
+	repo := &webhookCompanyRepo{company: &domain.Company{ID: "tenant-1", Nit: "123", Ambiente: domain.EnvironmentPiloto}}
+	service := NewCompanyUsecase(repo, nil, nil)
+	enabled := true
+
+	company, err := service.Update(UpdateCompanyRequest{InvoiceEmailEnabled: &enabled}, "tenant-1")
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !repo.updated || !company.InvoiceEmailEnabled {
+		t.Fatalf("preferencia no persistida: updated=%v enabled=%v", repo.updated, company.InvoiceEmailEnabled)
+	}
+
+	disabled := false
+	company, err = service.Update(UpdateCompanyRequest{InvoiceEmailEnabled: &disabled}, "tenant-1")
+	if err != nil {
+		t.Fatalf("Update disable: %v", err)
+	}
+	if company.InvoiceEmailEnabled {
+		t.Fatal("la preferencia no se deshabilitó")
+	}
+}

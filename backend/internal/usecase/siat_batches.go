@@ -456,6 +456,10 @@ func (uc *SiatUsecase) sendInvoiceBatches(ctx context.Context, companyID, posID 
 			// El estado de SIAT puede conocerse, pero la BD conserva la reserva.
 			pkg.Status = domain.PackageStatusUnknown
 			out.Response.Transaccion = false
+		} else if invoiceStatus != nil && (*invoiceStatus == domain.InvoiceAccepted || *invoiceStatus == domain.InvoiceObserved) && uc.emailDispatcher != nil {
+			if dispatchErr := uc.emailDispatcher.DispatchOnce(ctx); dispatchErr != nil {
+				slog.Warn("emails del lote quedaron pendientes de republicación", "batch_id", pkg.ID, "error", dispatchErr)
+			}
 		}
 		item.Status = pkg.Status
 		out.Batches = append(out.Batches, item)
@@ -530,6 +534,11 @@ func (uc *SiatUsecase) validateInvoiceBatch(ctx context.Context, companyID, posI
 	pkg.Mensajes = &text
 	if err := repo.UpdateBatch(pkg, invoiceStatus); err != nil {
 		return nil, fmt.Errorf("guardar validación del lote %s: %w", pkg.ID, err)
+	}
+	if invoiceStatus != nil && (*invoiceStatus == domain.InvoiceAccepted || *invoiceStatus == domain.InvoiceObserved) && uc.emailDispatcher != nil {
+		if err := uc.emailDispatcher.DispatchOnce(ctx); err != nil {
+			slog.Warn("emails del lote quedaron pendientes de republicación", "batch_id", pkg.ID, "error", err)
+		}
 	}
 	return &PaqueteResultado{Company: company, PointOfSale: pos, Response: &result,
 		Batches: []BatchResultado{{BatchID: pkg.ID, InvoiceIDs: pkg.InvoiceIDs, Status: pkg.Status, Response: &result}}}, nil

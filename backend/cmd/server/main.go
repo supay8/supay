@@ -30,13 +30,16 @@ func run() error {
 	if err := cfg.ValidateRunMode(); err != nil {
 		return fmt.Errorf("configuración de ejecución inválida: %w", err)
 	}
-	if cfg.RunMode.RunsWeb() {
+	if cfg.RunMode.RunsAPI() {
 		if err := cfg.ValidateAuth(); err != nil {
 			return fmt.Errorf("configuración de autenticación inválida: %w", err)
 		}
 		if cfg.BackendSecret == "" {
 			return fmt.Errorf("BACKEND_SECRET es obligatorio para proteger los endpoints internos")
 		}
+	}
+	if err := cfg.ValidateInvoiceEmail(); err != nil {
+		return fmt.Errorf("configuración de email inválida: %w", err)
 	}
 	if err := cfg.ValidateStorage(); err != nil {
 		return fmt.Errorf("configuración de storage inválida: %w", err)

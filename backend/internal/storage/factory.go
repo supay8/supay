@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/brandsrx/supay/internal/config"
@@ -31,22 +30,8 @@ func isTestEnv() bool {
 	return isTestBinary()
 }
 
-// certBasePath deriva el path local para certs a partir de StoragePath.
-// Retorna el directorio raíz de storage (ej. ./storage) para que la key "certs/<companyId>/..." resulte en ./storage/certs/...
-// Si StoragePath es .../pdfs o .../certs, retorna su directorio padre.
-func certBasePath(storagePath string) string {
-	if strings.TrimSpace(storagePath) == "" {
-		return "./storage"
-	}
-	clean := filepath.Clean(storagePath)
-	if strings.HasSuffix(clean, "pdfs") || strings.HasSuffix(clean, "certs") {
-		return filepath.Dir(clean)
-	}
-	return clean
-}
-
 // NewCertStorageFromConfig crea el CertStorage según STORAGE_DRIVER.
-// - local: self-hosted open-source, disco ./storage/certs 0700/0600
+// - local: misma raiz que las facturas, companies/<companyId>/cert/ 0700/0600
 // - r2: SaaS cloud, bucket privado supay-certs (creación manual, SSE-S3)
 // - none/memory: solo tests (go test), error estricto en prod/dev
 func NewCertStorageFromConfig(cfg config.Config) (CertStorage, error) {
@@ -61,11 +46,8 @@ func NewCertStorageFromConfig(cfg config.Config) (CertStorage, error) {
 		}
 		return NewMemoryCertStorage(), nil
 	case "local":
-		base := certBasePath(cfg.StoragePath)
-		// Permitir override explícito via CERT_STORAGE_PATH
-		if v := strings.TrimSpace(os.Getenv("CERT_STORAGE_PATH")); v != "" {
-			base = v
-		}
+		base := strings.TrimSpace(cfg.StoragePath)
+
 		return NewLocalCertStorage(base)
 	case "r2":
 		if strings.TrimSpace(cfg.R2.Bucket) == "" {

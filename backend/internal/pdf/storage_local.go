@@ -15,7 +15,7 @@ type LocalStorage struct {
 
 func NewLocalStorage(basePath string) (*LocalStorage, error) {
 	if basePath == "" {
-		basePath = "./storage/pdfs"
+		basePath = "./storage"
 	}
 	// Crear directorio si no existe (permite docker run sin volumen).
 	if err := os.MkdirAll(basePath, 0o755); err != nil {

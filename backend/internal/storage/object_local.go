@@ -34,7 +34,7 @@ func NewLocalObjectStorage(dir, signingSecret, baseURL string) (*LocalObjectStor
 		return nil, fmt.Errorf("storage local: working directory: %w", err)
 	}
 	if dir == "" {
-		return nil, fmt.Errorf("STORAGE_LOCAL_PATH es obligatorio")
+		return nil, fmt.Errorf("STORAGE_PATH es obligatorio")
 	}
 	storagePath := dir
 	if !filepath.IsAbs(storagePath) {

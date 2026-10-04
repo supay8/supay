@@ -14,7 +14,7 @@ func NewObjectStorageFromConfig(ctx context.Context, cfg config.Config) (domain.
 	}
 	switch cfg.StorageDriver {
 	case "local":
-		return NewLocalObjectStorage(cfg.StorageLocalPath, cfg.StorageSigningSecret, cfg.StoragePublicURL)
+		return NewLocalObjectStorage(cfg.StoragePath, cfg.StorageSigningSecret, cfg.StoragePublicURL)
 	case "r2":
 		return NewR2ObjectStorage(ctx, ObjectR2Config{AccountID: cfg.R2.AccountID, AccessKeyID: cfg.R2.AccessKeyID, SecretAccessKey: cfg.R2.SecretAccessKey, Bucket: cfg.R2.Bucket, Endpoint: cfg.R2.Endpoint})
 	default:

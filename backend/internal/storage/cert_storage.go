@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ import (
 // CertStorage abstrae el almacenamiento de .p12 cifrados.
 // Implementaciones: local (self-hosted), r2 (cloud SaaS, bucket privado supay-certs), memory (tests).
 type CertStorage interface {
-	// Put almacena bytes cifrados en key (ej. certs/<companyId>/<certId>.p12.enc) y retorna ref.
+	// Put almacena bytes cifrados en key (companies/<companyId>/cert/<certId>.p12.enc) y retorna ref.
 	// ref es r2://<bucket>/<key> para R2 o path local para local.
 	Put(ctx context.Context, key string, data []byte) (string, error)
 	Get(ctx context.Context, ref string) ([]byte, error)
@@ -71,11 +72,19 @@ type LocalCertStorage struct {
 
 func NewLocalCertStorage(basePath string) (*LocalCertStorage, error) {
 	if basePath == "" {
-		basePath = "./storage/certs"
+		log.Fatal("La variable STORAGE_PATH no se detecto")
+	}
+	if !filepath.IsAbs(basePath) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("cert local storage: working directory: %w", err)
+		}
+		basePath = filepath.Join(cwd, "..", basePath)
 	}
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("cert local storage: mkdir %q: %w", basePath, err)
 	}
+	log.Println(basePath + "   ------------------------------------")
 	return &LocalCertStorage{basePath: basePath}, nil
 }
 

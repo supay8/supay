@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -67,6 +68,7 @@ func (h *handler) solicitarCUIS(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.siatUC.SolicitarCUIS(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"))
 	if err != nil {
+		log.Println(err)
 		deliveryHttp.RespondError(w, err)
 		return
 	}

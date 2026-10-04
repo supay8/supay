@@ -36,7 +36,6 @@ func TestCloudStorageRequiresR2(t *testing.T) {
 	cfg := Config{
 		DeploymentMode:       "cloud",
 		StorageDriver:        "local",
-		StorageLocalPath:     "/tmp/files",
 		StorageSigningSecret: strings.Repeat("s", 32),
 		StoragePresignTTL:    5,
 	}

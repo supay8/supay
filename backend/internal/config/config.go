@@ -47,7 +47,6 @@ type Config struct {
 	DeploymentMode       string // selfhosted | cloud
 	StorageDriver        string // none | local | r2
 	StoragePath          string // base path para driver local
-	StorageLocalPath     string
 	StorageSigningSecret string
 	StoragePresignTTL    time.Duration
 	StoragePublicURL     string
@@ -235,12 +234,13 @@ func Load() Config {
 	if rawStorageDriver != "" {
 		storageDriver = parseStorageDriver(rawStorageDriver)
 	}
+	// STORAGE_LOCAL_PATH es la ruta del storage local de archivos. Mantener
+	// STORAGE_PATH como fallback conserva compatibilidad con instalaciones viejas.
 	storagePath := strings.TrimSpace(os.Getenv("STORAGE_PATH"))
-	if storagePath == "" {
-		storagePath = "./storage/pdfs"
+	if storagePath == "" && strings.ToLower(storageDriver) == "local" {
+		storagePath = "./storage"
 	}
 
-	storageLocalPath := getEnv("STORAGE_LOCAL_PATH", "./data/files")
 	storagePresignTTL, _ := time.ParseDuration(getEnv("STORAGE_PRESIGN_TTL", "5m"))
 
 	r2Cfg := R2Config{
@@ -352,7 +352,6 @@ func Load() Config {
 		DeploymentMode:       deploymentMode,
 		StorageDriver:        storageDriver,
 		StoragePath:          storagePath,
-		StorageLocalPath:     storageLocalPath,
 		StorageSigningSecret: os.Getenv("STORAGE_SIGNING_SECRET"),
 		StoragePresignTTL:    storagePresignTTL,
 		StoragePublicURL:     strings.TrimSpace(os.Getenv("STORAGE_PUBLIC_URL")),
@@ -416,9 +415,6 @@ func (c Config) ValidateStorage() error {
 	}
 	switch c.StorageDriver {
 	case "local":
-		if strings.TrimSpace(c.StorageLocalPath) == "" {
-			return fmt.Errorf("STORAGE_LOCAL_PATH es obligatorio")
-		}
 		if len(c.StorageSigningSecret) < 32 {
 			return fmt.Errorf("STORAGE_SIGNING_SECRET debe tener al menos 32 caracteres")
 		}

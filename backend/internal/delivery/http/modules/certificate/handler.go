@@ -2,6 +2,7 @@ package certificate
 
 import (
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -94,4 +95,62 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) update(w http.ResponseWriter, r *http.Request) {
+	companyID := chi.URLParam(r, "id")
+	if companyID == "" {
+		companyID = r.URL.Query().Get("company_id")
+	}
+	id := chi.URLParam(r, "certId")
+	if id == "" {
+		deliveryHttp.RespondValidation(w, "certId es obligatorio en la ruta")
+		return
+	}
+	var p12Bytes []byte
+	if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		if err := r.ParseMultipartForm(5 << 20); err != nil {
+			deliveryHttp.RespondError(w, err)
+			return
+		}
+		file, header, err := r.FormFile("p12_file")
+		if err == nil {
+			defer file.Close()
+			lowerName := strings.ToLower(strings.TrimSpace(header.Filename))
+			if !strings.HasSuffix(lowerName, ".p12") && !strings.HasSuffix(lowerName, ".pfx") {
+				deliveryHttp.RespondValidation(w, "p12_file debe ser .p12 o .pfx")
+				return
+			}
+			if header.Size > 5<<20 {
+				deliveryHttp.RespondValidation(w, "p12_file excede 5MB")
+				return
+			}
+			p12Bytes, err = io.ReadAll(file)
+			if err != nil {
+				deliveryHttp.RespondError(w, err)
+				return
+			}
+			if len(p12Bytes) == 0 {
+				deliveryHttp.RespondValidation(w, "p12_file vacío")
+				return
+			}
+		} else if err != http.ErrMissingFile {
+			deliveryHttp.RespondError(w, err)
+			return
+		}
+	}
+	in := usecase.CertificateInput{
+		Name:        strings.TrimSpace(r.FormValue("name")),
+		Type:        strings.TrimSpace(r.FormValue("type")),
+		P12Password: strings.TrimSpace(r.FormValue("p12_password")),
+		P12Bytes:    p12Bytes,
+	}
+	cert, err := h.uc.Update(id, companyID, in)
+	if err != nil {
+		log.Println(err)
+		deliveryHttp.RespondError(w, err)
+		return
+	}
+	deliveryHttp.WriteJSON(w, http.StatusOK, map[string]any{"data": cert})
+
 }

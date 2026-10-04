@@ -20,6 +20,7 @@ func (m *Module) PathPrefix() string { return "" }
 func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Route("/companies/{id}/certificates", func(r chi.Router) {
 		r.Post("/", m.h.create)
+		r.Patch("/{certId}", m.h.update)
 		r.Get("/", m.h.list)
 		r.Get("/active", m.h.getActive)
 		r.Delete("/{certId}", m.h.delete)

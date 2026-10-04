@@ -98,8 +98,8 @@ func (uc *CertificateUsecase) Create(companyID string, in CertificateInput) (*do
 	if err := uc.certRepo.Create(cert); err != nil {
 		return nil, err
 	}
-	// Guardar P12 cifrado en storage abstracto; key jerárquica certs/<companyId>/<certId>.p12.enc
-	key := fmt.Sprintf("certs/%s/%s.p12.enc", companyID, cert.ID)
+	// Guardar el P12 cifrado bajo la empresa, igual que las facturas.
+	key := fmt.Sprintf("companies/%s/cert/%s.p12.enc", companyID, cert.ID)
 	ref, err := uc.storage.Put(context.Background(), key, []byte(encP12))
 	if err != nil {
 		// No revertir cert pero reportar
@@ -121,6 +121,68 @@ func (uc *CertificateUsecase) List(companyID string) ([]*domain.Certificate, err
 
 func (uc *CertificateUsecase) GetActive(companyID string) (*domain.Certificate, error) {
 	return uc.certRepo.GetActiveByCompany(companyID)
+}
+
+func (uc *CertificateUsecase) Update(id string, companyID string, in CertificateInput) (*domain.Certificate, error) {
+	cert, err := uc.certRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if cert.CompanyId != companyID {
+		return nil, domain.NewBadRequestError("certificado no pertenece a la empresa")
+	}
+	if len(in.P12Bytes) > 5<<20 {
+		return nil, domain.NewBadRequestError("p12_file excede 5MB")
+	}
+	if len(in.P12Bytes) > 0 && uc.crypto == nil {
+		return nil, domain.NewConflictError("cifrado no configurado: defina ENCRYPTION_KEY")
+	}
+	if len(in.P12Bytes) > 0 && uc.storage == nil {
+		return nil, fmt.Errorf("cert storage no configurado")
+	}
+	var rawPassword string
+	if in.P12Password != "" {
+		rawPassword = strings.TrimSpace(in.P12Password)
+		encPass, err := uc.crypto.EncryptString(rawPassword)
+		if err != nil {
+			return nil, fmt.Errorf("no se pudo cifrar password P12: %w", err)
+		}
+		cert.EncryptedP12Password = encPass
+	}
+	if in.Name != "" {
+		cert.Name = strings.TrimSpace(in.Name)
+	}
+	if in.Type != "" {
+		cert.Type = strings.ToUpper(strings.TrimSpace(in.Type))
+	}
+	var newStorageRef string
+	oldStorageRef := cert.P12StorageRef
+	if len(in.P12Bytes) > 0 {
+		encP12, err := uc.crypto.Encrypt(in.P12Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("no se pudo cifrar P12: %w", err)
+		}
+		key := fmt.Sprintf("companies/%s/cert/%s-%d.p12.enc", companyID, cert.ID, time.Now().UTC().UnixNano())
+		ref, err := uc.storage.Put(context.Background(), key, []byte(encP12))
+		if err != nil {
+			return nil, fmt.Errorf("certificado actualizado pero no se pudo persistir P12: %w", err)
+		}
+		newStorageRef = ref
+		cert.P12StorageRef = ref
+	}
+	if err := uc.certRepo.Update(cert); err != nil {
+		if newStorageRef != "" {
+			_ = uc.storage.Delete(context.Background(), newStorageRef)
+		}
+		return nil, err
+	}
+	if newStorageRef != "" && oldStorageRef != "" && oldStorageRef != newStorageRef {
+		_ = uc.storage.Delete(context.Background(), oldStorageRef)
+	}
+	if uc.invalidateSiatClient != nil {
+		uc.invalidateSiatClient(companyID)
+	}
+	return cert, nil
 }
 
 func (uc *CertificateUsecase) Delete(id string) error {

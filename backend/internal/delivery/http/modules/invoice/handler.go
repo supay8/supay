@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -76,6 +77,7 @@ func (h *handler) createV1(w http.ResponseWriter, r *http.Request) {
 	}
 	inv, err := h.uc.CreateSimplified(r.Context(), req, key)
 	if err != nil {
+		log.Println(err)
 		deliveryHttp.RespondError(w, err)
 		return
 	}
@@ -120,6 +122,7 @@ func (h *handler) emitV1(w http.ResponseWriter, r *http.Request) {
 	}
 	inv, err := h.uc.EmitSimplified(r.Context(), req, key)
 	if err != nil {
+		log.Println(err)
 		deliveryHttp.RespondError(w, err)
 		return
 	}

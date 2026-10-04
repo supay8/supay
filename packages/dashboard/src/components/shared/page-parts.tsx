@@ -18,7 +18,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className="animate-slide-up flex items-start justify-between gap-4">
       <div className="flex flex-col gap-0.5">
         <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
         {description && (
@@ -38,7 +38,7 @@ export function QueryErrorState({
   onRetry: () => void
 }) {
   return (
-    <Alert variant="destructive">
+    <Alert variant="destructive" className="animate-scale-in">
       <AlertTitle>No se pudo cargar la información</AlertTitle>
       <AlertDescription>
         {error instanceof ApiError ? error.message : String(error)}
@@ -61,7 +61,7 @@ export function FormSection({
   children: ReactNode
 }) {
   return (
-    <section className="rounded-lg border p-5">
+    <section className="animate-fade-in rounded-lg border p-5">
       <div className="mb-4 flex flex-col gap-0.5">
         <p className="text-sm font-medium">{title}</p>
         {description && (
@@ -72,3 +72,4 @@ export function FormSection({
     </section>
   )
 }
+

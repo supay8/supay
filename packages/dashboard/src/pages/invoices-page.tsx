@@ -308,7 +308,7 @@ export function InvoicesPage() {
         </Alert>
       )}
 
-      <div className="overflow-hidden rounded-lg border">
+      <div className="animate-fade-in overflow-hidden rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
@@ -317,6 +317,9 @@ export function InvoicesPage() {
               </TableHead>
               <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
                 Cliente
+              </TableHead>
+              <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase hidden md:table-cell">
+                Punto de venta
               </TableHead>
               <TableHead className="text-muted-foreground text-right text-[11px] font-medium tracking-wider uppercase">
                 Total
@@ -334,8 +337,8 @@ export function InvoicesPage() {
             {listQuery.isPending &&
               [...Array(8)].map((_, i) => (
                 <TableRow key={i}>
-                  {[...Array(6)].map((_, j) => (
-                    <TableCell key={j}>
+                  {[...Array(7)].map((_, j) => (
+                    <TableCell key={j} className={j === 2 ? "hidden md:table-cell" : ""}>
                       <Skeleton className="h-5 w-full max-w-32" />
                     </TableCell>
                   ))}
@@ -351,7 +354,20 @@ export function InvoicesPage() {
                   <TableCell className="font-mono text-muted-foreground text-xs">
                     {String(invoice.invoice_number).padStart(6, "0")}
                   </TableCell>
-                  <TableCell>{invoice.customer.name}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{invoice.customer.name}</span>
+                      <span className="text-muted-foreground text-[11px] md:hidden">
+                        {invoice.point_of_sale?.description ?? "—"}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs hidden md:table-cell">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className={`size-1.5 rounded-full ${invoice.point_of_sale?.cuis ? "bg-success" : "bg-warning"}`} />
+                      {invoice.point_of_sale?.description ?? "—"}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatCurrency(invoice.total)}
                   </TableCell>

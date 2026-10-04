@@ -32,6 +32,14 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--background);
 
+  /* Semánticos de estado */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
   /* Bordes / estados */
   --color-border: var(--border);
   --color-input: var(--border);
@@ -68,10 +76,18 @@
   --primary-accent: #f43f5e;
   --primary-foreground: #ffffff;
 
-  --secondary: #ffeeefe;
+  --secondary: #ffeef0;
   --secondary-foreground: #9f1239;
 
   --destructive: #ef4444;
+
+  /* Semánticos */
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --warning: #d97706;
+  --warning-foreground: #ffffff;
+  --info: #2563eb;
+  --info-foreground: #ffffff;
 
   color-scheme: light;
 }
@@ -104,6 +120,14 @@
   --secondary-foreground: var(--text);
 
   --destructive: #f87171;
+
+  /* Semánticos */
+  --success: #22c55e;
+  --success-foreground: #052e16;
+  --warning: #f59e0b;
+  --warning-foreground: #451a03;
+  --info: #3b82f6;
+  --info-foreground: #eff6ff;
 
   color-scheme: dark;
 }
@@ -144,10 +168,78 @@
 
 ::-webkit-scrollbar-thumb {
   background: var(--border);
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--primary);
+}
+
+/* ------------------------------------------------------------
+   Micro-animaciones globales
+   ------------------------------------------------------------ */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.4); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out both;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.35s ease-out both;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.3s ease-out both;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.25s ease-out both;
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* Staggered animation delays for lists */
+.stagger-1 { animation-delay: 0.04s; }
+.stagger-2 { animation-delay: 0.08s; }
+.stagger-3 { animation-delay: 0.12s; }
+.stagger-4 { animation-delay: 0.16s; }
+.stagger-5 { animation-delay: 0.20s; }
+
+/* Glassmorphism utility */
+.glass {
+  background: color-mix(in srgb, var(--background) 80%, transparent);
+  backdrop-filter: blur(12px) saturate(1.5);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
 }
 
 /* ------------------------------------------------------------

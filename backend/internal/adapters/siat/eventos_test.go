@@ -40,8 +40,9 @@ func TestRegistrarEventoSignificativo(t *testing.T) {
 	fin := time.Date(2026, 8, 14, 10, 30, 0, 0, time.UTC)
 
 	result, err := svc.RegistrarEventoSignificativo(context.Background(), SolicitudEventoSignificativo{
-		CodigoAmbiente:        AmbientePruebas,
-		CodigoSistema:         "SYS-123",
+		CodigoAmbiente: AmbientePruebas,
+		// El caso de uso omite el codigo; debe salir de la configuracion global.
+		CodigoSistema:         "",
 		Nit:                   "1020304050",
 		CodigoSucursal:        0,
 		CodigoPuntoVenta:      1,

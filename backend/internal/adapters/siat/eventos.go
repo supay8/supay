@@ -52,6 +52,10 @@ const MotivoCorteInternet = 1
 // NIT, codigoSistema y codigoAmbiente se inyectan dinámicamente desde la
 // configuración por empresa en el contexto de la petición.
 func (s *Service) RegistrarEventoSignificativo(ctx context.Context, req SolicitudEventoSignificativo) (*ResultadoEventoSignificativo, error) {
+	if strings.TrimSpace(req.CodigoSistema) == "" {
+		req.CodigoSistema = s.CodigoSistema()
+	}
+
 	if err := req.validate(); err != nil {
 		return nil, err
 	}

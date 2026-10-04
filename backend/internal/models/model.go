@@ -151,33 +151,6 @@ type Branch struct {
 	Company Company `gorm:"foreignKey:CompanyId"`
 }
 
-// TipoPuntoVenta es el catálogo sincronizado de tipos de punto de venta
-// (operación sincronizarParametricaTipoPuntoVenta del SIAT).
-type TipoPuntoVenta struct {
-	ID                 string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId          string    `gorm:"type:uuid;uniqueIndex:idx_company_tipo_pv,priority:1;not null"`
-	CodigoClasificador int       `gorm:"uniqueIndex:idx_company_tipo_pv,priority:2;not null"`
-	Descripcion        string    `gorm:"type:varchar(200);not null"`
-	SyncedAt           time.Time `gorm:"not null"`
-	CreatedAt          time.Time
-
-	Company Company `gorm:"foreignKey:CompanyId"`
-}
-
-// Catalog es un elemento de un catálogo sincronizado del SIAT (operaciones
-// sincronizarParametrica* y sincronizar* del servicio FacturacionSincronizacion).
-type Catalog struct {
-	ID          string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId   string    `gorm:"type:uuid;index:idx_catalog_company_tipo,priority:1;not null"`
-	Tipo        string    `gorm:"type:varchar(50);index:idx_catalog_company_tipo,priority:2;not null"`
-	Codigo      int       `gorm:"not null"`
-	Descripcion string    `gorm:"type:text;not null"`
-	SyncedAt    time.Time `gorm:"not null"`
-	CreatedAt   time.Time
-
-	Company Company `gorm:"foreignKey:CompanyId"`
-}
-
 // CatalogVersion/CatalogItem reemplazan las tablas de catálogo por tipo. Cada
 // sincronización crea una versión inmutable y las lecturas toman la más nueva.
 type CatalogVersion struct {
@@ -504,30 +477,20 @@ type SentPackageInvoice struct {
 }
 
 type Certificate struct {
-	ID            string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyId     string    `gorm:"column:tenant_id;type:uuid;index:idx_certificates_tenant;not null"`
-	PointOfSaleId *string   `gorm:"column:point_of_sale_id;type:uuid"`
-	Name          string    `gorm:"column:name;type:varchar(150);not null"`
-	Type          string    `gorm:"type:varchar(10);not null"`
-	Status        string    `gorm:"type:varchar(20);default:'ACTIVE';index;not null"`
-	NotBefore     time.Time `gorm:"not null"`
-	NotAfter      time.Time `gorm:"not null"`
-	Issuer        string    `gorm:"type:text"`
-	Subject       string    `gorm:"type:text"`
-	Thumbprint    string    `gorm:"type:varchar(100)"`
-	SiatUserCode  string    `gorm:"type:varchar(50)"`
-	ConfigPath    string    `gorm:"type:text"`
-	RenewedFrom   *string   `gorm:"type:uuid"`
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID        string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CompanyId string    `gorm:"column:tenant_id;type:uuid;index:idx_certificates_tenant;not null"`
+	Name      string    `gorm:"column:name;type:varchar(150);not null"`
+	Type      string    `gorm:"type:varchar(10);not null"`
+	Status    string    `gorm:"type:varchar(20);default:'ACTIVE';index;not null"`
+	NotBefore time.Time `gorm:"not null"`
+	NotAfter  time.Time `gorm:"not null"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 
 	// Material de firma cifrado AES-GCM, nunca texto plano.
-	EncryptedP12Password string  `gorm:"type:text;not null;default:''"`
-	EncryptedBlob        []byte  `gorm:"column:encrypted_blob;type:bytea"`
-	EncryptedPassword    *string `gorm:"column:encrypted_password;type:text"`
-	SerialNumber         *string `gorm:"column:serial_number;type:varchar(100)"`
-	P12StorageRef        string  `gorm:"type:text;not null;default:''"`
-	IsActive             bool    `gorm:"column:is_active;not null;default:true"`
+	EncryptedP12Password string `gorm:"type:text;not null;default:''"`
+	P12StorageRef        string `gorm:"type:text;not null;default:''"`
+	IsActive             bool   `gorm:"column:is_active;not null;default:true"`
 	UploadedAt           time.Time
 
 	Company           Company      `gorm:"foreignKey:CompanyId"`

@@ -113,6 +113,7 @@ func (h *handler) registrarEventoSignificativo(w http.ResponseWriter, r *http.Re
 	}
 	res, err := h.siatUC.RegistrarEventoSignificativo(r.Context(), companyID, chi.URLParam(r, "pointOfSaleId"), body)
 	if err != nil {
+		log.Println(err)
 		deliveryHttp.RespondError(w, err)
 		return
 	}

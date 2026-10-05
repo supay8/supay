@@ -100,7 +100,7 @@ func (uc *ApiKeyUsecase) Generate(tenantID, name string) (string, *models.ApiKey
 		KeyHash:   hash,
 		KeyPrefix: prefix,
 		Name:      name,
-		Scopes:    "read,write",
+		Scopes:    []string{"read", "write"},
 		IsActive:  true,
 	}
 

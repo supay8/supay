@@ -18,13 +18,12 @@ import (
 // ---- Fakes ----
 
 type fakeInvoiceRepo struct {
-	invoices           map[string]*domain.Invoice
-	claimCalls         int
-	updateCalls        int
-	updateErr          error
-	activeCufd         *domain.Cufd
-	conflictingIdemKey string // simula violación del índice único al crear con esta key
-	lastFields         map[string]any
+	invoices    map[string]*domain.Invoice
+	claimCalls  int
+	updateCalls int
+	updateErr   error
+	activeCufd  *domain.Cufd
+	lastFields  map[string]any
 }
 
 type fakePDFGenerator struct{ calls int }
@@ -94,10 +93,6 @@ func newFakeInvoiceRepo() *fakeInvoiceRepo {
 }
 
 func (f *fakeInvoiceRepo) Create(inv *domain.Invoice) error {
-	// Simula la ventana de race: otro request insertó primero esta clave.
-	if f.conflictingIdemKey != "" && inv.IdempotencyKey != nil && *inv.IdempotencyKey == f.conflictingIdemKey {
-		return errors.New("ERROR: duplicate key value violates unique constraint \"idx_invoice_idem_key\" (SQLSTATE 23505)")
-	}
 	if inv.ID == "" {
 		inv.ID = "inv-" + strconv.Itoa(len(f.invoices)+1)
 	}
@@ -224,15 +219,6 @@ func (f *fakeInvoiceRepo) ClaimStatus(id string, from, to domain.InvoiceStatus, 
 
 func (f *fakeInvoiceRepo) FindActiveCufdForPointOfSale(string, time.Time) (*domain.Cufd, error) {
 	return f.activeCufd, nil
-}
-
-func (f *fakeInvoiceRepo) GetByIdempotencyKey(tenantID, pointOfSaleID, key string) (*domain.Invoice, error) {
-	for _, inv := range f.invoices {
-		if inv.CompanyId == tenantID && inv.PointOfSaleId == pointOfSaleID && inv.IdempotencyKey != nil && *inv.IdempotencyKey == key {
-			return inv, nil
-		}
-	}
-	return nil, nil
 }
 
 func invoiceContext() context.Context {
@@ -1854,83 +1840,6 @@ func TestCreateRequiereDescripcionSnapshot(t *testing.T) {
 	}
 }
 
-func TestCreateIdempotencia(t *testing.T) {
-	uc, repo, _, _ := createTestUsecaseBuilder()
-
-	req := CreateInvoiceRequest{
-		PointOfSaleId:    "pos-1",
-		Customer:         historicalCustomerRequest(),
-		IdempotencyKey:   "orden-42",
-		CodigoMetodoPago: 1,
-		Items:            []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
-	}
-
-	inv1, err := uc.Create(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Create #1: %v", err)
-	}
-
-	// Segunda llamada con la misma clave debe devolver la misma factura sin crear otra.
-	inv2, err := uc.Create(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Create #2: %v", err)
-	}
-	if inv1.ID != inv2.ID {
-		t.Errorf("ids distintos: %s vs %s", inv1.ID, inv2.ID)
-	}
-	if len(repo.invoices) != 1 {
-		t.Errorf("facturas persistidas=%d, se esperaba 1", len(repo.invoices))
-	}
-
-	// Clave distinta crea otra factura.
-	req.IdempotencyKey = "orden-43"
-	inv3, err := uc.Create(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Create #3: %v", err)
-	}
-	if inv3.ID == inv1.ID {
-		t.Error("claves distintas no deben devolver la misma factura")
-	}
-}
-
-func TestCreateRaceIdempotencia(t *testing.T) {
-	uc, repo, _, _ := createTestUsecaseBuilder()
-	// Simula que otro request ganó la carrera e insertó la clave primero.
-	repo.conflictingIdemKey = "orden-race"
-
-	req := CreateInvoiceRequest{
-		PointOfSaleId:  "pos-1",
-		Customer:       historicalCustomerRequest(),
-		IdempotencyKey: "orden-race",
-		Items:          []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)},
-	}
-	ganadora := &domain.Invoice{
-		ID:             "inv-ganador",
-		CompanyId:      "comp-1",
-		CustomerId:     "cust-1",
-		PointOfSaleId:  "pos-1",
-		Status:         domain.InvoicePending,
-		IdempotencyKey: strPtr("orden-race"),
-	}
-	repo.invoices["inv-ganador"] = ganadora
-
-	got, err := uc.Create(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Create con conflicto de idempotencia: %v", err)
-	}
-	if got.ID != "inv-ganador" {
-		t.Errorf("id=%q, se esperaba el replay de inv-ganador", got.ID)
-	}
-
-	// Con conflicto de clave pero sin factura existente que re-leer
-	// (p.ej. la fila ganadora aún no visible), el error debe propagarse.
-	req.IdempotencyKey = "orden-huerfana"
-	repo.conflictingIdemKey = "orden-huerfana"
-	if _, err := uc.Create(context.Background(), req); err == nil {
-		t.Fatal("conflicto sin factura existente debe propagar el error")
-	}
-}
-
 func TestCreateIgnoresEmitFlag(t *testing.T) {
 	uc, _, _, _ := createTestUsecaseBuilder()
 
@@ -2127,5 +2036,22 @@ func toSiatSolicitudFactura(f ports.FiscalDocument) siat.SolicitudFactura {
 		Archivo:               f.Archivo,
 		HashArchivo:           f.HashArchivo,
 		Cuf:                   f.Cuf,
+	}
+}
+
+func TestCreateSinClaveCreaFacturasIndependientes(t *testing.T) {
+	uc, repo, _, _ := createTestUsecaseBuilder()
+	req := CreateInvoiceRequest{PointOfSaleId: "pos-1", Customer: historicalCustomerRequest(),
+		Items: []CreateInvoiceItemRequest{fiscalTestItem("P001", "Producto", 1, 100)}}
+	first, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := uc.Create(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID || len(repo.invoices) != 2 {
+		t.Fatal("cada creación debe tener su propia identidad")
 	}
 }

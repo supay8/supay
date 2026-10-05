@@ -77,7 +77,7 @@ func main() {
 	if closer, ok := objectStorage.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
-	fileRepo := postgres.NewPostgresInvoiceFileRepository(db)
+	fileRepo := postgres.NewLegacyPostgresInvoiceFileRepository(db)
 	files := usecase.NewInvoiceFileService(
 		objectStorage,
 		fileRepo,

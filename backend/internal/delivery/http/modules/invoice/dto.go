@@ -41,7 +41,6 @@ type invoiceDTO struct {
 	CompanyId             string               `json:"company_id"`
 	CustomerId            string               `json:"customer_id"`
 	PointOfSaleId         string               `json:"point_of_sale_id"`
-	IdempotencyKey        *string              `json:"idempotency_key,omitempty"`
 	CufdId                string               `json:"cufd_id,omitempty"`
 	ContingencyEventId    *string              `json:"contingency_event_id,omitempty"`
 	AjustaFacturaId       *string              `json:"ajusta_factura_id,omitempty"`
@@ -137,7 +136,6 @@ func toInvoiceDTO(inv *domain.Invoice, includes map[string]bool) invoiceDTO {
 		CompanyId:             inv.CompanyId,
 		CustomerId:            inv.CustomerId,
 		PointOfSaleId:         inv.PointOfSaleId,
-		IdempotencyKey:        inv.IdempotencyKey,
 		CufdId:                inv.CufdId,
 		ContingencyEventId:    inv.ContingencyEventId,
 		AjustaFacturaId:       inv.AjustaFacturaId,

@@ -159,7 +159,7 @@ func enrichError(status int, body errorBody) errorBody {
 	case CodeSiatUnavailable:
 		body.Suggestions = []string{
 			"Espere unos segundos y consulte el estado de la factura.",
-			"Mantenga la misma clave de idempotencia al reintentar la misma operación.",
+			"Consulte y reintente la factura existente por su ID, conservando su CUF.",
 		}
 		body.Action = "Reintente más tarde; no duplique la factura."
 	case CodeRateLimited:
@@ -180,7 +180,6 @@ func inferErrorField(message string) string {
 		field string
 		terms []string
 	}{
-		{"Idempotency-Key", []string{"idempotency", "idempotencia"}},
 		{"X-API-Key", []string{"x-api-key", "api key"}},
 		{"point_of_sale_id", []string{"point_of_sale", "punto de venta"}},
 		{"customer.document_number", []string{"document_number", "número de documento", "documento del cliente"}},

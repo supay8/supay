@@ -78,12 +78,9 @@ func TestInvoiceRequestSimplifierNoPersisteDurantePreview(t *testing.T) {
 
 func TestCreateSimplifiedPersisteSolicitudNormalizada(t *testing.T) {
 	uc, repo, _, _ := createTestUsecaseBuilder()
-	invoice, err := uc.CreateSimplified(context.Background(), minimalTestInvoice(), "order-v1-1")
+	invoice, err := uc.CreateSimplified(context.Background(), minimalTestInvoice())
 	if err != nil {
 		t.Fatalf("CreateSimplified() error: %v", err)
-	}
-	if invoice.IdempotencyKey == nil || *invoice.IdempotencyKey != "order-v1-1" {
-		t.Fatalf("idempotency key no propagada: %+v", invoice.IdempotencyKey)
 	}
 	if len(repo.invoices) != 1 || len(invoice.Items) != 1 || invoice.Items[0].Description == "" {
 		t.Fatalf("factura normalizada no persistida: invoices=%d invoice=%+v", len(repo.invoices), invoice)

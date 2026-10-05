@@ -53,7 +53,7 @@ func TestEmissionQueuePendingToAcceptedWithTraffic(t *testing.T) {
 	if err := repository.NewPostgresPointOfSaleRepository(db).Create(pos); err != nil {
 		t.Fatalf("crear POS: %v", err)
 	}
-	customer := &domain.Customer{CompanyId: company.ID, DocumentType: string(models.DocNIT), DocumentNumber: "123456789", Name: "Cliente River"}
+	customer := &domain.Customer{CompanyId: company.ID, DocumentType: string(models.DocNIT), DocumentNumber: "123456789", CodigoCliente: "123456789", Name: "Cliente River"}
 	if err := repository.NewPostgresCustomerRepository(db).Create(customer); err != nil {
 		t.Fatalf("crear cliente: %v", err)
 	}

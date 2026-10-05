@@ -240,8 +240,6 @@ type CreateInvoiceRequest struct {
 	Items                 []CreateInvoiceItemRequest `json:"items"`
 	// Emit en true crea la factura y la emite al SIAT en una sola llamada.
 	Emit bool `json:"emit,omitempty"`
-	// IdempotencyKey se recibe vía header Idempotency-Key (no viaja en JSON).
-	IdempotencyKey string `json:"-"`
 }
 
 func round2(v float64) float64 {
@@ -377,20 +375,6 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 
 	if len(req.Items) == 0 && req.CodigoDocumentoSector != 30 {
 		return nil, domain.NewBadRequestError("la factura debe tener al menos un ítem")
-	}
-
-	if req.IdempotencyKey != "" {
-		if len(req.IdempotencyKey) > 100 {
-			return nil, domain.NewBadRequestError("Idempotency-Key no puede exceder 100 caracteres")
-		}
-		existing, err := uc.invoiceRepo.GetByIdempotencyKey(req.CompanyId, req.PointOfSaleId, req.IdempotencyKey)
-		if err != nil {
-			return nil, err
-		}
-		if existing != nil {
-			existing.IdempotencyKey = &req.IdempotencyKey
-			return existing, nil
-		}
 	}
 
 	company, err := uc.companyRepo.GetByID(req.CompanyId)
@@ -594,9 +578,6 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		Status:                domain.InvoicePending,
 		Customer:              *customer,
 	}
-	if req.IdempotencyKey != "" {
-		inv.IdempotencyKey = &req.IdempotencyKey
-	}
 	if strings.TrimSpace(req.Cuf) != "" {
 		cuf := strings.TrimSpace(req.Cuf)
 		inv.Cuf = &cuf
@@ -689,25 +670,10 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	inv.CustomerId = customer.ID
 	inv.Customer = *customer
 	if err := uc.invoiceRepo.Create(inv); err != nil {
-		// Race de idempotencia: otro request creó primero la factura con la
-		// misma Idempotency-Key (idx_invoice_idem_key). Se devuelve la
-		// existente para que el cliente reciba el replay en vez de un 500.
-		if req.IdempotencyKey != "" && isUniqueViolation(err) {
-			if existing, err2 := uc.invoiceRepo.GetByIdempotencyKey(req.CompanyId, req.PointOfSaleId, req.IdempotencyKey); err2 == nil && existing != nil {
-				existing.IdempotencyKey = &req.IdempotencyKey
-				return existing, nil
-			}
-		}
 		return nil, err
 	}
 
 	return inv, nil
-}
-
-// isUniqueViolation reconoce errores de restricción única de PostgreSQL
-// (SQLSTATE 23505), mismo patrón usado por el repositorio de puntos de venta.
-func isUniqueViolation(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "23505")
 }
 
 func (uc *InvoiceUsecase) ensureCatalogReadiness(companyID, pointOfSaleID string) error {

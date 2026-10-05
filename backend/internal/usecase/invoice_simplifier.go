@@ -470,16 +470,15 @@ func (uc *InvoiceUsecase) PreviewSimplified(ctx context.Context, request Minimal
 	return &result.Preview, nil
 }
 
-func (uc *InvoiceUsecase) CreateSimplified(ctx context.Context, request MinimalInvoiceRequest, idempotencyKey string) (*domain.Invoice, error) {
+func (uc *InvoiceUsecase) CreateSimplified(ctx context.Context, request MinimalInvoiceRequest) (*domain.Invoice, error) {
 	result, err := NewInvoiceRequestSimplifier(uc).Simplify(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	result.Request.IdempotencyKey = strings.TrimSpace(idempotencyKey)
 	return uc.Create(ctx, result.Request)
 }
 
-func (uc *InvoiceUsecase) EmitSimplified(ctx context.Context, request MinimalInvoiceRequest, idempotencyKey string) (*domain.Invoice, error) {
+func (uc *InvoiceUsecase) EmitSimplified(ctx context.Context, request MinimalInvoiceRequest) (*domain.Invoice, error) {
 	sector, err := resolveSectorAlias(request.Sector)
 	if err != nil {
 		return nil, err
@@ -487,7 +486,7 @@ func (uc *InvoiceUsecase) EmitSimplified(ctx context.Context, request MinimalInv
 	if sector == 30 {
 		return nil, domain.NewBadRequestError("el sector 30 requiere emisión masiva; use /v1/siat/masiva/{companyId}/{pointOfSaleId}")
 	}
-	invoice, err := uc.CreateSimplified(ctx, request, idempotencyKey)
+	invoice, err := uc.CreateSimplified(ctx, request)
 	if err != nil {
 		return nil, err
 	}

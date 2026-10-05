@@ -58,7 +58,6 @@ type Invoice struct {
 	// Customer es el snapshot fiscal inmutable del receptor. CustomerId solo
 	// enlaza la fila histórica usada para analítica y no es fuente fiscal.
 	PointOfSaleId         string          `json:"point_of_sale_id"`
-	IdempotencyKey        *string         `json:"idempotency_key,omitempty"`
 	CufdId                string          `json:"cufd_id"`
 	ContingencyEventId    *string         `json:"contingency_event_id,omitempty"`
 	InvoiceNumber         int             `json:"invoice_number"`
@@ -133,7 +132,4 @@ type InvoiceRepository interface {
 	// devolviendo cuántas fueron liberadas.
 	ReleaseStaleSending(olderThan time.Duration) (int64, error)
 	FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*Cufd, error)
-	// GetByIdempotencyKey devuelve la factura asociada a una clave de
-	// idempotencia dentro de un punto de venta. nil si no existe.
-	GetByIdempotencyKey(tenantID, pointOfSaleID, key string) (*Invoice, error)
 }

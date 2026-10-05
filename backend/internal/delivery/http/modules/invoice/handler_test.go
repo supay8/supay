@@ -318,9 +318,9 @@ func TestInvoiceHandlerRequiereTenant(t *testing.T) {
 
 type mockInvoiceService struct {
 	createFunc        func(context.Context, usecase.CreateInvoiceRequest) (*domain.Invoice, error)
-	createSimpleFunc  func(context.Context, usecase.MinimalInvoiceRequest, string) (*domain.Invoice, error)
+	createSimpleFunc  func(context.Context, usecase.MinimalInvoiceRequest) (*domain.Invoice, error)
 	previewSimpleFunc func(context.Context, usecase.MinimalInvoiceRequest) (*usecase.InvoicePreview, error)
-	emitSimpleFunc    func(context.Context, usecase.MinimalInvoiceRequest, string) (*domain.Invoice, error)
+	emitSimpleFunc    func(context.Context, usecase.MinimalInvoiceRequest) (*domain.Invoice, error)
 	getByIDFunc       func(string) (*domain.Invoice, error)
 	listInvoicesFunc  func(domain.InvoiceListFilter) ([]*domain.Invoice, int64, error)
 	emitFunc          func(context.Context, string) (*domain.Invoice, error)
@@ -336,9 +336,9 @@ func (m *mockInvoiceService) Create(ctx context.Context, req usecase.CreateInvoi
 	}
 	return sampleInvoice(), nil
 }
-func (m *mockInvoiceService) CreateSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {
+func (m *mockInvoiceService) CreateSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*domain.Invoice, error) {
 	if m.createSimpleFunc != nil {
-		return m.createSimpleFunc(ctx, req, key)
+		return m.createSimpleFunc(ctx, req)
 	}
 	return sampleInvoice(), nil
 }
@@ -348,9 +348,9 @@ func (m *mockInvoiceService) PreviewSimplified(ctx context.Context, req usecase.
 	}
 	return &usecase.InvoicePreview{PointOfSaleID: req.PointOfSaleID, Total: 100}, nil
 }
-func (m *mockInvoiceService) EmitSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {
+func (m *mockInvoiceService) EmitSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*domain.Invoice, error) {
 	if m.emitSimpleFunc != nil {
-		return m.emitSimpleFunc(ctx, req, key)
+		return m.emitSimpleFunc(ctx, req)
 	}
 	inv := sampleInvoice()
 	inv.Status = domain.InvoicePending
@@ -516,7 +516,7 @@ func TestCreateWithInclude(t *testing.T) {
 	}
 }
 
-func TestCreateIdempotencyHeader(t *testing.T) {
+func TestCreateIgnoresLegacyRequestKey(t *testing.T) {
 	svc := &mockInvoiceService{}
 	h := newHandler(svc)
 	r := chi.NewRouter()
@@ -528,8 +528,8 @@ func TestCreateIdempotencyHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d, se esperaba 200 con Idempotency-Key", rec.Code)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d, se esperaba 201 independientemente del header retirado", rec.Code)
 	}
 }
 
@@ -660,16 +660,12 @@ func TestDownloadXML(t *testing.T) {
 	}
 }
 
-func TestCreateEmitIdempotencyReplay(t *testing.T) {
+func TestCreateEmitCreatesNewInvoiceForEachRequest(t *testing.T) {
 	var emitCalls int
 	svc := &mockInvoiceService{
 		createFunc: func(_ context.Context, _ usecase.CreateInvoiceRequest) (*domain.Invoice, error) {
 			inv := sampleInvoice()
-			if emitCalls > 0 {
-				inv.Status = domain.InvoiceAccepted
-			} else {
-				inv.Status = domain.InvoicePending
-			}
+			inv.Status = domain.InvoicePending
 			return inv, nil
 		},
 		emitFunc: func(_ context.Context, id string) (*domain.Invoice, error) {
@@ -694,8 +690,8 @@ func TestCreateEmitIdempotencyReplay(t *testing.T) {
 			t.Fatalf("request %d: status=%d, se esperaba %d", i+1, rec.Code, expectedStatuses[i])
 		}
 	}
-	if emitCalls != 1 {
-		t.Errorf("emitCalls=%d, se esperaba 1 (no debe reemitir en replay)", emitCalls)
+	if emitCalls != 2 {
+		t.Errorf("emitCalls=%d, se esperaba 2 creaciones independientes", emitCalls)
 	}
 }
 
@@ -761,7 +757,7 @@ func TestGetByIDExponeCamposSectoriales(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsOversizedIdempotencyKey(t *testing.T) {
+func TestCreateIgnoresOversizedLegacyRequestKey(t *testing.T) {
 	svc := &mockInvoiceService{}
 	h := newHandler(svc)
 	r := chi.NewRouter()
@@ -773,8 +769,8 @@ func TestCreateRejectsOversizedIdempotencyKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d, se esperaba 400", rec.Code)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d, se esperaba 201", rec.Code)
 	}
 }
 
@@ -830,9 +826,7 @@ func TestV1DecodesAdjustmentOptionsAndRejectsPaymentTypos(t *testing.T) {
 }
 
 func TestV1EmitDevuelveResultadoSincrono(t *testing.T) {
-	var capturedKey string
-	svc := &mockInvoiceService{emitSimpleFunc: func(_ context.Context, _ usecase.MinimalInvoiceRequest, key string) (*domain.Invoice, error) {
-		capturedKey = key
+	svc := &mockInvoiceService{emitSimpleFunc: func(_ context.Context, _ usecase.MinimalInvoiceRequest) (*domain.Invoice, error) {
 		inv := sampleInvoice()
 		inv.Status = domain.InvoiceAccepted
 		return inv, nil
@@ -849,9 +843,6 @@ func TestV1EmitDevuelveResultadoSincrono(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if capturedKey != "sale-42" {
-		t.Fatalf("idempotency key=%q", capturedKey)
 	}
 	if got := rec.Header().Get("Location"); got != "/v1/invoices/inv-1" {
 		t.Fatalf("Location=%q", got)

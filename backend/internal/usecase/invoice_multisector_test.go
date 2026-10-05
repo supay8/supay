@@ -95,7 +95,7 @@ func TestV1PreviewAndCreateAllSDKProfiles(t *testing.T) {
 				if len(repo.invoices) != before {
 					t.Fatal("preview persisted an invoice")
 				}
-				invoice, err := uc.CreateSimplified(t.Context(), input, "")
+				invoice, err := uc.CreateSimplified(t.Context(), input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -128,7 +128,7 @@ func TestV1Sector47UsesOriginalFiscalSnapshot(t *testing.T) {
 	if preview.Items[0].Description != "Producto original" {
 		t.Fatal("used current catalog instead of snapshot")
 	}
-	invoice, err := uc.CreateSimplified(t.Context(), input, "adjustment-47")
+	invoice, err := uc.CreateSimplified(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestV1AdjustmentRejectsOtherTenantAndUnrelatedProduct(t *testing.T) {
 		} else {
 			input.Items[0].SKU = "OTHER"
 		}
-		if _, err := uc.CreateSimplified(t.Context(), input, ""); err == nil {
+		if _, err := uc.CreateSimplified(t.Context(), input); err == nil {
 			t.Fatal("accepted unrelated reference/item")
 		}
 		if len(repo.invoices) != 1 {
@@ -193,7 +193,7 @@ func TestV1PaymentAndDiscountPersistConsistently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invoice, err := uc.CreateSimplified(t.Context(), input, "")
+	invoice, err := uc.CreateSimplified(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestV1AdjustmentCopiesCompatibleDataAndKeepsDuplicateLines(t *testing.T) {
 		t.Fatalf("bad inherited invoice: %+v", preview)
 	}
 	input.Items = []MinimalInvoiceItem{{SKU: "SKU-001", Quantity: 1, Price: 100}, {SKU: "SKU-001", Quantity: 1, Price: 100}}
-	invoice, err := uc.CreateSimplified(t.Context(), input, "")
+	invoice, err := uc.CreateSimplified(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestV1BoletoIndividualFailsWithoutCreatingDraft(t *testing.T) {
 	uc, repo, _, _ := createTestUsecaseBuilder()
 	input := minimalTestInvoice()
 	input.Sector = "30"
-	if _, err := uc.EmitSimplified(t.Context(), input, ""); err == nil || !strings.Contains(err.Error(), "masiva") {
+	if _, err := uc.EmitSimplified(t.Context(), input); err == nil || !strings.Contains(err.Error(), "masiva") {
 		t.Fatalf("expected bulk-only error: %v", err)
 	}
 	if len(repo.invoices) != 0 {

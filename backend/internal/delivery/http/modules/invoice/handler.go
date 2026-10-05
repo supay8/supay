@@ -19,15 +19,13 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const maxIdempotencyKeyLen = 100
-
 // invoiceService es el contrato de operaciones de facturas expuesto por el
 // usecase. El handler depende de la interfaz para facilitar tests con mocks.
 type invoiceService interface {
 	Create(ctx context.Context, req usecase.CreateInvoiceRequest) (*domain.Invoice, error)
-	CreateSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, idempotencyKey string) (*domain.Invoice, error)
+	CreateSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*domain.Invoice, error)
 	PreviewSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*usecase.InvoicePreview, error)
-	EmitSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest, idempotencyKey string) (*domain.Invoice, error)
+	EmitSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*domain.Invoice, error)
 	GetByID(ctx context.Context, id string) (*domain.Invoice, error)
 	ListInvoices(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error)
 	Emit(ctx context.Context, id string) (*domain.Invoice, error)
@@ -53,14 +51,6 @@ func decodeMinimalInvoice(r *http.Request) (usecase.MinimalInvoiceRequest, error
 	return req, nil
 }
 
-func idempotencyKey(r *http.Request) (string, error) {
-	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if len(key) > maxIdempotencyKeyLen {
-		return "", errors.New("Idempotency-Key no puede exceder 100 caracteres")
-	}
-	return key, nil
-}
-
 func (h *handler) createV1(w http.ResponseWriter, r *http.Request) {
 	if _, ok := deliveryHttp.RequireTenant(w, r); !ok {
 		return
@@ -70,21 +60,13 @@ func (h *handler) createV1(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
 		return
 	}
-	key, err := idempotencyKey(r)
-	if err != nil {
-		deliveryHttp.RespondValidation(w, err.Error())
-		return
-	}
-	inv, err := h.uc.CreateSimplified(r.Context(), req, key)
+	inv, err := h.uc.CreateSimplified(r.Context(), req)
 	if err != nil {
 		log.Println(err)
 		deliveryHttp.RespondError(w, err)
 		return
 	}
 	status := http.StatusCreated
-	if key != "" {
-		status = http.StatusOK
-	}
 	w.Header().Set("Location", "/v1/invoices/"+inv.ID)
 	deliveryHttp.WriteJSON(w, status, toInvoiceDTO(inv, parseIncludes(r.URL.Query().Get("include"))))
 }
@@ -115,12 +97,7 @@ func (h *handler) emitV1(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
 		return
 	}
-	key, err := idempotencyKey(r)
-	if err != nil {
-		deliveryHttp.RespondValidation(w, err.Error())
-		return
-	}
-	inv, err := h.uc.EmitSimplified(r.Context(), req, key)
+	inv, err := h.uc.EmitSimplified(r.Context(), req)
 	if err != nil {
 		log.Println(err)
 		deliveryHttp.RespondError(w, err)
@@ -151,11 +128,6 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		deliveryHttp.RespondValidation(w, "payload JSON inválido: "+err.Error())
 		return
 	}
-	req.IdempotencyKey = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if len(req.IdempotencyKey) > maxIdempotencyKeyLen {
-		deliveryHttp.RespondValidation(w, "Idempotency-Key no puede exceder 100 caracteres")
-		return
-	}
 
 	inv, err := h.uc.Create(r.Context(), req)
 	if err != nil {
@@ -164,9 +136,6 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := http.StatusCreated
-	if req.IdempotencyKey != "" {
-		status = http.StatusOK
-	}
 
 	if req.Emit && inv.Status == domain.InvoicePending {
 		inv, err = h.uc.Emit(r.Context(), inv.ID)

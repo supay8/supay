@@ -64,10 +64,16 @@ func TestOutboxEnqueueClaimRetryAndPublish(t *testing.T) {
 		t.Fatalf("estado final=%s published_at=%v", stored.Status, stored.PublishedAt)
 	}
 
-	// Un replay vuelve a poner el mismo evento en PENDING. Si el dispatcher que
-	// lo reclama cae, otro puede recuperar el lock cuando vence el lease.
-	if _, err := repo.EnqueueInvoiceEmission(context.Background(), invoice.ID, fixture.companyID, fixture.cufd.ID); err != nil {
+	// A replay creates a new event and preserves the published event.
+	replay, err := repo.EnqueueInvoiceEmission(context.Background(), invoice.ID, fixture.companyID, fixture.cufd.ID)
+	if err != nil {
 		t.Fatalf("reencolar evento publicado: %v", err)
+	}
+	if replay.ID == first.ID {
+		t.Fatal("el replay debe conservar el evento publicado y crear otro")
+	}
+	if err := db.First(&stored, "id = ?", first.ID).Error; err != nil || stored.Status != domain.OutboxStatusPublished {
+		t.Fatalf("se perdió el historial publicado: %+v err=%v", stored, err)
 	}
 	const crashLease = 30 * time.Second
 	events, err = repo.ClaimPending(context.Background(), domain.OutboxEventInvoiceEmit, "worker-caido", 10, next, crashLease)

@@ -56,7 +56,7 @@ func (r *PostgresAuthRepository) HasCompanyAccess(userID, companyID string) (boo
 	var count int64
 	err := r.db.Table("user_tenants AS ut").
 		Joins("JOIN users AS u ON u.id = ut.user_id AND u.is_active = true").
-		Joins("JOIN tenants AS t ON t.id = ut.tenant_id AND t.is_active = true").
+		Joins("JOIN tenants AS t ON t.id = ut.tenant_id AND t.is_active = true AND t.auth_organization_id IS NULL").
 		Where("ut.user_id = ? AND ut.tenant_id = ?", userID, companyID).
 		Count(&count).Error
 	return count > 0, err
@@ -64,7 +64,9 @@ func (r *PostgresAuthRepository) HasCompanyAccess(userID, companyID string) (boo
 
 func (r *PostgresAuthRepository) ListCompanies(userID string) ([]domain.UserCompany, error) {
 	var memberships []models.UserTenant
-	if err := r.db.Where("user_id = ?", userID).Order("created_at ASC").Find(&memberships).Error; err != nil {
+	if err := r.db.Model(&models.UserTenant{}).
+		Joins("JOIN tenants AS t ON t.id = user_tenants.tenant_id AND t.is_active = true AND t.auth_organization_id IS NULL").
+		Where("user_id = ?", userID).Order("user_tenants.created_at ASC").Find(&memberships).Error; err != nil {
 		return nil, err
 	}
 	result := make([]domain.UserCompany, 0, len(memberships))

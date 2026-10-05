@@ -21,7 +21,9 @@ func NewPostgresApiKeyRepository(db *gorm.DB) *PostgresApiKeyRepository {
 // El llamador debe verificar la key plana contra KeyHash con bcrypt.CompareHashAndPassword.
 func (r *PostgresApiKeyRepository) FindByPrefix(prefix string) (*models.ApiKey, error) {
 	var key models.ApiKey
-	if err := r.db.Where("key_prefix = ? AND is_active = true", prefix).First(&key).Error; err != nil {
+	if err := r.db.Model(&models.ApiKey{}).
+		Joins("JOIN tenants AS t ON t.id = api_keys.tenant_id AND t.is_active = true").
+		Where("key_prefix = ? AND api_keys.is_active = true", prefix).First(&key).Error; err != nil {
 		return nil, err
 	}
 	if key.ExpiresAt != nil && key.ExpiresAt.Before(time.Now()) {

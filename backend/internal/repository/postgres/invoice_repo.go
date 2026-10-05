@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -271,7 +270,7 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 		var invoices []models.Invoice
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Where("status = ? AND (updated_at IS NULL OR updated_at < ?)", models.StatusSending, cutoff).
-			Where("NOT EXISTS (SELECT 1 FROM sent_package_invoices b WHERE b.invoice_id = invoices.id)").
+			Where("NOT EXISTS (SELECT 1 FROM sent_package_invoices b JOIN sent_packages p ON p.id = b.sent_package_id WHERE b.invoice_id = invoices.id AND p.status <> 'REJECTED')").
 			Order("id").Find(&invoices).Error; err != nil {
 			return err
 		}
@@ -279,7 +278,7 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 			// Comprobar pertenencia bajo el bloqueo de factura también impide
 			// liberar una reserva creada mientras se seleccionaban candidatas.
 			var reserved int64
-			if err := tx.Model(&models.SentPackageInvoice{}).Where("invoice_id = ?", invoice.ID).Count(&reserved).Error; err != nil {
+			if err := tx.Model(&models.SentPackageInvoice{}).Joins("JOIN sent_packages p ON p.id = sent_package_invoices.sent_package_id AND p.status <> 'REJECTED'").Where("invoice_id = ?", invoice.ID).Count(&reserved).Error; err != nil {
 				return err
 			}
 			if reserved != 0 {
@@ -303,21 +302,6 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 		return 0, err
 	}
 	return released, nil
-}
-
-func (r *PostgresInvoiceRepository) GetByIdempotencyKey(tenantID, pointOfSaleID, key string) (*domain.Invoice, error) {
-	if strings.TrimSpace(tenantID) == "" {
-		return nil, domain.ErrMissingCompanyID
-	}
-	var m models.Invoice
-	if err := r.db.Preload("Items").Preload("PointOfSale").Preload("Company.Config").Preload("CufdRecord").
-		First(&m, "tenant_id = ? AND point_of_sale_id = ? AND idempotency_key = ?", tenantID, pointOfSaleID, key).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return toDomainInvoice(&m), nil
 }
 
 func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*domain.Cufd, error) {
@@ -359,7 +343,6 @@ func toModelInvoice(inv *domain.Invoice) models.Invoice {
 		CustomerEmail:          inv.Customer.Email,
 		CustomerCode:           inv.Customer.CodigoCliente,
 		PointOfSaleId:          inv.PointOfSaleId,
-		IdempotencyKey:         inv.IdempotencyKey,
 		CufdId:                 inv.CufdId,
 		ContingencyEventId:     inv.ContingencyEventId,
 		InvoiceNumber:          inv.InvoiceNumber,
@@ -424,7 +407,6 @@ func toDomainInvoice(m *models.Invoice) *domain.Invoice {
 		CompanyId:             m.CompanyId,
 		CustomerId:            m.CustomerId,
 		PointOfSaleId:         m.PointOfSaleId,
-		IdempotencyKey:        m.IdempotencyKey,
 		CufdId:                m.CufdId,
 		ContingencyEventId:    m.ContingencyEventId,
 		InvoiceNumber:         m.InvoiceNumber,

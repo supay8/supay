@@ -155,8 +155,6 @@ func TestInvoiceTenantIsolation(t *testing.T) {
 
 	invoiceA := nuevaFacturaPendiente(tenantA)
 	invoiceB := nuevaFacturaPendiente(tenantB)
-	idemB := "idem-tenant-b"
-	invoiceB.IdempotencyKey = &idemB
 	for _, inv := range []*domain.Invoice{invoiceA, invoiceB} {
 		if err := repo.Create(inv); err != nil {
 			t.Fatalf("create: %v", err)
@@ -190,9 +188,6 @@ func TestInvoiceTenantIsolation(t *testing.T) {
 	byIDs, err := repo.GetByIDs(tenantA.companyID, []string{invoiceA.ID, invoiceB.ID})
 	if err != nil || len(byIDs) != 1 || byIDs[0].ID != invoiceA.ID {
 		t.Fatalf("GetByIDs debe aislar tenant A: len=%d err=%v", len(byIDs), err)
-	}
-	if existing, err := repo.GetByIdempotencyKey(tenantA.companyID, tenantB.posID, idemB); err != nil || existing != nil {
-		t.Fatalf("idempotencia de B no debe ser visible por A: invoice=%v err=%v", existing, err)
 	}
 	if claimed, err := repo.ClaimForEmission(tenantA.companyID, invoiceB.ID); !errors.Is(err, gorm.ErrRecordNotFound) || claimed {
 		t.Fatalf("tenant A no debe reclamar factura de B: claimed=%v err=%v", claimed, err)
@@ -231,9 +226,6 @@ func TestInvoiceTenantIsolation(t *testing.T) {
 	withoutTenant.CompanyId = ""
 	if err := repo.Update(&withoutTenant); !errors.Is(err, domain.ErrMissingCompanyID) {
 		t.Fatalf("Update sin tenant: err=%v", err)
-	}
-	if _, err := repo.GetByIdempotencyKey("", tenantA.posID, "key"); !errors.Is(err, domain.ErrMissingCompanyID) {
-		t.Fatalf("GetByIdempotencyKey sin tenant: err=%v", err)
 	}
 }
 
@@ -369,7 +361,16 @@ func TestReleaseStaleSendingSoloLiberaAntiguas(t *testing.T) {
 		}
 	}
 	// Envejecer solo una: updated_at fuera de la ventana.
-	if err := db.Exec("UPDATE invoices SET updated_at = now() - interval '1 hour' WHERE id = ?", vieja.ID).Error; err != nil {
+	// Disable only the timestamp trigger in this isolated test transaction.
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("ALTER TABLE invoices DISABLE TRIGGER trg_set_updated_at").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("UPDATE invoices SET updated_at = now() - interval '1 hour' WHERE id = ?", vieja.ID).Error; err != nil {
+			return err
+		}
+		return tx.Exec("ALTER TABLE invoices ENABLE TRIGGER trg_set_updated_at").Error
+	}); err != nil {
 		t.Fatalf("envejecer: %v", err)
 	}
 

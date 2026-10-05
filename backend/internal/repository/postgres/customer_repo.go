@@ -62,7 +62,9 @@ func (r *PostgresCustomerRepository) List(companyID string) ([]*domain.Customer,
 		return nil, domain.ErrMissingCompanyID
 	}
 	var modelsList []models.Customer
-	if err := r.db.Where("tenant_id = ? AND is_active = true", companyID).Order("created_at ASC").Find(&modelsList).Error; err != nil {
+	if err := r.db.Raw(`SELECT DISTINCT ON (document_type, document_number, COALESCE(complement, '')) *
+		FROM customers WHERE tenant_id = ? AND is_active = true
+		ORDER BY document_type, document_number, COALESCE(complement, ''), created_at DESC, id DESC`, companyID).Scan(&modelsList).Error; err != nil {
 		return nil, err
 	}
 	res := make([]*domain.Customer, 0, len(modelsList))

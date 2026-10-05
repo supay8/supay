@@ -71,35 +71,21 @@ func (r *PostgresOutboxRepository) EnqueueInvoiceEmission(ctx context.Context, i
 			return err
 		}
 
+		// Deduplicate only an outstanding emission; published rows remain history.
+		if err := tx.Where("tenant_id = ? AND aggregate_type = ? AND aggregate_id = ? AND event_type = ? AND status IN ('PENDING', 'PROCESSING')",
+			tenantID, domain.OutboxAggregateInvoice, invoiceID, domain.OutboxEventInvoiceEmit).
+			First(&event).Error; err == nil {
+			return nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
 		return tx.Raw(`
 			INSERT INTO outbox (
 				tenant_id, aggregate_type, aggregate_id, event_type, payload,
 				status, attempts, available_at
 			)
 			VALUES (?, ?, ?, ?, ?::jsonb, 'PENDING', 0, now())
-			ON CONFLICT (event_type, aggregate_id) DO UPDATE SET
-				payload = EXCLUDED.payload,
-				status = CASE
-					WHEN outbox.status = 'PUBLISHED' THEN 'PENDING'
-					ELSE outbox.status
-				END,
-				attempts = CASE
-					WHEN outbox.status = 'PUBLISHED' THEN 0
-					ELSE outbox.attempts
-				END,
-				available_at = CASE
-					WHEN outbox.status = 'PUBLISHED' THEN now()
-					ELSE outbox.available_at
-				END,
-				published_at = CASE
-					WHEN outbox.status = 'PUBLISHED' THEN NULL
-					ELSE outbox.published_at
-				END,
-				last_error = CASE
-					WHEN outbox.status = 'PUBLISHED' THEN NULL
-					ELSE outbox.last_error
-				END,
-				updated_at = now()
 			RETURNING *`,
 			tenantID, domain.OutboxAggregateInvoice, invoiceID,
 			domain.OutboxEventInvoiceEmit, string(payload),

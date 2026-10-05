@@ -83,6 +83,8 @@ type Company struct {
 	PiePagina          string          `gorm:"type:text;not null;default:''"`
 	UsuarioSiat        string          `gorm:"type:varchar(50);not null;default:'SUPAY'"`
 	IsActive           bool            `gorm:"column:is_active;not null;default:true"`
+	ArchivedAt         *time.Time
+	ArchiveReason      *string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 
@@ -302,9 +304,8 @@ type ContingencyEvent struct {
 	Invoices    []Invoice   `gorm:"foreignKey:ContingencyEventId"`
 }
 
-// Customer es el registro fiscal del receptor. Create-only: la inmutabilidad
-// de los campos fiscales una vez facturado se refuerza con el trigger
-// trg_customers_immutability (ver internal/repository/database/db.go).
+// Customer retains immutable fiscal identity; email and is_active are editable.
+// Invoices retain their own immutable receiver snapshot.
 type Customer struct {
 	ID             string       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	CompanyId      string       `gorm:"column:tenant_id;type:uuid;not null"`
@@ -331,8 +332,7 @@ type Invoice struct {
 	CustomerName           string          `gorm:"column:customer_name;type:varchar(150);not null"`
 	CustomerEmail          *string         `gorm:"column:customer_email;type:varchar(150)"`
 	CustomerCode           string          `gorm:"column:customer_code;type:varchar(50);not null"`
-	PointOfSaleId          string          `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;uniqueIndex:idx_invoice_idem_key,priority:1;not null"`
-	IdempotencyKey         *string         `gorm:"type:varchar(100);uniqueIndex:idx_invoice_idem_key,priority:2"`
+	PointOfSaleId          string          `gorm:"type:uuid;uniqueIndex:idx_pos_invoice_num,priority:1;not null"`
 	CufdId                 string          `gorm:"type:uuid;not null"`
 	ContingencyEventId     *string         `gorm:"type:uuid"`
 	InvoiceNumber          int             `gorm:"uniqueIndex:idx_pos_invoice_num,priority:2;not null"`
@@ -469,7 +469,7 @@ type SentPackage struct {
 type SentPackageInvoice struct {
 	TenantID      string `gorm:"column:tenant_id;type:uuid;not null"`
 	InvoiceID     string `gorm:"type:uuid;primaryKey"`
-	SentPackageID string `gorm:"type:uuid;not null;uniqueIndex:idx_sent_package_invoice_position,priority:1"`
+	SentPackageID string `gorm:"type:uuid;primaryKey;not null;uniqueIndex:idx_sent_package_invoice_position,priority:1"`
 	Position      int    `gorm:"not null;uniqueIndex:idx_sent_package_invoice_position,priority:2"`
 
 	Invoice     Invoice     `gorm:"foreignKey:TenantID,InvoiceID;references:CompanyId,ID"`
@@ -492,6 +492,7 @@ type Certificate struct {
 	P12StorageRef        string `gorm:"type:text;not null;default:''"`
 	IsActive             bool   `gorm:"column:is_active;not null;default:true"`
 	UploadedAt           time.Time
+	RenewedFrom          *string `gorm:"type:uuid"`
 
 	Company           Company      `gorm:"foreignKey:CompanyId"`
 	RenewedFromRecord *Certificate `gorm:"foreignKey:CompanyId,RenewedFrom;references:CompanyId,ID"`

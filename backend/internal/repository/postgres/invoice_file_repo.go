@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type invoiceFileRow struct {
 	ID          string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	CompanyID   string `gorm:"type:uuid;not null"`
+	CompanyID   string `gorm:"column:tenant_id;type:uuid;not null"`
 	InvoiceID   string `gorm:"type:uuid;not null"`
 	Kind        string `gorm:"not null"`
 	StorageKey  string `gorm:"not null"`
@@ -23,10 +24,18 @@ type invoiceFileRow struct {
 
 func (invoiceFileRow) TableName() string { return "invoice_files" }
 
-type PostgresInvoiceFileRepository struct{ db *gorm.DB }
+type PostgresInvoiceFileRepository struct {
+	db           *gorm.DB
+	tenantColumn string
+}
 
 func NewPostgresInvoiceFileRepository(db *gorm.DB) *PostgresInvoiceFileRepository {
-	return &PostgresInvoiceFileRepository{db: db}
+	return &PostgresInvoiceFileRepository{db: db, tenantColumn: "tenant_id"}
+}
+
+// NewLegacyPostgresInvoiceFileRepository is only for the pre-000017 XML backfill.
+func NewLegacyPostgresInvoiceFileRepository(db *gorm.DB) *PostgresInvoiceFileRepository {
+	return &PostgresInvoiceFileRepository{db: db, tenantColumn: "company_id"}
 }
 
 func (r *PostgresInvoiceFileRepository) BelongsToCompany(ctx context.Context, companyID, invoiceID string) (bool, error) {
@@ -36,17 +45,25 @@ func (r *PostgresInvoiceFileRepository) BelongsToCompany(ctx context.Context, co
 }
 
 func (r *PostgresInvoiceFileRepository) CreateFile(ctx context.Context, file *domain.InvoiceFile) error {
-	row := invoiceFileRow{CompanyID: file.CompanyID, InvoiceID: file.InvoiceID, Kind: file.Kind, StorageKey: file.StorageKey, SHA256: file.SHA256, Size: file.Size, ContentType: file.ContentType, CreatedAt: file.CreatedAt}
-	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+	id := uuid.NewString()
+	createdAt := file.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	row := map[string]any{"id": id, r.tenantColumn: file.CompanyID, "invoice_id": file.InvoiceID,
+		"kind": file.Kind, "storage_key": file.StorageKey, "sha256": file.SHA256,
+		"size": file.Size, "content_type": file.ContentType, "created_at": createdAt}
+	if err := r.db.WithContext(ctx).Table("invoice_files").Create(row).Error; err != nil {
 		return err
 	}
-	file.ID = row.ID
+	file.ID, file.CreatedAt = id, createdAt
 	return nil
 }
 
 func (r *PostgresInvoiceFileRepository) FindFile(ctx context.Context, companyID, invoiceID, kind string) (*domain.InvoiceFile, error) {
 	var row invoiceFileRow
-	err := r.db.WithContext(ctx).Where("company_id = ? AND invoice_id = ? AND kind = ?", companyID, invoiceID, kind).First(&row).Error
+	err := r.db.WithContext(ctx).Select("invoice_files.*, "+r.tenantColumn+" AS tenant_id").
+		Where(r.tenantColumn+" = ? AND invoice_id = ? AND kind = ?", companyID, invoiceID, kind).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, domain.ErrNotFound
 	}
@@ -58,7 +75,7 @@ func (r *PostgresInvoiceFileRepository) FindFile(ctx context.Context, companyID,
 
 func (r *PostgresInvoiceFileRepository) DeleteFile(ctx context.Context, companyID, invoiceID, kind, storageKey string) error {
 	result := r.db.WithContext(ctx).
-		Where("company_id = ? AND invoice_id = ? AND kind = ? AND storage_key = ?", companyID, invoiceID, kind, storageKey).
+		Where(r.tenantColumn+" = ? AND invoice_id = ? AND kind = ? AND storage_key = ?", companyID, invoiceID, kind, storageKey).
 		Delete(&invoiceFileRow{})
 	return result.Error
 }

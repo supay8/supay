@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -38,14 +39,41 @@ func NewPostgresInvoiceEmailNotificationRepository(db *gorm.DB) *PostgresInvoice
 
 func queueInvoiceEmailNotification(tx *gorm.DB, tenantID, invoiceID string) error {
 	return tx.Exec(`
-		INSERT INTO invoice_email_notifications (tenant_id, invoice_id, recipient)
-		SELECT i.tenant_id, i.id, lower(trim(i.customer_email))
+		INSERT INTO invoice_email_notifications (tenant_id, invoice_id, recipient, is_automatic)
+		SELECT i.tenant_id, i.id, lower(trim(i.customer_email)), true
 		FROM invoices AS i
 		JOIN tenant_configs AS tc ON tc.tenant_id = i.tenant_id
 		WHERE i.tenant_id = ? AND i.id = ?
 		  AND tc.settings @> '{"invoice_email":{"enabled":true}}'::jsonb
 		  AND i.customer_email IS NOT NULL AND trim(i.customer_email) <> ''
-		ON CONFLICT (invoice_id) DO NOTHING`, tenantID, invoiceID).Error
+		ON CONFLICT (tenant_id, invoice_id, recipient) WHERE is_automatic DO NOTHING`, tenantID, invoiceID).Error
+}
+
+// QueueDelivery creates an explicit additional delivery with its own notification ID.
+// Delivery retries use that ID; each explicit call requests another email.
+// The caller must authorize tenant access before invoking this repository.
+func (r *PostgresInvoiceEmailNotificationRepository) QueueDelivery(ctx context.Context, tenantID, invoiceID, recipient string) (string, error) {
+	recipient = strings.ToLower(strings.TrimSpace(recipient))
+	address, err := mail.ParseAddress(recipient)
+	if err != nil || address.Address != recipient {
+		return "", domain.NewBadRequestError("recipient debe ser una dirección de email válida")
+	}
+	var id string
+	err = r.db.WithContext(ctx).Raw(`
+  INSERT INTO invoice_email_notifications AS n (tenant_id, invoice_id, recipient, is_automatic)
+  SELECT i.tenant_id, i.id, ?, false FROM invoices i
+  JOIN tenants t ON t.id = i.tenant_id AND t.is_active
+  JOIN tenant_configs tc ON tc.tenant_id = i.tenant_id
+  WHERE i.tenant_id = ? AND i.id = ? AND i.status = 'ACCEPTED'
+    AND tc.settings @> '{"invoice_email":{"enabled":true}}'::jsonb
+  RETURNING id`, recipient, tenantID, invoiceID).Scan(&id).Error
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", domain.NewConflictError("factura o tenant no disponible para entrega de email")
+	}
+	return id, nil
 }
 
 func (r *PostgresInvoiceEmailNotificationRepository) ClaimPending(ctx context.Context, owner string, limit int, now time.Time, lockTimeout time.Duration) ([]domain.InvoiceEmailNotification, error) {

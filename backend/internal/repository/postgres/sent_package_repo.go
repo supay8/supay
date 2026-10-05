@@ -189,7 +189,7 @@ func (r *PostgresSentPackageRepository) ListPendingBatchInvoices(companyID, posI
 	}
 	query := r.db.Where("tenant_id = ? AND point_of_sale_id = ? AND status = ?", companyID, posID, status).
 		Where("(siat_reception_code IS NULL OR btrim(siat_reception_code) = '')").
-		Where("NOT EXISTS (SELECT 1 FROM sent_package_invoices b WHERE b.invoice_id = invoices.id)")
+		Where("NOT EXISTS (SELECT 1 FROM sent_package_invoices b JOIN sent_packages p ON p.id = b.sent_package_id WHERE b.invoice_id = invoices.id AND p.status <> 'REJECTED')")
 	if status == domain.InvoicePending {
 		query = query.Where("(cuf IS NULL OR btrim(cuf) = '')").
 			Where("emission_type NOT IN ?", []models.EmissionType{models.EmissionOffline, models.EmissionMasiva})
@@ -289,7 +289,7 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 			}
 		}
 		var reserved int64
-		if err := tx.Model(&models.SentPackageInvoice{}).Where("invoice_id IN ?", orderedIDs).Count(&reserved).Error; err != nil {
+		if err := tx.Model(&models.SentPackageInvoice{}).Joins("JOIN sent_packages p ON p.id = sent_package_invoices.sent_package_id AND p.status <> 'REJECTED'").Where("invoice_id IN ?", orderedIDs).Count(&reserved).Error; err != nil {
 			return err
 		}
 		if reserved != 0 {

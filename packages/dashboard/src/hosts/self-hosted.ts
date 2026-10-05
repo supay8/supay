@@ -80,7 +80,6 @@ interface RequestOptions {
     form?: FormData
     query?: QueryParams
     requireAuth?: boolean
-    idempotencyKey?: string
 }
 
 /**
@@ -110,9 +109,6 @@ class ApiClient {
 
         if (opts.body !== undefined) {
             headers["Content-Type"] = "application/json"
-        }
-        if (opts.idempotencyKey) {
-            headers["Idempotency-Key"] = opts.idempotencyKey.slice(0, 100)
         }
         if (opts.requireAuth !== false) {
             if (apiKey) headers["X-API-Key"] = apiKey
@@ -376,8 +372,8 @@ export function createSelfHostedHost(options: SelfHostedHostOptions = {}): Dashb
         emitInvoice: (id) => request<Invoice>(`/invoices/${id}/emit`, { method: "POST" }),
         previewInvoice: (payload: V1InvoiceInput) =>
             request<InvoicePreview>("/invoices/preview", { method: "POST", body: payload }),
-        emitInvoiceDirect: (payload: V1InvoiceInput, idempotencyKey?: string) =>
-            request<Invoice>("/invoices/emit", { method: "POST", body: payload, idempotencyKey }),
+        emitInvoiceDirect: (payload: V1InvoiceInput) =>
+            request<Invoice>("/invoices/emit", { method: "POST", body: payload }),
         annulInvoice: (id, motivoAnulacion) =>
             request<Invoice>(`/invoices/${id}/annul`, {
                 method: "POST",

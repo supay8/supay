@@ -414,7 +414,6 @@ CREATE TABLE invoices (
     cufd_id uuid NOT NULL REFERENCES cufd_history(id) ON DELETE RESTRICT,
     contingency_event_id uuid REFERENCES contingency_events(id) ON DELETE SET NULL,
     catalog_version_id uuid REFERENCES catalog_versions(id) ON DELETE SET NULL,
-    idempotency_key varchar(100),
     invoice_number int NOT NULL,
     cuf varchar(150) UNIQUE,
     emission_type varchar(30) NOT NULL DEFAULT 'EN_LINEA' CHECK (emission_type IN ('EN_LINEA','OFFLINE','CONTINGENCIA')),
@@ -450,10 +449,7 @@ CREATE TABLE invoices (
 CREATE INDEX idx_invoices_tenant ON invoices(tenant_id);
 CREATE INDEX idx_invoices_pos_status ON invoices(point_of_sale_id, status);
 CREATE INDEX idx_invoices_issue_date ON invoices(tenant_id, issue_date);
--- Índice único parcial: solo aplica cuando el cliente envió idempotency_key.
-CREATE UNIQUE INDEX idx_invoices_idempotency
-    ON invoices(tenant_id, point_of_sale_id, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
+-- La unicidad fiscal se protege por CUF; las creaciones tienen IDs independientes.
 ```
 
 #### `invoice_items`
@@ -525,7 +521,6 @@ CREATE INDEX idx_outbox_pending ON outbox(processed_at, created_at)
 | `Catalog.Replace` borra e inserta | Alta | Si falla tras el DELETE, el catálogo queda vacío. |
 | `ProductMapping` redundante | Media | Guarda `SinProductId` + `CodigoProductoSin` + `CodigoActividad`. |
 | CUIS como campos sueltos en POS | Media | Sin historial ni vigencia explícita. |
-| `Invoice.IdempotencyKey` nullable + unique permite múltiples NULL | Media | Varias facturas sin key pueden coexistir; no es bug grave, pero es confuso. |
 | Numeración con advisory lock + MAX() | Alta | Serializa por punto de venta; cuello de botella. |
 | Migraciones con `log.Fatalf` | Alta | Error en migración mata el proceso sin rollback controlado. |
 | Tests de postgres no compilan | Crítica | No hay seguridad en la capa de persistencia. |

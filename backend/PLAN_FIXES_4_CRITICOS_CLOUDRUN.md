@@ -23,12 +23,12 @@ Fuera de beta (v1.1 con tracción): worker dedicado always-allocated, `EmitAsync
 
 Base: EPIC P0-1 del análisis (IDOR cross-tenant). Recorte beta: solo facturas + guard común; resto en v1.1.
 
-**Archivos:** `repository/postgres/invoice_repo.go:62 ListFiltered, :93 GetByID, :155 TransitionStatus, :212 ClaimForEmission, :262 GetByIdempotencyKey, :283 GetByIDs` · `domain/invoice.go:106 InvoiceListFilter, :115 InvoiceRepository` · `usecase/invoice_usecase.go:722 GetByID, :758 ListByPointOfSale, :770 ListInvoices` · `usecase/emission.go:69 Emit, :79 ProcessEmission, :437 VerifyStatus, :480 Annul, :555 RevertAnnul` · `modules/invoice/handler.go:179 getByID, :218 list, :278 emit, :294 siatStatus, :309 annul, :331 revertAnnul, :363 downloadFile (referencia ok), :407 sectores` · `delivery/http/context.go:22 CompanyIDFromContext` · `middleware.go:32,54,104,186,193,213` · `router.go:58,88,126` · `modules/siat/handler.go:391 authenticatedCompany (referencia ok)`.
+**Archivos:** `repository/postgres/invoice_repo.go:62 ListFiltered, :93 GetByID, :155 TransitionStatus, :212 ClaimForEmission, :283 GetByIDs` · `domain/invoice.go:106 InvoiceListFilter, :115 InvoiceRepository` · `usecase/invoice_usecase.go:722 GetByID, :758 ListByPointOfSale, :770 ListInvoices` · `usecase/emission.go:69 Emit, :79 ProcessEmission, :437 VerifyStatus, :480 Annul, :555 RevertAnnul` · `modules/invoice/handler.go:179 getByID, :218 list, :278 emit, :294 siatStatus, :309 annul, :331 revertAnnul, :363 downloadFile (referencia ok), :407 sectores` · `delivery/http/context.go:22 CompanyIDFromContext` · `middleware.go:32,54,104,186,193,213` · `router.go:58,88,126` · `modules/siat/handler.go:391 authenticatedCompany (referencia ok)`.
 
 **Cambio:**
 
 - `InvoiceListFilter += TenantID` obligatorio (`"" → ErrMissingCompanyID`); repo filtra `tenant_id=?` en todo `WHERE` + join/check `points_of_sale.tenant_id`.
-- Firmas: `GetByID(tenantID,id)`, `GetByIds(tenantID,ids)`, `TransitionStatus(tenantID,...)`, `ClaimForEmission(tenantID,id)`, `GetByIdempotencyKey(tenantID,posID,key)`.
+- Firmas: `GetByID(tenantID,id)`, `GetByIds(tenantID,ids)`, `TransitionStatus(tenantID,...)`, `ClaimForEmission(tenantID,id)`.
 - Nuevo `delivery/http/tenant.go: RequireTenant(r)` → `401` si `!ok`; post-check `inv.CompanyId == ctx` (responder `404`, no `403`-oráculo); `sectores` usa contexto.
 - Fail-closed sin romper tests self-hosted: `lookup==nil` → fatal **solo** cuando `DEPLOYMENT_MODE!=test` y `GO_ENV/APP_ENV!=test` (hoy `router.go:88` documenta `lookup==nil` para tests de handlers aislados: se conserva vía flag explícito de test); bootstrap con `secret==""` → denegar; `extractKeyPrefix` inválido → no-lookup; quitar `log.Println(err)` con eco (`handler.go:67,74,80,115,121`).
 - Bug real verificado `router.go:135`: `RateLimitIP(10/60, 10, ...)` es división entera `=0` → tras 10 reqs el bootstrap `/internal/companies` queda bloqueado para siempre. Cambiar a `RateLimitIP(10, 60, ...)` como la ruta `/v1` (`router.go:154`). Sin esto no hay onboarding de tenants.
@@ -37,7 +37,7 @@ Base: EPIC P0-1 del análisis (IDOR cross-tenant). Recorte beta: solo facturas +
 **Tests:**
 
 ```bash
-go test ./internal/repository/postgres -run 'TestInvoiceTenant|TestInvoiceIdempotency|TestTransitionStatus' -count=1 -v
+go test ./internal/repository/postgres -run 'TestInvoiceTenant|TestTransitionStatus' -count=1 -v
 TEST_DATABASE_URL=postgres://... go test ./internal/repository/postgres -run TestInvoice -count=1
 go test ./internal/delivery/http/... -run 'TestTenant|TestEmit|TestAnnul|TestSiatRequiresAuthenticatedTenant' -count=1 -v
 go test ./... -count=1
@@ -111,7 +111,9 @@ go test ./internal/adapters/siat -run 'TestTotales|TestCalcular' -count=1 -v
 Implementado y verificado para la beta self-hosted:
 
 - PDF/XML se descargan con `fetch` autenticado y `Blob`; ya no se usan enlaces sin headers.
-- Emisión directa usa una `Idempotency-Key` estable por intento para evitar duplicados por doble click o reintento de red.
+- Emisión directa crea una factura nueva por llamada. Los reintentos de una
+  factura existente conservan su identidad fiscal (CUF) y su ID; el botón se
+  deshabilita durante una emisión para evitar doble click.
 - `preview/emit` envía snapshot completo de cliente e ítems (`description`, actividad, código SIN, unidad de medida) y `payment.exchange_rate`.
 - La beta queda declarada como self-hosted; `BetterAuthHost` y modo cloud permanecen fuera de alcance hasta v1.1.
 - Documentación corregida: auth JWT + `X-Company-ID`, Postman histórico marcado deprecated y OpenAPI parcial renombrado a `fern/una-factura.openapi.yml`.

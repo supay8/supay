@@ -16,7 +16,6 @@ Este documento cubre el flujo mínimo para que un agente configure el punto de v
 |---|---|---|
 | `X-API-Key` | Condicional | Integraciones máquina-a-máquina: `sup_<prefix>_<random>`. Falta o inválida → `401`. La key inyecta el tenant al contexto. |
 | `Authorization` + `X-Company-ID` | Condicional | Sesión humana: `Authorization: Bearer <JWT>` y empresa activa en `X-Company-ID`. Es la alternativa a `X-API-Key`; omitir la empresa activa → `401`. |
-| `Idempotency-Key` | No | Solo `POST /v1/invoices` y `POST /v1/invoices/emit`. Máx 100 chars (`backend/internal/delivery/http/modules/invoice/handler.go:54`). Mismo `point_of_sale_id` + key → replay `200 OK`. Sin key → `201 Created`. |
 | `Content-Type` | Sí | `application/json` |
 
 CORS (`backend/internal/delivery/http/router.go:68`): `AllowedOrigins` `localhost:3000`, `127.0.0.1:3000`, `0.0.0.0:3000`, `localhost:5173`, `127.0.0.1:5173`; `AllowedMethods` `GET, POST, PUT, DELETE, OPTIONS`; `AllowCredentials: true`; `MaxAge: 300`. Body máx `10 MB` (`router.go:15`), timeout global `60s`.
@@ -228,7 +227,7 @@ Reglas estrictas: `DisallowUnknownFields` (`invoice/handler.go:41`) → campo no
 ### `POST /v1/invoices` — Crear borrador
 
 - **Handler:** `handler.go:62` `createV1` → `invoice_simplifier.go:371` `CreateSimplified`
-- **Headers:** `X-API-Key`, opcional `Idempotency-Key`
+- **Headers:** `X-API-Key`
 - **Body:** 6 campos
 - **Response:** `201 Created` sin key, `200 OK` replay con key; `Location: /v1/invoices/{id}` (`handler.go:82`); Body `Invoice` DTO (ver §8)
 - **Errores:** `400`, `404`, `409`
@@ -236,7 +235,7 @@ Reglas estrictas: `DisallowUnknownFields` (`invoice/handler.go:41`) → campo no
 ### `POST /v1/invoices/emit` — Crear y emitir en un paso
 
 - **Handler:** `handler.go:100` `emitV1` → `invoice_simplifier.go:380` `EmitSimplified` (crea y si `PENDING` → `Emit`)
-- **Headers:** `X-API-Key`, opcional `Idempotency-Key`
+- **Headers:** `X-API-Key`
 - **Body:** 6 campos
 - **Response:** `200 OK` + `Location` con el resultado síncrono (`ACCEPTED|OBSERVED|OFFLINE`); Body `Invoice` DTO. Un timeout o caída de red genera la factura offline y la vincula a un evento de contingencia local, que el registro posterior ante SIAT completa con su código de recepción.
 - **Errores:** `422 SIAT_REJECTED` con `details` SIAT, `503` SIAT no disponible

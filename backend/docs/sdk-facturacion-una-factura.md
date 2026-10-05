@@ -23,11 +23,11 @@ Fuentes: `internal/delivery/http/modules/invoice/module.go` (`RegisterV1Routes`)
 ```http
 X-API-Key: <api_key>
 Content-Type: application/json
-Idempotency-Key: <opcional, max 100 chars>   # solo en POST /emit
 ```
 
 - Sin `X-API-Key` → `401 {"error":{"code":"UNAUTHORIZED",...}}`.
-- `Idempotency-Key` repetida no re-emite: devuelve la factura ya terminada.
+- Cada llamada de creación inicia una nueva factura. Conserve el ID devuelto
+  y el CUF para consultar y reconciliar la factura existente.
 - Todos los POST de facturas usan `DisallowUnknownFields`: cualquier campo no declarado → `400 VALIDATION_ERROR`.
 
 ## 2. Payload mínimo (compartido por preview y emit)
@@ -85,7 +85,7 @@ curl -s $BASE/v1/health
 
 ## 4. Paso 1 — `POST /v1/invoices/preview` (validar sin crear)
 
-Valida contrato local + catálogos. No crea cliente ni factura, no toca SIAT, no acepta `Idempotency-Key`.
+Valida contrato local + catálogos. No crea cliente ni factura, no toca SIAT, no persiste la factura.
 
 ```sh
 curl -s -X POST $BASE/v1/invoices/preview \
@@ -122,7 +122,6 @@ Crea el borrador e intenta emitir al SIAT dentro del mismo request.
 ```sh
 curl -s -X POST $BASE/v1/invoices/emit \
   -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-  -H "Idempotency-Key: sdk-test-0001" \
   -d '{"point_of_sale_id":"5226da47-74da-4b27-a26d-892c62fa6d26",
        "customer":{"document_type":"ci","document_number":"1234567","name":"Ada Lovelace","email":"ada@example.com"},
        "items":[{"sku":"PLAN-PRO","description":"Plan profesional","codigo_actividad":"101010","codigo_producto_sin":5113100,"unidad_medida":58,"quantity":1,"price":150,"discount":0}],
@@ -155,10 +154,12 @@ Estados posibles a manejar en el SDK:
 |---|---|---|
 | `ACCEPTED` | SIAT aceptó | guardar `id`, `cuf`, `invoice_number` |
 | `OBSERVED` | SIAT observó (ver `siat_mensajes`) | loguear observaciones, no re-emitir |
-| `REJECTED` | SIAT rechazó | corregir y crear una factura nueva con otra `Idempotency-Key`; no re-emitir el mismo ID durante la beta |
+| `REJECTED` | SIAT rechazó | corregir y crear una factura nueva; no re-emitir el mismo ID durante la beta |
 | `OFFLINE` | timeout/caída SIAT; trae `xml` firmado + `contingency_event_id` | guardar XML local, reenviar luego por paquete |
 
-Quitar `Idempotency-Key` → el SDK debe igual funcionar (solo cambia que no hay replay seguro).
+Si la respuesta de creación se pierde antes de conocer el ID/CUF, concilie
+el resultado antes de repetir la creación: el mismo payload no identifica
+una factura existente.
 
 ## 6. Paso 3 — `GET /v1/invoices/{id}` (verificar)
 
@@ -207,7 +208,7 @@ Envelope único:
 
 1. `GET /v1/health` → 200.
 2. `POST /v1/invoices/preview` con payload §2 → 200, `codigo_documento_sector == 1`.
-3. `POST /v1/invoices/emit` + `Idempotency-Key: sdk-test-0001` → 200, guardar `id` del `Location`/cuerpo.
+3. `POST /v1/invoices/emit` → 200, guardar `id` del `Location`/cuerpo.
 4. `GET /v1/invoices/{id}` → `status` y `cuf` presentes.
 5. `GET /v1/invoices/{id}/xml` → XML no vacío.
 6. Reintentar `emit` con misma key → misma factura, sin duplicado.

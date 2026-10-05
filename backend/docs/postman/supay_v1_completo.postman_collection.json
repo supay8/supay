@@ -1010,7 +1010,7 @@
                 }
               }
             },
-            "description": "200 InvoicePreview{subtotal,total,codigo_documento_sector}. 400 VALIDATION_ERROR si faltan campos/data sectorial. No persiste, no acepta Idempotency-Key."
+            "description": "200 InvoicePreview{subtotal,total,codigo_documento_sector}. 400 VALIDATION_ERROR si faltan campos/data sectorial. No persiste."
           },
           "response": []
         },
@@ -1026,10 +1026,6 @@
               {
                 "key": "X-API-Key",
                 "value": "{{apiKey}}"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "test-key-001"
               }
             ],
             "url": {
@@ -1051,7 +1047,7 @@
                 }
               }
             },
-            "description": "201 sin Idempotency-Key, 200 con clave (replay). Location: /v1/invoices/{id}. Guarda id en {{invoiceId}}. DisallowUnknownFields."
+            "description": "201 Created; cada llamada crea una factura. Location: /v1/invoices/{id}. Guarda id en {{invoiceId}}. DisallowUnknownFields."
           },
           "response": []
         },
@@ -1067,10 +1063,6 @@
               {
                 "key": "X-API-Key",
                 "value": "{{apiKey}}"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "test-key-001"
               }
             ],
             "url": {

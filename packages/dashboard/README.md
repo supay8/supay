@@ -14,6 +14,6 @@ la beta: requiere un `BetterAuthHost` con organización activa y renovación del
 JWT, que se implementará después de la beta.
 
 El flujo canónico de emisión es `POST /v1/invoices/preview` seguido de
-`POST /v1/invoices/emit` con `Idempotency-Key`. El payload debe incluir el
+`POST /v1/invoices/emit`. Cada llamada inicia una nueva factura. El payload debe incluir el
 snapshot completo del receptor y de los datos fiscales de cada ítem; consulte
 `backend/docs/sdk-facturacion-una-factura.md`.

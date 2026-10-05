@@ -299,7 +299,7 @@ Flujo mínimo después del bootstrap: **crear sucursal → crear punto de venta 
 
 ## 📖 API v1 — contrato estable
 
-Todas las rutas de negocio viven bajo `/v1` y requieren `X-API-Key`. `Idempotency-Key` (≤100 chars) es soportado en creaciones. Las rutas sin versión se mantienen temporalmente por compatibilidad.
+Todas las rutas de negocio viven bajo `/v1` y requieren `X-API-Key`. La identidad fiscal es el CUF; los reintentos operativos usan la factura existente. Las rutas sin versión se mantienen temporalmente por compatibilidad.
 
 Contrato completo en [`backend/docs/api-v1.md`](./backend/docs/api-v1.md) y detalle multisector en [`backend/docs/invoicing-sectors.md`](./backend/docs/invoicing-sectors.md).
 
@@ -326,7 +326,7 @@ POST /v1/invoices/preview | POST /v1/invoices | POST /v1/invoices/emit
 | Método | Ruta | Descripción |
 |---|---|---|
 | `POST` | `/v1/invoices/preview` | Valida y resuelve sin persistir ni tocar SIAT |
-| `POST` | `/v1/invoices` | Crea borrador (`201` / `200` idempotente) |
+| `POST` | `/v1/invoices` | Crea un nuevo borrador (`201`) |
 | `POST` | `/v1/invoices/emit` | Crea + emite síncrono (`ACCEPTED`/`OBSERVED` o `OFFLINE` con `contingency_event_id`) |
 | `POST` | `/v1/invoices/{id}/emit` | Emite borrador existente |
 | `GET` | `/v1/invoices/{id}` / `/xml` / `/siat-status` | Consulta, XML firmado y estado SIAT |

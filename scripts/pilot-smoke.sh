@@ -4,7 +4,6 @@ set -eu
 : "${API_URL:?API_URL is required (for example https://api.example.com)}"
 : "${SMOKE_INVOICE_JSON:?SMOKE_INVOICE_JSON is required}"
 : "${SMOKE_ANNUL_REASON:=90}"
-: "${SMOKE_IDEMPOTENCY_KEY:=pilot-smoke-$(date +%s)}"
 
 if ! command -v jq >/dev/null 2>&1; then
   printf 'jq is required to parse API responses\n' >&2
@@ -39,7 +38,6 @@ invoice_response=$(curl --fail --silent --show-error \
   -X POST "$api_url/v1/invoices/emit" \
   -H 'Content-Type: application/json' \
   -H "$auth_header" \
-  -H "Idempotency-Key: $SMOKE_IDEMPOTENCY_KEY" \
   --data "$SMOKE_INVOICE_JSON")
 
 invoice_id=$(printf '%s' "$invoice_response" | jq -er '.id')

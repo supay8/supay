@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react"
+import { useMemo, useState } from "react"
 import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
@@ -180,7 +180,6 @@ export function InvoiceNewPage() {
   const [rejectedMessages, setRejectedMessages] = useState<string>("")
   const [unavailableOpen, setUnavailableOpen] = useState(false)
   const [preview, setPreview] = useState<InvoicePreview | null>(null)
-  const emitIdempotencyKey = useRef<string | null>(null)
 
   const posQuery = useQuery({
     queryKey: ["point-of-sales", companyId],
@@ -303,7 +302,6 @@ export function InvoiceNewPage() {
     setPreview(null)
     setResultInvoice(null)
     setPhase("idle")
-    emitIdempotencyKey.current = null
   }
 
   /** Payload v1 simplificado (POST /v1/invoices/preview|emit). */
@@ -386,15 +384,10 @@ export function InvoiceNewPage() {
       if (!host.emitInvoiceDirect) {
         throw new ApiError(405, "NOT_SUPPORTED", "Este host no expone POST /v1/invoices/emit")
       }
-      emitIdempotencyKey.current ??= crypto.randomUUID()
-      const emitted = await host.emitInvoiceDirect(
-        buildV1Payload(),
-        emitIdempotencyKey.current
-      )
+      const emitted = await host.emitInvoiceDirect(buildV1Payload())
       return { status: "accepted" as const, invoice: emitted }
     },
     onSuccess: (result) => {
-      emitIdempotencyKey.current = null
       handleResult(result)
     },
     onError: (error) => {

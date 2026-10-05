@@ -87,7 +87,7 @@ test("self-hosted host exposes v1 preview and SIN catalog without legacy 404s", 
   assert.throws(() => host.createProduct({ name: "x" }), /POST \/products/)
 })
 
-test("self-hosted host authenticates downloads and forwards idempotency keys", async () => {
+test("self-hosted host authenticates downloads and emits without an auxiliary key", async () => {
   const calls = []
   const host = createSelfHostedHost({
     baseUrl: "http://backend.test:8081",
@@ -122,9 +122,9 @@ test("self-hosted host authenticates downloads and forwards idempotency keys", a
       quantity: 1,
       price: 10,
     }],
-  }, "invoice-submit-1")
+  })
 
-  assert.equal(calls[1].options.headers["Idempotency-Key"], "invoice-submit-1")
+  assert.equal(calls[1].options.headers["Idempotency-Key"], undefined)
 })
 
 test("dashboard critical flow emits, checks, downloads, and annuls with the v1 contract", async () => {
@@ -170,7 +170,7 @@ test("dashboard critical flow emits, checks, downloads, and annuls with the v1 c
       quantity: 1,
       price: 10.25,
     }],
-  }, "pilot-flow-1")
+  })
   await host.getSiatStatus("invoice-1")
   await host.downloadInvoiceXml("invoice-1")
   await host.downloadInvoicePdf("invoice-1")
@@ -183,7 +183,7 @@ test("dashboard critical flow emits, checks, downloads, and annuls with the v1 c
     "/v1/invoices/invoice-1/pdf",
     "/v1/invoices/invoice-1/annul",
   ])
-  assert.equal(calls[0].options.headers["Idempotency-Key"], "pilot-flow-1")
+  assert.equal(calls[0].options.headers["Idempotency-Key"], undefined)
   assert.equal(calls[4].options.body, JSON.stringify({ codigo_motivo: 90 }))
   for (const call of calls) {
     assert.equal(call.options.headers["X-API-Key"], "sup_pilot_secret")

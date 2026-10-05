@@ -80,7 +80,7 @@ export interface InvoiceHost {
   /** Contrato v1: validación sin efectos (POST /v1/invoices/preview). */
   previewInvoice?(payload: V1InvoiceInput): Promise<InvoicePreview>
   /** Contrato v1: crear + emitir atómico (POST /v1/invoices/emit). */
-  emitInvoiceDirect?(payload: V1InvoiceInput, idempotencyKey: string): Promise<Invoice>
+  emitInvoiceDirect?(payload: V1InvoiceInput): Promise<Invoice>
   /** Descarga autenticada del XML firmado. */
   downloadInvoiceXml?(id: string): Promise<Blob>
 }

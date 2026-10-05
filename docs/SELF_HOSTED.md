@@ -67,8 +67,8 @@ SMOKE_API_KEY='...' \
 ./scripts/self-hosted-smoke.sh
 ```
 
-Opcionalmente defina `SMOKE_IDEMPOTENCY_KEY` para reintentar el mismo smoke y
-`SMOKE_ANNUL_REASON` (default `1`) para seleccionar el motivo SIAT.
+Opcionalmente defina `SMOKE_ANNUL_REASON` (default `1`) para seleccionar el
+motivo SIAT. Cada ejecución del smoke crea una factura nueva.
 
 `internal/pdf/storage_r2.go` usa la API S3 compatible. Configurar `r2` nunca degrada silenciosamente a almacenamiento noop: credenciales o bucket faltantes detienen el arranque.
 

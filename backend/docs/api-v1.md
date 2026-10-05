@@ -11,7 +11,8 @@ Las rutas de negocio aceptan dos mecanismos de autenticación:
 - Frontend: `Authorization: Bearer <jwt>` junto con `X-Company-ID` para elegir
   una de las empresas a las que pertenece el usuario.
 
-Las operaciones de creación aceptan `Idempotency-Key` (máximo 100 caracteres).
+La identidad fiscal es el CUF. Cada operación de creación genera una factura nueva;
+para consultar o reintentar una existente, conserve su ID y su CUF.
 
 ## Autenticación del frontend
 
@@ -163,8 +164,8 @@ contacta al SIAT ni confirma la habilitación/homologación tributaria.
 
 ### `POST /v1/invoices`
 
-Crea un borrador. Devuelve `201 Created` sin `Idempotency-Key` y `200 OK` al
-usar una clave idempotente. `Location` apunta a `/v1/invoices/{id}`.
+Crea un borrador y devuelve `201 Created`. Cada petición crea una factura
+independiente. `Location` apunta a `/v1/invoices/{id}`.
 
 ### `POST /v1/invoices/emit`
 
@@ -172,14 +173,15 @@ Crea el borrador e intenta emitirlo al SIAT dentro del mismo request. Devuelve
 `200 OK` con la factura `ACCEPTED`/`OBSERVED`; si el SIAT no responde por timeout
 o caída de red, devuelve `200 OK` con la factura `OFFLINE`, su XML firmado y el
 `contingency_event_id` local que permitirá enviarla posteriormente por paquete.
-Una repetición idempotente no vuelve a emitir una factura ya terminada.
+Repetir esta creación inicia otra factura. Para comprobar una emisión incierta,
+consulte `/v1/invoices/{id}/siat-status` sobre la factura existente.
 Al restablecerse la conexión, el registro del evento significativo completa ese
 mismo evento local con su fecha de fin y el código de recepción del SIAT.
 
 Limitación de la beta: una factura `REJECTED` no se reencola. Corrija el payload
-y cree una factura nueva con otra `Idempotency-Key`; la factura rechazada se
-conserva para auditoría. Reintentar el mismo ID puede chocar con la unicidad
-actual de `(event_type, aggregate_id)` en el outbox.
+y cree una factura nueva; la factura rechazada se conserva para auditoría.
+Los reintentos operativos usan el ID existente; outbox deduplica únicamente
+emisiones pendientes, conservando el historial de eventos publicados.
 
 El sector 30 no admite emisión individual: use
 `POST /v1/siat/masiva/{companyId}/{pointOfSaleId}` y su operación de validación.

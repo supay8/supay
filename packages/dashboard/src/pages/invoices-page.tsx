@@ -8,13 +8,14 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Plus,
+  KeyRound,
   RefreshCw,
   Search,
   X,
 } from "lucide-react"
 
 import { ApiError } from "../host"
+import { formatPosShort } from "../lib/display-names"
 import { useAuth } from "../auth-context"
 import {
   INVOICE_STATUS_LABELS,
@@ -130,9 +131,11 @@ export function InvoicesPage() {
   const to = range?.to ? format(range.to, "yyyy-MM-dd") : undefined
 
   const listQuery = useQuery({
-    queryKey: ["invoices", "list", { posFilter, statuses, from, to, q, page }],
+    queryKey: ["invoices", companyId, "list", { posFilter, statuses, from, to, q, page }],
     queryFn: () =>
       host.listInvoices({
+        // NOTE: el backend resuelve el tenant por X-Company-ID; el filtro POS es opcional.
+        // No enviamos company_id por query: el scope va en la key + header.
         point_of_sale_id: posFilter === "all" ? undefined : posFilter,
         status: statuses.length > 0 ? statuses : undefined,
         from,
@@ -142,6 +145,7 @@ export function InvoicesPage() {
         offset: page * PAGE_SIZE,
       }),
     placeholderData: keepPreviousData,
+    enabled: companyId !== "",
     refetchInterval: (query) =>
       query.state.data?.items.some((i) =>
         TRANSIENT_STATUSES.includes(i.status)
@@ -151,7 +155,8 @@ export function InvoicesPage() {
   })
 
   const invoices = listQuery.data?.items ?? []
-  const total = listQuery.data?.total ?? 0
+  const total = listQuery.data?.total ?? invoices.length
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const hasTransient = invoices.some((i) =>
     TRANSIENT_STATUSES.includes(i.status)
   )
@@ -197,7 +202,7 @@ export function InvoicesPage() {
             <SelectItem value="all">Todos los puntos</SelectItem>
             {(posQuery.data?.items ?? []).map((pos) => (
               <SelectItem key={pos.id} value={pos.id}>
-                {pos.description}
+                {formatPosShort(pos)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -365,7 +370,7 @@ export function InvoicesPage() {
                   <TableCell className="text-muted-foreground text-xs hidden md:table-cell">
                     <span className="inline-flex items-center gap-1.5">
                       <span className={`size-1.5 rounded-full ${invoice.point_of_sale?.cuis ? "bg-success" : "bg-warning"}`} />
-                      {invoice.point_of_sale?.description ?? "—"}
+                      {invoice.point_of_sale ? formatPosShort(invoice.point_of_sale) : "—"}
                     </span>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
@@ -392,13 +397,13 @@ export function InvoicesPage() {
               <EmptyHeader>
                 <EmptyTitle>Sin facturas este período</EmptyTitle>
                 <EmptyDescription>
-                  Ajustá los filtros o emití la primera factura de tu empresa.
+                  Ajustá los filtros. Las facturas aparecen aquí cuando tu ERP/POS emite vía API (<span className="font-mono">POST /v1/invoices/emit</span>).
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                <Button onClick={() => navigate("/invoices/new")}>
-                  <Plus data-icon="inline-start" />
-                  Emitir la primera
+                <Button variant="outline" onClick={() => navigate("/company/api-keys")}>
+                  <KeyRound data-icon="inline-start" />
+                  Ver API keys para integrar
                 </Button>
               </EmptyContent>
             </Empty>
@@ -420,7 +425,7 @@ export function InvoicesPage() {
           >
             <ChevronLeft />
           </Button>
-          <span className="px-2 tabular-nums">{page + 1}</span>
+          <span className="px-2 tabular-nums">{page + 1} / {totalPages}</span>
           <Button
             variant="outline"
             size="icon-sm"

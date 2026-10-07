@@ -7,6 +7,7 @@ import { toast } from "sonner"
 
 import { HostError } from "../host"
 import { formatDate } from "../lib/format"
+import { certDisplayName, certStatusLabel } from "../lib/display-names"
 import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import {
   AlertDialog,
@@ -173,7 +174,7 @@ export function CertificatePage() {
               <ShieldCheck className="size-4 shrink-0 text-muted-foreground" />
               <div className="flex min-w-0 flex-col gap-0.5">
                 <span className="truncate text-sm font-medium">
-                  {active.name || active.subject || "Certificado activo"}
+                  {certDisplayName(active)}
                 </span>
                 <span className="text-muted-foreground font-mono text-[11px]">
                   {active.not_after
@@ -225,11 +226,11 @@ export function CertificatePage() {
                 <FileKey2 className="size-4 shrink-0 text-muted-foreground" />
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <span className="truncate text-sm font-medium">
-                    {cert.name || cert.subject || cert.id.slice(0, 8)}
+                    {certDisplayName(cert)}
                   </span>
                   <span className="text-muted-foreground font-mono text-[11px]">
                     {cert.not_after ? formatDate(cert.not_after) : "sin fecha"} ·{" "}
-                    {cert.status}
+                    {certStatusLabel(cert.status, cert.is_active)}
                   </span>
                 </div>
               </div>
@@ -261,15 +262,20 @@ export function CertificatePage() {
                 id="cert-file"
                 type="file"
                 accept=".p12,.pfx"
+                aria-describedby="cert-file-hint"
+                aria-invalid={fileError !== null}
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
+              <span id="cert-file-hint" className="text-muted-foreground text-xs">
+                Solo .p12/.pfx de hasta 5MB. Se cifra en el servidor.
+              </span>
               {file && !fileError && (
                 <span className="font-mono text-xs text-muted-foreground">
                   {file.name} · {(file.size / 1024).toFixed(0)} KB
                 </span>
               )}
               {fileError && (
-                <span className="text-xs text-destructive">{fileError}</span>
+                <span role="alert" className="text-xs text-destructive">{fileError}</span>
               )}
             </div>
             <div className="flex flex-col gap-1.5">

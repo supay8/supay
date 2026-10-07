@@ -11,12 +11,10 @@ import {
   Store,
   TrendingUp,
   XCircle,
-  Zap,
 } from "lucide-react"
 
 import { useAuth } from "../auth-context"
-import { formatCurrency, formatDateTime } from "../lib/format"
-import { StatusBadge } from "../components/invoices/status-badge"
+import { formatCurrency } from "../lib/format"
 import { PageHeader } from "../components/shared/page-parts"
 import { Button } from "../components/ui/button"
 import { Skeleton } from "../components/ui/skeleton"
@@ -144,28 +142,32 @@ export function DashboardHomePage() {
   })
 
   const pendingQuery = useQuery({
-    queryKey: ["invoices", "home-pending"],
+    queryKey: ["invoices", companyId, "home-pending"],
     queryFn: () =>
       host.listInvoices({ status: ["PENDING", "SENDING"], limit: 5 }),
     staleTime: 5_000,
+    enabled: companyId !== "",
   })
 
   const rejectedQuery = useQuery({
-    queryKey: ["invoices", "home-rejected"],
+    queryKey: ["invoices", companyId, "home-rejected"],
     queryFn: () => host.listInvoices({ status: ["REJECTED"], limit: 5 }),
     staleTime: 30_000,
+    enabled: companyId !== "",
   })
 
   const offlineQuery = useQuery({
-    queryKey: ["invoices", "home-offline"],
+    queryKey: ["invoices", companyId, "home-offline"],
     queryFn: () => host.listInvoices({ status: ["OFFLINE"], limit: 50 }),
     staleTime: 8_000,
+    enabled: companyId !== "",
   })
 
   const acceptedQuery = useQuery({
-    queryKey: ["invoices", "home-accepted"],
+    queryKey: ["invoices", companyId, "home-accepted"],
     queryFn: () => host.listInvoices({ status: ["ACCEPTED"], limit: 20 }),
     staleTime: 30_000,
+    enabled: companyId !== "",
   })
 
   const posList = posQuery.data?.items ?? []
@@ -191,21 +193,50 @@ export function DashboardHomePage() {
 
   const isLoading =
     posQuery.isPending || pendingQuery.isPending
+  const hasQueryError =
+    posQuery.isError ||
+    pendingQuery.isError ||
+    rejectedQuery.isError ||
+    offlineQuery.isError ||
+    acceptedQuery.isError
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <PageHeader
           title="Panel"
-          description="Estado de facturación y conexión SIAT."
+          description="Administración del backend: conexión SIAT y monitoreo de lo que emite tu ERP/POS."
           actions={
-            <Button size="sm" render={<Link to="/invoices/new" />}>
-              <Zap data-icon="inline-start" />
-              Nueva factura
+            <Button size="sm" variant="outline" render={<Link to="/company/siat" />}>
+              <Plug data-icon="inline-start" />
+              Conexión SIAT
             </Button>
           }
         />
       </div>
+
+      {hasQueryError && (
+        <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium">No se pudo cargar el estado. Revisá tu conexión e intentá de nuevo.</p>
+          <p className="text-muted-foreground text-xs">
+            Los contadores en 0 pueden ser por este error, no porque esté todo al día.
+          </p>
+        </div>
+      )}
+
+      {!posQuery.isPending && !posQuery.isError && posList.length === 0 && (
+        <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold">Te falta 1 paso para facturar</p>
+            <p className="text-muted-foreground text-xs">
+              Creá tu sucursal, punto de venta y conectá el SIAT. Te lleva 5 minutos.
+            </p>
+          </div>
+          <Button size="sm" render={<Link to="/setup" />}>
+            Completar configuración
+          </Button>
+        </div>
+      )}
 
       <SystemHealthIndicator
         connected={connected}
@@ -269,7 +300,7 @@ export function DashboardHomePage() {
               <TrendingUp className="size-4 text-success" />
               <p className="text-sm font-semibold">Últimas aceptadas</p>
             </div>
-            <span className="text-success tabular-nums text-sm font-bold">
+            <span className="text-success tabular-nums text-sm font-bold" title="Suma de las últimas 20 aceptadas">
               {formatCurrency(acceptedTotal)}
             </span>
           </div>
@@ -359,7 +390,8 @@ export function DashboardHomePage() {
                 </div>
               </div>
             )}
-            {rejectedCount === 0 &&
+            {!hasQueryError &&
+              rejectedCount === 0 &&
               offlineCount === 0 &&
               connected >= posList.length && (
                 <div className="flex items-center gap-2.5 rounded-lg border border-success/10 bg-success/[0.03] p-3 text-sm">

@@ -1,6 +1,6 @@
 import { LogoSupay } from '../components/logo';
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 import { HostError } from '../host';
 import { Eye, EyeClosed } from 'lucide-react';
@@ -8,18 +8,20 @@ import { Eye, EyeClosed } from 'lucide-react';
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const expired = searchParams.get("expired") === "1";
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
     try {
-      await login(email.trim(), password);
+      await login(email.trim().toLowerCase(), password);
       navigate('/', { replace: true });
     } catch (err) {
       if (err instanceof HostError && err.status === 401) {
@@ -60,6 +62,11 @@ export default function LoginPage() {
         {/* Tarjeta de Formulario */}
         <div className="bg-card border border-border rounded-xl p-6 shadow-2xl shadow-black/5 dark:shadow-black/40">
           <form onSubmit={handleSubmit} className="space-y-4">
+            {expired && !error && (
+              <p className="text-sm text-warning font-mono">
+                Tu sesión expiró. Ingresá de nuevo.
+              </p>
+            )}
             {error && (
               <p role="alert" className="text-sm text-destructive font-mono">
                 {error}
@@ -87,18 +94,12 @@ export default function LoginPage() {
             {/* Campo Contraseña */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label 
-                  htmlFor="password" 
+                <label
+                  htmlFor="password"
                   className="block text-xs font-mono uppercase tracking-wider text-muted-foreground"
                 >
                   Contraseña
                 </label>
-                <a 
-                  href="#forgot" 
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors font-mono"
-                >
-                  ¿Olvidaste?
-                </a>
               </div>
               <div className="relative">
                  <input

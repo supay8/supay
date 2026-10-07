@@ -63,7 +63,7 @@ function Stepper({
   onStepClick: (index: number) => void
 }) {
   return (
-    <ol className="flex flex-wrap items-center gap-2">
+    <ol aria-label="Progreso de configuración" className="flex flex-wrap items-center gap-2">
       {STEPS.map((s, i) => {
         const done = i < step
         const current = i === step
@@ -72,9 +72,11 @@ function Stepper({
             <button
               type="button"
               disabled={i >= step}
+              aria-current={current ? "step" : undefined}
+              aria-label={`Paso ${i + 1} de ${STEPS.length}: ${s.title}${done ? " (completado)" : ""}`}
               onClick={() => onStepClick(i)}
               className={cn(
-                "flex items-center gap-2 rounded-md text-xs font-medium",
+                "flex items-center gap-2 rounded-md px-1 py-1 text-xs font-medium",
                 i < step && "cursor-pointer"
               )}
             >
@@ -177,13 +179,30 @@ export function SetupPage() {
       ),
   })
 
+  const existingCertQuery = useQuery({
+    queryKey: ["certificate-active", companyId],
+    queryFn: () => host.getActiveCertificate(companyId!),
+    enabled: companyId !== null,
+    retry: false,
+    staleTime: 60_000,
+  })
+  const hasActiveCert = existingCertQuery.data != null
+
+  const persistSectorMutation = useMutation({
+    mutationFn: async (codigo: number) => {
+      if (!companyId) throw new Error("Falta la empresa")
+      return host.updateCompany(companyId, { codigo_actividad: String(codigo) })
+    },
+    onError: (error) =>
+      toast.error(error instanceof ApiError ? error.message : "No se pudo guardar la actividad"),
+  })
+
   const locationMutation = useMutation({
     mutationFn: async () => {
       const branch = await host.createBranch({
         company_id: companyId!,
-        codigo_sucursal: 0,
         name: branchName.trim(),
-        address: direccion.trim() || "",
+        address: direccion.trim() || branchName.trim(),
         active: true,
       })
       const pos = await host.createPointOfSale({
@@ -227,12 +246,13 @@ export function SetupPage() {
     },
   })
 
-  const step1Valid = businessName.trim() !== "" && nit.trim() !== ""
+  const nitValid = /^\d{5,15}$/.test(nit.trim())
+  const step1Valid = businessName.trim() !== "" && nitValid
   const step2Valid =
     companyId !== null && branchName.trim() !== "" && posDescription.trim() !== ""
   const step3Valid = sectorCodigo !== null
   const certFileError = (() => {
-    if (!certFile) return "Seleccioná el .p12"
+    if (!certFile) return hasActiveCert ? null : "Seleccioná el .p12"
     const lower = certFile.name.toLowerCase()
     if (!lower.endsWith(".p12") && !lower.endsWith(".pfx"))
       return "El archivo debe ser .p12 o .pfx"
@@ -241,7 +261,8 @@ export function SetupPage() {
     return null
   })()
   const step4Valid =
-    certFile !== null && certPassword.trim() !== "" && certFileError === null
+    (certFile !== null && certPassword.trim() !== "" && certFileError === null) ||
+    (hasActiveCert && certFile === null)
   const certName = certFile?.name ?? ""
 
   function handleConnect() {
@@ -256,7 +277,7 @@ export function SetupPage() {
           Configurar tu empresa
         </h1>
         <p className="text-muted-foreground -mt-2 text-sm">
-          Cuatro pasos y una conexión. Podés reintentar la conexión con
+          Paso {step + 1} de {STEPS.length}: {STEPS[step].title}. Podés reintentar la conexión con
           seguridad: nunca se duplica nada.
         </p>
         <Stepper step={step} onStepClick={setStep} />
@@ -264,6 +285,11 @@ export function SetupPage() {
 
       {step === 0 && (
         <section className="flex flex-col gap-4 rounded-lg border p-6">
+          {companyId !== null && (
+            <p className="rounded-md border border-primary/20 bg-primary/5 p-3 text-xs">
+              Esta empresa ya existe: acá solo revisás sus datos antes de seguir con sucursal y punto de venta.
+            </p>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="setup-business">Razón social *</Label>
             <Input
@@ -382,6 +408,19 @@ export function SetupPage() {
               Cargando actividades del SIAT…
             </div>
           )}
+          {sectoresQuery.isError && (
+            <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm">
+              No se pudieron cargar las actividades.{" "}
+              <button type="button" className="underline" onClick={() => sectoresQuery.refetch()}>
+                Reintentar
+              </button>
+            </p>
+          )}
+          {!sectoresQuery.isPending && !sectoresQuery.isError && sectores.length === 0 && (
+            <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+              Sin actividades habilitadas. Sincronizá catálogos en Conexión SIAT y volvé.
+            </p>
+          )}
           <div className="grid max-h-80 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
             {sectores.map((sector) => {
               const selected = sectorCodigo === sector.codigo
@@ -416,8 +455,17 @@ export function SetupPage() {
               Atrás
             </Button>
             <Button
-              disabled={!step3Valid}
-              onClick={() => setStep(3)}
+              disabled={!step3Valid || persistSectorMutation.isPending}
+              onClick={async () => {
+                if (sectorCodigo !== null) {
+                  try {
+                    await persistSectorMutation.mutateAsync(sectorCodigo)
+                  } catch {
+                    return
+                  }
+                }
+                setStep(3)
+              }}
             >
               Continuar
             </Button>
@@ -466,6 +514,11 @@ export function SetupPage() {
           </div>
           {certFile && certFileError && (
             <p className="text-destructive text-xs">{certFileError}</p>
+          )}
+          {hasActiveCert && !certFile && (
+            <p className="rounded-md border border-success/20 bg-success/5 p-3 text-xs text-success">
+              Ya tenés un certificado activo. Podés conectar directamente o subir uno nuevo para reemplazarlo.
+            </p>
           )}
           <p className="text-muted-foreground text-xs">
             Se sube cifrado a Seguridad &gt; Certificado digital (un activo por
@@ -532,10 +585,15 @@ export function SetupPage() {
               Atrás
             </Button>
             {connectPhase === "success" ? (
-              <Badge className="bg-success h-7 gap-1.5 px-3 text-xs text-white">
-                <Check className="size-3.5" />
-                Lista para facturar · redirigiendo…
-              </Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className="bg-success h-7 gap-1.5 px-3 text-xs text-white">
+                  <Check className="size-3.5" />
+                  Lista para facturar
+                </Badge>
+                <Button size="sm" onClick={() => navigate("/company/api-keys")}>
+                  Crear API key para mi ERP
+                </Button>
+              </div>
             ) : (
               <Button
                 disabled={!step4Valid || connectMutation.isPending}

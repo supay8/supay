@@ -1,6 +1,8 @@
+import { useState } from "react"
 import { useDashboardHost } from "../host-context"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
+import { Input } from "../components/ui/input"
 
 import { useAuth } from "../auth-context"
 import { formatDateTime } from "../lib/format"
@@ -43,25 +45,29 @@ export function CustomersPage() {
     enabled: companyId !== "",
   })
 
-  const customers = customersQuery.data?.items ?? []
+  const all = customersQuery.data?.items ?? []
+  const [q, setQ] = useState("")
+  const customers = all.filter((c) => {
+    const needle = q.trim().toLowerCase()
+    if (!needle) return true
+    return (
+      c.name.toLowerCase().includes(needle) ||
+      c.document_number.toLowerCase().includes(needle)
+    )
+  })
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Clientes"
-        description="Historial de receptores. Se crean solos al facturar."
-        actions={
-          <Button size="sm" onClick={() => navigate("/invoices/new")}>
-            Facturar a un cliente nuevo
-          </Button>
-        }
+        title="Receptores"
+        description="Historial de receptores facturados. Solo lectura desde el panel."
       />
 
       <Alert>
         <AlertTitle>Sin alta manual</AlertTitle>
         <AlertDescription>
-          El backend crea o reutiliza al cliente desde la factura
-          (por NIT/CI o por <code>customer.id</code>). No hay endpoint de creación directa.
+          Tu ERP/POS crea o reutiliza al receptor al emitir
+          (<span className="font-mono">POST /v1/invoices/emit</span>). Este panel no vende ni da de alta.
         </AlertDescription>
       </Alert>
 
@@ -80,19 +86,26 @@ export function CustomersPage() {
         />
       )}
 
+      <Input
+        placeholder="Buscar por nombre o documento…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        className="max-w-md"
+      />
+
       {!customersQuery.isPending &&
         !customersQuery.isError &&
         (customers.length === 0 ? (
           <Empty className="rounded-lg border border-dashed">
             <EmptyHeader>
-              <EmptyTitle>Sin clientes</EmptyTitle>
+              <EmptyTitle>Sin receptores</EmptyTitle>
               <EmptyDescription>
-                Aparecerán automáticamente cuando emitas tu primera factura.
+                Aparecerán automáticamente cuando tu ERP/POS emita la primera factura vía API.
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              <Button size="sm" onClick={() => navigate("/invoices/new")}>
-                Emitir primera factura
+              <Button size="sm" variant="outline" onClick={() => navigate("/company/api-keys")}>
+                Ver API keys para integrar
               </Button>
             </EmptyContent>
           </Empty>
@@ -114,10 +127,14 @@ export function CustomersPage() {
               </TableHeader>
               <TableBody>
                 {customers.map((c: Customer) => (
-                  <TableRow key={c.id}>
+                  <TableRow
+                    key={c.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/invoices?q=${encodeURIComponent(c.document_number)}`)}
+                  >
                     <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell className="text-muted-foreground">
-                      {c.document_type} {c.document_number}
+                      {c.document_type?.toUpperCase()} {c.document_number}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs">
                       {formatDateTime(c.created_at)}

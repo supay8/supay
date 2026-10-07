@@ -63,6 +63,16 @@ export function BranchesPage() {
     retry: false,
     enabled: companyId !== "",
   })
+  const posQuery = useQuery({
+    queryKey: ["point-of-sales", companyId],
+    queryFn: () => host.listPointsOfSale(companyId),
+    retry: false,
+    enabled: companyId !== "",
+  })
+  const posCountByBranch = (posQuery.data?.items ?? []).reduce<Record<string, number>>((acc, p) => {
+    if (p.branch_id) acc[p.branch_id] = (acc[p.branch_id] ?? 0) + 1
+    return acc
+  }, {})
 
   function openCreate() {
     setEditing(null)
@@ -116,6 +126,7 @@ export function BranchesPage() {
   })
 
   const branches = branchesQuery.data?.items ?? []
+  const posFailed = posQuery.isError
 
   return (
     <div className="flex flex-col gap-4">
@@ -143,6 +154,12 @@ export function BranchesPage() {
           error={branchesQuery.error}
           onRetry={() => branchesQuery.refetch()}
         />
+      )}
+
+      {posFailed && (
+        <p className="rounded-md border border-warning/20 bg-warning/5 p-3 text-xs text-warning">
+          No se pudo contar los puntos por sucursal. La lista sigue siendo válida.
+        </p>
       )}
 
       {!branchesQuery.isPending &&
@@ -175,6 +192,9 @@ export function BranchesPage() {
                   <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
                     Dirección
                   </TableHead>
+                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                    Puntos
+                  </TableHead>
                   <TableHead className="w-24" />
                 </TableRow>
               </TableHeader>
@@ -187,6 +207,9 @@ export function BranchesPage() {
                     <TableCell className="font-medium">{branch.name}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {branch.address || "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs tabular-nums">
+                      {posCountByBranch[branch.id] ?? 0}
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">

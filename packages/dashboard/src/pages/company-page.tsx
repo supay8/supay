@@ -27,7 +27,7 @@ export function CompanyPage() {
   const company = activeCompany?.company ?? null
 
   useEffect(() => {
-    if (company && snapshot !== company) {
+    if (company && snapshot?.id !== company.id) {
       setSnapshot(company)
       setBusinessName(company.business_name)
       setNit(company.nit)
@@ -65,11 +65,25 @@ export function CompanyPage() {
       direccion !== (company.direccion ?? "") ||
       telefono !== (company.telefono ?? ""))
 
+  if (!company) {
+    return (
+      <div className="mx-auto flex max-w-2xl flex-col gap-6">
+        <PageHeader title="Datos fiscales" description="Identidad de tu empresa ante el SIAT." />
+        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+          Sin empresa activa. Elegí una en Empresas o creá la primera.
+        </div>
+        <div className="flex justify-center">
+          <Button onClick={() => navigate("/companies")}>Ir a Empresas</Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
       <PageHeader
         title="Datos fiscales"
-        description="Identidad de tu empresa ante el SIAT."
+        description={`${company.business_name} · NIT ${company.nit} · ${company.ambiente}`}
       />
 
       {company && (
@@ -120,6 +134,35 @@ export function CompanyPage() {
                   />
                 </div>
               </div>
+            </div>
+          </FormSection>
+
+          <FormSection
+            title="Configuración SIAT"
+            description="Solo lectura: se define al crear la empresa y en Actividad económica."
+          >
+            <dl className="grid gap-2 text-sm sm:grid-cols-2">
+              <div className="flex justify-between gap-2 rounded-md border p-3">
+                <dt className="text-muted-foreground">Código sistema</dt>
+                <dd className="font-mono text-xs">{company.codigo_sistema || "—"}</dd>
+              </div>
+              <div className="flex justify-between gap-2 rounded-md border p-3">
+                <dt className="text-muted-foreground">Ambiente</dt>
+                <dd className="font-medium">{company.ambiente}</dd>
+              </div>
+              <div className="flex justify-between gap-2 rounded-md border p-3">
+                <dt className="text-muted-foreground">Actividad</dt>
+                <dd className="font-medium">{company.codigo_actividad ?? "Sin definir"}</dd>
+              </div>
+              <div className="flex justify-between gap-2 rounded-md border p-3">
+                <dt className="text-muted-foreground">Alta</dt>
+                <dd className="text-muted-foreground text-xs">{company.created_at}</dd>
+              </div>
+            </dl>
+            <div className="mt-2 flex justify-end">
+              <Button variant="outline" size="sm" onClick={() => navigate("/company/sectors")}>
+                Cambiar actividad
+              </Button>
             </div>
           </FormSection>
 

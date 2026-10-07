@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { ApiError } from "../host"
 import { formatDateTime } from "../lib/format"
+import { formatPosShort } from "../lib/display-names"
 import { FormSection, PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import {
   Tooltip,
@@ -49,12 +50,16 @@ export function SiatConnectionPage() {
 
   const checkMutation = useMutation({
     mutationFn: async () => {
-      const first = posQuery.data?.items[0]
-      if (!first) throw new Error("Sin puntos de venta para verificar")
-      return host.setupPointOfSale(first.id)
+      const all = posQuery.data?.items ?? []
+      if (all.length === 0) throw new Error("Sin puntos de venta para verificar")
+      const results = []
+      for (const p of all) {
+        results.push(await host.setupPointOfSale(p.id))
+      }
+      return results
     },
-    onSuccess: () => {
-      toast.success("Conexión verificada")
+    onSuccess: (results) => {
+      toast.success(`Conexión verificada en ${results.length} punto(s)`)
       posQuery.refetch()
     },
     onError: (error) =>
@@ -83,21 +88,27 @@ export function SiatConnectionPage() {
     }
   }
 
+  const posList = posQuery.data?.items ?? []
+
   const granularMutation = useMutation({
     mutationFn: async ({ kind, posId }: { kind: "cuis" | "cufd" | "sync"; posId: string }) => {
       const ops = opsFor(posId)
-      return ops[kind]()
+      return { kind, posId, result: await ops[kind]() }
     },
-    onSuccess: (res) => {
-      toast.success(res.reception_code ? `OK: ${res.reception_code}` : "Operación completada")
+    onSuccess: ({ kind, posId, result }) => {
+      const posName = posList.find((p) => p.id === posId)?.description ?? "Punto de venta"
+      toast.success(
+        result.reception_code
+          ? `${posName} · ${kind.toUpperCase()}: ${result.reception_code}`
+          : `${posName} · ${kind.toUpperCase()} completado`,
+      )
       posQuery.refetch()
       readinessQuery.refetch()
     },
     onError: (error) =>
       toast.error(error instanceof ApiError ? error.message : "Falló la operación SIAT"),
   })
-
-  const posList = posQuery.data?.items ?? []
+  const pendingKey = granularMutation.isPending ? `${granularMutation.variables?.kind}:${granularMutation.variables?.posId}` : null
   const connected = posList.filter((p) => p.cuis).length
   const lastCuis = posList
     .map((p) => p.cuis_created_at)
@@ -201,37 +212,51 @@ export function SiatConnectionPage() {
         description="Reintentos granulares sin repetir el setup completo."
       >
         <div className="flex flex-col gap-2">
-          {(posQuery.data?.items ?? []).slice(0, 3).map((p) => (
-            <div key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground min-w-40 flex-1">{p.description}</span>
+          {(posQuery.data?.items ?? []).map((p) => (
+            <div key={p.id} className="flex flex-col gap-1 rounded-md border p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+              <span className="min-w-40 flex-1 font-medium">{formatPosShort(p)}</span>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={granularMutation.isPending}
+                disabled={pendingKey !== null}
+                aria-busy={pendingKey === `cuis:${p.id}`}
                 onClick={() => granularMutation.mutate({ kind: "cuis", posId: p.id })}
               >
-                CUIS
+                {pendingKey === `cuis:${p.id}` ? "Pidiendo…" : "CUIS"}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={granularMutation.isPending}
+                disabled={pendingKey !== null}
+                aria-busy={pendingKey === `cufd:${p.id}`}
                 onClick={() => granularMutation.mutate({ kind: "cufd", posId: p.id })}
               >
-                CUFD
+                {pendingKey === `cufd:${p.id}` ? "Pidiendo…" : "CUFD"}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={granularMutation.isPending}
+                disabled={pendingKey !== null}
+                aria-busy={pendingKey === `sync:${p.id}`}
                 onClick={() => granularMutation.mutate({ kind: "sync", posId: p.id })}
               >
-                Sincronizar
+                {pendingKey === `sync:${p.id}` ? "Sincronizando…" : "Sincronizar"}
               </Button>
+              </div>
+              <span className="text-muted-foreground text-xs">
+                {p.cuis ? `CUIS vigente desde ${p.cuis_created_at ? formatDateTime(p.cuis_created_at) : "—"}` : "Sin CUIS"} · {p.siat_error ?? "sin errores SIAT"}
+              </span>
             </div>
           ))}
-          {(posQuery.data?.items ?? []).length === 0 && (
-            <p className="text-muted-foreground text-sm">Sin puntos de venta.</p>
+          {(posQuery.data?.items ?? []).length === 0 && !posQuery.isPending && !posQuery.isError && (
+            <div className="rounded-md border border-dashed p-6 text-center">
+              <p className="text-sm font-medium">Sin puntos de venta</p>
+              <p className="text-muted-foreground mt-1 text-xs">Creá tu sucursal y punto desde la configuración inicial.</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate("/setup")}>
+                Ir a configuración
+              </Button>
+            </div>
           )}
         </div>
       </FormSection>

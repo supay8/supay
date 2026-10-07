@@ -1,8 +1,9 @@
 import { useState } from "react"
 import { useDashboardHost } from "../host-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus } from "lucide-react"
+import { MoreVertical, Plus } from "lucide-react"
 import { toast } from "sonner"
+import { formatBranch, formatPos, formatPosShort } from "../lib/display-names"
 
 import { ApiError } from "../host"
 import { useAuth } from "../auth-context"
@@ -146,8 +147,12 @@ export function PointsOfSalePage() {
 
   const branches = branchesQuery.data?.items ?? []
   const posList = posQuery.data?.items ?? []
-  const branchName = (id?: string | null) =>
-    branches.find((b) => b.id === id)?.name ?? `Sucursal ${posList.find((p) => p.id === id)?.codigo_sucursal ?? 0}`
+  const branchLabel = (branchId?: string | null, fallbackCode?: number) => {
+    const b = branches.find((x) => x.id === branchId)
+    if (b) return formatBranch(b)
+    if (branchId) return "Sucursal desconocida"
+    return `Suc ${String(fallbackCode ?? 0).padStart(2, "0")}`
+  }
 
   function openCreate() {
     setBranchIdForNew(branches[0]?.id ?? "")
@@ -203,8 +208,7 @@ export function PointsOfSalePage() {
                       <HealthBadge pos={pos} />
                     </div>
                     <span className="text-muted-foreground font-mono text-[11px]">
-                      {branchName(pos.branch_id)} · código{" "}
-                      {pos.codigo_sucursal}.{pos.codigo_punto_venta}
+                      {formatPos(pos, branches)}
                       {pos.cuis_created_at &&
                         ` · CUIS ${formatDateTime(pos.cuis_created_at)}`}
                     </span>
@@ -220,7 +224,7 @@ export function PointsOfSalePage() {
                     />
                     <DropdownMenu>
                       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Acciones" />}>
-                        ⋯
+                        <MoreVertical className="size-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => setDetailPos(pos)}>
@@ -268,7 +272,7 @@ export function PointsOfSalePage() {
                 <SelectContent>
                   {branches.map((b) => (
                     <SelectItem key={b.id} value={b.id}>
-                      {b.name}
+                      {formatBranch(b)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -309,7 +313,8 @@ export function PointsOfSalePage() {
           {detailPos && (
             <dl className="flex flex-col gap-2.5 p-5 text-[13px]">
               {[
-                ["Sucursal / POS", `${detailPos.codigo_sucursal}.${detailPos.codigo_punto_venta}`],
+                ["Punto de venta", formatPosShort(detailPos)],
+                ["Sucursal", branchLabel(detailPos.branch_id, detailPos.codigo_sucursal)],
                 ["CUIS", detailPos.cuis ?? "—"],
                 ["CUIS desde", detailPos.cuis_created_at ? formatDateTime(detailPos.cuis_created_at) : "—"],
                 ["Registrado en SIAT", detailPos.siat_registered_at ? formatDateTime(detailPos.siat_registered_at) : "—"],

@@ -84,11 +84,14 @@ export function SectorsPage() {
             ))}
           </div>
         )}
+        {currentCodigo === null && (
+          <p className="mb-3 rounded-md border border-warning/20 bg-warning/5 p-3 text-xs text-warning">
+            Todavía no definiste actividad. Elegí una: se usará en tus próximas facturas.
+          </p>
+        )}
         <div className="grid gap-2 sm:grid-cols-3">
-          {habilitados.slice(0, 12).map((sector) => {
-            const selected =
-              currentCodigo === sector.codigo ||
-              (currentCodigo === null && sector === habilitados[0])
+          {habilitados.map((sector) => {
+            const selected = currentCodigo === sector.codigo
             return (
               <button
                 key={sector.codigo}
@@ -108,12 +111,9 @@ export function SectorsPage() {
             )
           })}
         </div>
-        {habilitados.length > 12 && (
-          <p className="text-muted-foreground mt-3 text-[11px]">
-            +{habilitados.length - 12} actividades más disponibles al emitir una
-            factura.
-          </p>
-        )}
+        <p className="text-muted-foreground mt-3 text-[11px]">
+          {habilitados.length} actividades habilitadas para tu NIT. Podés cambiar el sector puntualmente al emitir.
+        </p>
       </section>
 
       <section className="rounded-lg border">

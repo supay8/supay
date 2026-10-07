@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import { useDashboardHost } from "../host-context"
 import { useQuery } from "@tanstack/react-query"
 
@@ -60,15 +61,15 @@ export function ProductsPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Productos SIN"
-        description="Catálogo oficial sincronizado desde el SIAT. Sin alta manual."
+        title="Catálogo SIN"
+        description="Catálogo oficial sincronizado desde el SIAT. Solo lectura."
       />
 
       <Alert>
-        <AlertTitle>Fuente SIAT, no inventario local</AlertTitle>
+        <AlertTitle>Fuente SIAT, no inventario</AlertTitle>
         <AlertDescription>
           Los códigos, actividades y unidades vienen de la sincronización
-          (<code>POST /v1/siat/sincronizar</code>). Al facturar se resuelven por SKU.
+          (<span className="font-mono">POST /v1/siat/sincronizar</span>). Tu ERP/POS los usa al emitir; este panel no vende.
         </AlertDescription>
       </Alert>
 
@@ -104,7 +105,7 @@ export function ProductsPage() {
             <EmptyHeader>
               <EmptyTitle>Sin resultados</EmptyTitle>
               <EmptyDescription>
-                Sincronizá catálogos en Conexión SIAT y volvé a buscar.
+                Sincronizá catálogos en <Link className="underline" to="/company/siat">Conexión SIAT</Link> y volvé a buscar.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

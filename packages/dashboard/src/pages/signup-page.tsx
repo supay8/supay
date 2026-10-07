@@ -13,12 +13,17 @@ export function SignupPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const passwordValid = password.length >= 8
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    if (!passwordValid) {
+      setError("La contraseña debe tener al menos 8 caracteres.")
+      return
+    }
     setIsLoading(true)
     try {
-      await signup(name.trim(), email.trim(), password)
+      await signup(name.trim(), email.trim().toLowerCase(), password)
       navigate("/", { replace: true })
     } catch (err) {
       if (err instanceof HostError && err.status === 409) {
@@ -99,11 +104,14 @@ export function SignupPage() {
                 id="signup-password"
                 type="password"
                 required
+                minLength={8}
+                autoComplete="new-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="••••••••••••"
+                placeholder="Mínimo 8 caracteres"
                 className="bg-background border-input text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:ring-primary h-10 w-full rounded-md border px-3 font-mono text-sm transition-all focus:ring-1 focus:outline-none"
               />
+              <p className="text-muted-foreground text-xs">Mínimo 8 caracteres.</p>
             </div>
 
             <button

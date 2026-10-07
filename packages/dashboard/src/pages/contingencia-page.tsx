@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query"
 import { useDashboardHost } from "../host-context"
+import { useAuth } from "../auth-context"
 import { useNavigate } from "react-router-dom"
 import { TriangleAlert } from "lucide-react"
 
 
 import { formatCurrency, formatDateTime } from "../lib/format"
+import { formatInvoiceTitle, formatPosShort } from "../lib/display-names"
 import { FormSection, PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import {
   Tooltip,
@@ -25,12 +27,15 @@ import {
 export function ContingenciaPage() {
   const host = useDashboardHost()
   const navigate = useNavigate()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
 
   const offlineQuery = useQuery({
-    queryKey: ["invoices", "contingencia"],
+    queryKey: ["invoices", companyId, "contingencia"],
     queryFn: () => host.listInvoices({ status: ["OFFLINE"], limit: 50 }),
     refetchInterval: 8000,
     retry: false,
+    enabled: companyId !== "",
   })
 
   const offline = offlineQuery.data?.items ?? []
@@ -40,21 +45,21 @@ export function ContingenciaPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <PageHeader
         title="Contingencia"
-        description="Qué pasa cuando el SIAT no responde y cómo se resuelve solo."
+        description="Soporte cuando el SIAT no responde: lo emite tu ERP/POS, acá lo reenviás."
       />
 
       <section className="rounded-lg border p-5 text-sm">
         <p className="text-muted-foreground">
-          Si el SIAT deja de responder, Supay sigue emitiendo en modo local: las
-          facturas quedan guardadas con validez legal bajo un evento de
-          contingencia y se envían automáticamente al volver el servicio. No
-          necesitás hacer nada.
+          Si el SIAT deja de responder, tu ERP/POS sigue emitiendo en modo local:
+          las facturas quedan con validez legal bajo un evento de contingencia.
+          Tu integración las reintenta sola; desde acá podés forzar el reenvío por
+          paquete en Lotes.
         </p>
       </section>
 
       <FormSection
         title="Facturas pendientes de envío"
-        description="Emitidas durante contingencia; se mandan solas al reestablecerse el servicio."
+        description="Emitidas por tu ERP/POS durante contingencia; reenvialas por paquete en Lotes."
       >
         {offlineQuery.isPending && (
           <div className="flex flex-col gap-2">
@@ -99,6 +104,9 @@ export function ContingenciaPage() {
                     <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
                       Cliente
                     </TableHead>
+                    <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                      Punto de venta
+                    </TableHead>
                     <TableHead className="text-muted-foreground text-right text-[11px] font-medium tracking-wider uppercase">
                       Total
                     </TableHead>
@@ -111,9 +119,12 @@ export function ContingenciaPage() {
                   {offline.map((invoice) => (
                     <TableRow key={invoice.id}>
                       <TableCell className="font-mono text-xs">
-                        {String(invoice.invoice_number).padStart(6, "0")}
+                        {formatInvoiceTitle(invoice)}
                       </TableCell>
                       <TableCell>{invoice.customer.name}</TableCell>
+                      <TableCell className="text-muted-foreground text-xs">
+                        {invoice.point_of_sale ? formatPosShort(invoice.point_of_sale) : "—"}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatCurrency(invoice.total)}
                       </TableCell>
@@ -124,13 +135,22 @@ export function ContingenciaPage() {
                   ))}
                 </TableBody>
               </Table>
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex justify-end gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => navigate("/invoices?status=OFFLINE")}
                 >
                   Ver todas en el listado
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const firstPos = offline[0]?.point_of_sale_id
+                    navigate(firstPos ? `/operation/lotes?pos=${firstPos}` : "/operation/lotes")
+                  }}
+                >
+                  Armar lote para enviar
                 </Button>
               </div>
             </>

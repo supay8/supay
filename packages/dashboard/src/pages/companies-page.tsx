@@ -1,11 +1,14 @@
 import { useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
+import { Building2, Check } from "lucide-react"
 import { LogoSupay } from "../components/logo"
 import { useAuth } from "../auth-context"
 import { HostError } from "../host"
+import { formatCompanyTitle } from "../lib/display-names"
+import { Button } from "../components/ui/button"
 
 export function CompaniesPage() {
-  const { createCompany } = useAuth()
+  const { companies, companiesLoading, activeCompany, switchCompany, createCompany, refreshCompanies } = useAuth()
   const navigate = useNavigate()
   const [nit, setNit] = useState("")
   const [businessName, setBusinessName] = useState("")
@@ -15,9 +18,14 @@ export function CompaniesPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const nitValid = /^\d{5,15}$/.test(nit.trim())
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    if (!nitValid) {
+      setError("NIT inválido: solo dígitos, de 5 a 15 caracteres.")
+      return
+    }
     setIsLoading(true)
     try {
       await createCompany({
@@ -27,7 +35,7 @@ export function CompaniesPage() {
         direccion: direccion.trim() || undefined,
         telefono: telefono.trim() || undefined,
       })
-      navigate("/invoices", { replace: true })
+      navigate("/setup", { replace: true })
     } catch (err) {
       if (err instanceof HostError && err.status === 409) {
         setError("Ya existe una empresa registrada con este NIT.")
@@ -41,35 +49,68 @@ export function CompaniesPage() {
     }
   }
 
-  return (
-    <div className="bg-background relative flex min-h-screen items-center justify-center overflow-hidden px-4">
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.03] dark:opacity-[0.05]"
-        style={{
-          backgroundImage: "radial-gradient(var(--text) 1px, transparent 1px)",
-          backgroundSize: "24px 24px",
-        }}
-      />
+  function choose(id: string) {
+    switchCompany(id)
+    navigate("/dashboard", { replace: true })
+  }
 
-      <div className="relative z-10 w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center">
+  return (
+    <div className="bg-background relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+      <div className="relative z-10 w-full max-w-md">
+        <div className="mb-6 flex flex-col items-center">
           <LogoSupay size={50} className="shrink-0 text-primary" />
           <h1 className="text-foreground text-xl font-medium tracking-tight">
-            Crea tu empresa
+            {companies.length > 0 ? "Elegí tu empresa" : "Crea tu empresa"}
           </h1>
           <p className="text-muted-foreground mt-1 font-mono text-sm">
-            Necesitas un tenant para empezar a facturar
+            {companies.length > 0
+              ? "Una cuenta, varias empresas. Cambiá cuando quieras desde el encabezado."
+              : "Necesitas un tenant para empezar a facturar"}
           </p>
         </div>
 
+        {companiesLoading ? (
+          <p className="text-muted-foreground text-center text-sm">Cargando empresas…</p>
+        ) : companies.length > 0 ? (
+          <div className="mb-4 flex flex-col gap-2">
+            {companies.map(({ company, role }) => {
+              const isActive = activeCompany?.company.id === company.id
+              return (
+                <button
+                  key={company.id}
+                  type="button"
+                  onClick={() => choose(company.id)}
+                  className="bg-card border-border flex items-center gap-3 rounded-xl border p-4 text-left shadow-sm transition-colors hover:bg-muted/40"
+                >
+                  <Building2 className="text-muted-foreground size-5 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">
+                      {formatCompanyTitle(company.business_name, company.nit)}
+                    </span>
+                    <span className="text-muted-foreground text-xs">
+                      Rol {role} · {company.ambiente}
+                    </span>
+                  </span>
+                  {isActive && <Check className="size-4 shrink-0 text-success" />}
+                </button>
+              )
+            })}
+            <Button variant="ghost" size="sm" onClick={() => refreshCompanies()}>
+              Recargar lista
+            </Button>
+          </div>
+        ) : null}
+
         <div className="bg-card border-border rounded-xl border p-6 shadow-2xl shadow-black/5 dark:shadow-black/40">
+          <p className="mb-4 text-sm font-medium">
+            {companies.length > 0 ? "O creá una nueva empresa" : "Datos de la empresa"}
+          </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <p role="alert" className="text-destructive font-mono text-sm">
                 {error}
               </p>
             )}
-
             <div className="space-y-1.5">
               <label htmlFor="company-nit" className="text-muted-foreground block font-mono text-xs uppercase tracking-wider">
                 NIT *
@@ -84,7 +125,6 @@ export function CompaniesPage() {
                 className="bg-background border-input text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:ring-primary h-10 w-full rounded-md border px-3 font-mono text-sm transition-all focus:ring-1 focus:outline-none"
               />
             </div>
-
             <div className="space-y-1.5">
               <label htmlFor="company-name" className="text-muted-foreground block font-mono text-xs uppercase tracking-wider">
                 Razón social *
@@ -99,7 +139,6 @@ export function CompaniesPage() {
                 className="bg-background border-input text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:ring-primary h-10 w-full rounded-md border px-3 font-mono text-sm transition-all focus:ring-1 focus:outline-none"
               />
             </div>
-
             <div className="space-y-1.5">
               <label htmlFor="company-municipio" className="text-muted-foreground block font-mono text-xs uppercase tracking-wider">
                 Municipio
@@ -113,7 +152,6 @@ export function CompaniesPage() {
                 className="bg-background border-input text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:ring-primary h-10 w-full rounded-md border px-3 font-mono text-sm transition-all focus:ring-1 focus:outline-none"
               />
             </div>
-
             <div className="space-y-1.5">
               <label htmlFor="company-direccion" className="text-muted-foreground block font-mono text-xs uppercase tracking-wider">
                 Dirección
@@ -127,7 +165,6 @@ export function CompaniesPage() {
                 className="bg-background border-input text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:ring-primary h-10 w-full rounded-md border px-3 font-mono text-sm transition-all focus:ring-1 focus:outline-none"
               />
             </div>
-
             <div className="space-y-1.5">
               <label htmlFor="company-telefono" className="text-muted-foreground block font-mono text-xs uppercase tracking-wider">
                 Teléfono
@@ -141,7 +178,6 @@ export function CompaniesPage() {
                 className="bg-background border-input text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:ring-primary h-10 w-full rounded-md border px-3 font-mono text-sm transition-all focus:ring-1 focus:outline-none"
               />
             </div>
-
             <button
               type="submit"
               disabled={isLoading}

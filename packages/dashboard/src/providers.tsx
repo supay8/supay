@@ -4,6 +4,7 @@ import { ThemeProvider } from "./components/theme-provider"
 import { ErrorBoundary } from "./components/error-boundary"
 import { TooltipProvider } from "./components/ui/tooltip"
 import { Toaster } from "./components/ui/sonner"
+import { CompanyScopeSync } from "./components/company-scope-sync"
 
 export interface DashboardProvidersProps {
   children: React.ReactNode
@@ -25,6 +26,7 @@ export function DashboardProviders({ children, queryClient }: DashboardProviders
   return (
     <ThemeProvider>
       <QueryClientProvider client={client}>
+        <CompanyScopeSync />
         <TooltipProvider>
           <ErrorBoundary>{children}</ErrorBoundary>
           <Toaster position="top-center" richColors />

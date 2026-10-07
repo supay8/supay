@@ -70,16 +70,18 @@ export interface InvoiceHost {
   listInvoices(params: InvoiceListParams): Promise<Paginated<Invoice>>
   getInvoice(id: string): Promise<Invoice>
   listSectores(companyId?: string): Promise<SectorInfo[]>
+  /** @deprecated El panel admin no vende: la emisión la hace tu ERP/POS vía API. */
   createDraft(payload: DraftInput): Promise<Invoice>
+  /** @deprecated El panel admin no vende: reintentos los hace tu ERP/POS vía API. */
   emitInvoice(id: string): Promise<Invoice>
   annulInvoice(id: string, motivoAnulacion: number): Promise<Invoice>
   revertAnnul(id: string): Promise<Invoice>
   getSiatStatus(id: string): Promise<Record<string, unknown>>
   /** Descarga autenticada; el host debe adjuntar sus headers de sesión/tenant. */
   downloadInvoicePdf(id: string): Promise<Blob>
-  /** Contrato v1: validación sin efectos (POST /v1/invoices/preview). */
+  /** @deprecated El panel admin no vende: validación para ERP/POS vía API. */
   previewInvoice?(payload: V1InvoiceInput): Promise<InvoicePreview>
-  /** Contrato v1: crear + emitir atómico (POST /v1/invoices/emit). */
+  /** @deprecated El panel admin no vende: emisión directa para ERP/POS vía API. */
   emitInvoiceDirect?(payload: V1InvoiceInput): Promise<Invoice>
   /** Descarga autenticada del XML firmado. */
   downloadInvoiceXml?(id: string): Promise<Blob>

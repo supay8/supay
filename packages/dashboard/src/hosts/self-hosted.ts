@@ -122,6 +122,12 @@ class ApiClient {
             body: opts.form ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
         })
 
+        if (response.status === 401 && typeof window !== "undefined") {
+          const isAuthAttempt = path.includes("/auth/login") || path.includes("/auth/signup")
+          if (!isAuthAttempt && opts.requireAuth !== false) {
+            window.dispatchEvent(new CustomEvent("supay:unauthorized"))
+          }
+        }
         if (!response.ok) throw await toHostError(response)
         return response
     }

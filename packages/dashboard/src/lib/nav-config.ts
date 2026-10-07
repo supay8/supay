@@ -30,17 +30,19 @@ export interface NavSection {
 
 export const NAV_SECTIONS: NavSection[] = [
   {
-    label: "General",
-    flat: true,
-    items: [{ label: "Panel", to: "/dashboard", icon: LayoutDashboard }],
-  },
-  {
-    label: "Facturación",
+    label: "Monitoreo",
     flat: true,
     items: [
+      { label: "Panel", to: "/dashboard", icon: LayoutDashboard },
       { label: "Facturas", to: "/invoices", icon: FileText },
-      { label: "Clientes", to: "/customers", icon: Users },
-      { label: "Productos", to: "/products", icon: Package },
+    ],
+  },
+  {
+    label: "Catálogos",
+    flat: true,
+    items: [
+      { label: "Receptores", to: "/customers", icon: Users },
+      { label: "Catálogo SIN", to: "/products", icon: Package },
     ],
   },
   {
@@ -75,12 +77,12 @@ export const NAV_SECTIONS: NavSection[] = [
 
 export interface ActiveNav {
   parent?: string
+  parentTo?: string
   child?: string
+  childTo?: string
 }
 
-const CHILD_OVERRIDES: Record<string, string> = {
-  "/invoices/new": "Nueva factura",
-}
+const CHILD_OVERRIDES: Record<string, string> = {}
 
 export function mergeNavSections(
   defaults: NavSection[],
@@ -93,27 +95,28 @@ export function mergeNavSections(
 
 export function findActiveNav(pathname: string, sections: NavSection[] = NAV_SECTIONS): ActiveNav | null {
   if (pathname === "/setup") {
-    return { child: "Configuración inicial" }
+    return { parent: "Mi empresa", parentTo: "/company", child: "Configuración inicial", childTo: "/setup" }
   }
 
   for (const section of sections) {
     for (const item of section.items) {
       if (pathname === item.to) {
-        if (section.flat) return { child: item.label }
-        return { parent: section.label, child: item.label }
+        if (section.flat) return { child: item.label, childTo: item.to }
+        return { parent: section.label, parentTo: item.to, child: item.label, childTo: item.to }
       }
     }
   }
 
   const override = CHILD_OVERRIDES[pathname]
-  if (override && pathname.startsWith("/invoices")) {
-    return { parent: "Facturas", child: override }
+  if (override) {
+    return { parent: "Monitoreo", parentTo: "/dashboard", child: override, childTo: pathname }
   }
 
   for (const section of sections) {
-    if (!section.flat && pathname.startsWith(section.label === "Operación" ? "/operation" : "/company")) {
-      const item = section.items.find((i) => pathname.startsWith(i.to))
-      return { parent: section.label, child: item?.label ?? "" }
+    if (section.flat) continue
+    const item = section.items.find((i) => pathname.startsWith(i.to))
+    if (item) {
+      return { parent: section.label, parentTo: item.to, child: item.label, childTo: item.to }
     }
   }
 

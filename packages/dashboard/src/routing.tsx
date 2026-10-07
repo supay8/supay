@@ -13,7 +13,6 @@ export interface DashboardRoute {
 
 // Lazy loading centralizado (se mantiene igual, es la mejor forma para bundlers)
 const InvoicesPage = React.lazy(() => import("./pages/invoices-page").then((m) => ({ default: m.InvoicesPage })))
-const InvoiceNewPage = React.lazy(() => import("./pages/invoice-new-page").then((m) => ({ default: m.InvoiceNewPage })))
 const DashboardHomePage = React.lazy(() => import("./pages/dashboard-home-page").then((m) => ({ default: m.DashboardHomePage })))
 const SetupPage = React.lazy(() => import("./pages/setup-page").then((m) => ({ default: m.SetupPage })))
 const CompanyPage = React.lazy(() => import("./pages/company-page").then((m) => ({ default: m.CompanyPage })))
@@ -103,7 +102,7 @@ export function DashboardRoutes({ extraRoutes = [] }: { extraRoutes?: DashboardR
           <Route path="/dashboard" element={<DashboardHomePage />} />
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/invoices" element={<InvoicesPage />} />
-          <Route path="/invoices/new" element={<InvoiceNewPage />} />
+          <Route path="/invoices/new" element={<Navigate to="/invoices" replace />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/company" element={<CompanyPage />} />

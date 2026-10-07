@@ -1,7 +1,7 @@
-import { useLocation, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { useDashboardHost } from "../../host-context"
 import { useAuth } from "../../auth-context"
-import { Bell, MessageSquarePlus, Plus } from "lucide-react"
+import { Bell, FileText, MessageSquarePlus } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 
@@ -18,26 +18,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select"
 import { SidebarTrigger } from "../../components/ui/sidebar"
 import type { Invoice } from "../../lib/types"
 
 function NotificationsMenu() {
   const host = useDashboardHost()
   const navigate = useNavigate()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
 
   const rejectedQuery = useQuery({
-    queryKey: ["invoices", "rejected-count"],
+    queryKey: ["invoices", companyId, "rejected-count"],
     queryFn: () => host.listInvoices({ status: ["REJECTED"], limit: 5 }),
     staleTime: 15_000,
     refetchInterval: 30_000,
     retry: false,
+    enabled: companyId !== "",
   })
 
   const total = rejectedQuery.data?.total ?? 0
@@ -125,68 +121,52 @@ function NotificationsMenu() {
 export function AppHeader() {
   const location = useLocation()
   const navigate = useNavigate()
-  const host = useDashboardHost()
-  const { activeCompany } = useAuth()
-  const companyId = activeCompany?.company.id ?? ""
   const { navSections } = useDashboardExtensions()
   const crumbs = findActiveNav(location.pathname, navSections)
-  const posQuery = useQuery({
-    queryKey: ["point-of-sales", companyId],
-    queryFn: () => host.listPointsOfSale(companyId),
-    retry: false,
-    enabled: companyId !== "",
-    staleTime: 60_000,
-  })
-  const posList = posQuery.data?.items ?? []
 
   return (
-    <header className="bg-background/95 supports-[backdrop-filter]:bg-background/60 sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 backdrop-blur">
+    <header className="bg-background/95 supports-[backdrop-filter]:bg-background/60 sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 backdrop-blur sm:px-4">
       <div className="flex min-w-0 items-center gap-2">
         <SidebarTrigger />
         <OrganizationSwitcher />
       </div>
 
-        {crumbs && (
-          <div className="hidden min-w-0 items-center gap-1.5 md:flex">
-            <span className="text-border h-4 w-px" />
-            {crumbs.parent && (
-              <>
-                <span className="truncate text-[13px] font-medium tracking-tight text-muted-foreground">
-                  {crumbs.parent}
-                </span>
-                <span className="text-muted-foreground/60 text-[13px]">/</span>
-              </>
+      {crumbs && (
+        <nav aria-label="breadcrumb" className="hidden min-w-0 flex-1 items-center gap-1.5 sm:flex">
+          <span className="text-border h-4 w-px shrink-0" />
+          <ol className="flex min-w-0 items-center gap-1.5">
+            {crumbs.parent && crumbs.child !== crumbs.parent && (
+              <li className="flex min-w-0 items-center gap-1.5">
+                {crumbs.parentTo ? (
+                  <Link
+                    to={crumbs.parentTo}
+                    className="truncate text-[13px] font-medium tracking-tight text-muted-foreground hover:text-foreground"
+                  >
+                    {crumbs.parent}
+                  </Link>
+                ) : (
+                  <span className="truncate text-[13px] font-medium tracking-tight text-muted-foreground">
+                    {crumbs.parent}
+                  </span>
+                )}
+                <span className="text-muted-foreground/60 shrink-0 text-[13px]" aria-hidden="true">/</span>
+              </li>
             )}
             {crumbs.child && (
-              <span className="truncate text-[13px] font-medium tracking-tight">
-                {crumbs.child}
-              </span>
+              <li className="min-w-0">
+                <span aria-current="page" className="block truncate text-[13px] font-medium tracking-tight">
+                  {crumbs.child}
+                </span>
+              </li>
             )}
-          </div>
-        )}
+          </ol>
+        </nav>
+      )}
 
-      <div className="flex shrink-0 items-center gap-2">
-        {posList.length > 0 && (
-          <Select defaultValue={posList[0].id}>
-            <SelectTrigger
-              className="hidden h-8 w-40 text-xs lg:flex"
-              aria-label="Punto de venta activo"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {posList.map((pos) => (
-                <SelectItem key={pos.id} value={pos.id}>
-                  {pos.description}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-
-        <Button size="sm" onClick={() => navigate("/invoices/new")}>
-          <Plus data-icon="inline-start" />
-          Nueva factura
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+        <Button size="sm" variant="outline" onClick={() => navigate("/invoices")} aria-label="Ver facturas">
+          <FileText data-icon="inline-start" />
+          <span className="hidden sm:inline">Ver facturas</span>
         </Button>
 
         <button
@@ -194,7 +174,8 @@ export function AppHeader() {
           onClick={() =>
             toast.info("Gracias por ayudarnos a mejorar Supay")
           }
-          className="hover:bg-accent hover:text-foreground focus-visible:ring-primary/40 flex h-8 items-center gap-2 rounded-md border border-border/60 bg-surface px-2.5 text-xs font-medium text-muted-foreground transition-all outline-none focus-visible:ring-2"
+          aria-label="Enviar feedback"
+          className="hover:bg-accent hover:text-foreground focus-visible:ring-primary/40 hidden h-8 items-center gap-2 rounded-md border border-border/60 bg-surface px-2.5 text-xs font-medium text-muted-foreground transition-all outline-none focus-visible:ring-2 lg:flex"
         >
           <MessageSquarePlus className="size-3.5" />
           <span className="hidden md:inline">Feedback</span>

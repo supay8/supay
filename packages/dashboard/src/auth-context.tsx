@@ -66,6 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [host])
 
+  const logoutRef = React.useRef<() => void>(() => {})
   // Restaura la sesión si hay un token guardado
   React.useEffect(() => {
     let cancelled = false
@@ -119,6 +120,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setCompanies([])
     setActiveCompanyId(null)
     setStoredActiveCompanyId("")
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("supay:company-changed", { detail: { companyId: "" } }))
+    }
   }, [host])
 
   const refreshCompanies = React.useCallback(async () => {
@@ -150,11 +154,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     host.setActiveCompanyId?.(activeCompanyId ?? "")
   }, [host, activeCompanyId])
 
+  React.useEffect(() => {
+    logoutRef.current = logout
+  }, [logout])
+
+  // Sesión expirada en cualquier request autenticado -> limpiar y volver a /login.
+  React.useEffect(() => {
+    function onUnauthorized() {
+      logoutRef.current()
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+        window.location.assign("/login?expired=1")
+      }
+    }
+    window.addEventListener("supay:unauthorized", onUnauthorized)
+    return () => window.removeEventListener("supay:unauthorized", onUnauthorized)
+  }, [])
+
   const switchCompany = React.useCallback(
     (companyId: string) => {
       setActiveCompanyId(companyId)
       setStoredActiveCompanyId(companyId)
       host.setActiveCompanyId?.(companyId)
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("supay:company-changed", { detail: { companyId } }))
+      }
     },
     [host]
   )

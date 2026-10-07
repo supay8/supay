@@ -1,5 +1,4 @@
-import { useEffect } from "react"
-import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom"
+import { NavLink, useLocation, Outlet } from "react-router-dom"
 
 import { useDashboardExtensions } from "../../dashboard-context"
 import { AppHeader } from "../../components/layout/header"
@@ -32,13 +31,7 @@ function NavItems({ sectionIndex }: { sectionIndex: number }) {
         <SidebarMenuItem key={item.to}>
           <SidebarMenuButton
             render={<NavLink to={item.to} />}
-            isActive={
-              item.to === "/invoices"
-                ? location.pathname === "/invoices" ||
-                  (location.pathname.startsWith("/invoices") &&
-                    location.pathname !== "/invoices/new")
-                : location.pathname.startsWith(item.to)
-            }
+            isActive={location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)}
             tooltip={item.label}
           >
             <item.icon />
@@ -52,28 +45,6 @@ function NavItems({ sectionIndex }: { sectionIndex: number }) {
 
 export function AppShell() {
   const { navSections } = useDashboardExtensions()
-  const navigate = useNavigate()
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return
-      const target = event.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
-        return
-      }
-      if (event.key.toLowerCase() !== "n") return
-      event.preventDefault()
-      navigate("/invoices/new")
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [navigate])
 
   return (
     <SidebarProvider>

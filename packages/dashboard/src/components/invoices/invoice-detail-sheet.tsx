@@ -1,12 +1,13 @@
 import { useState } from "react"
 import { useDashboardHost } from "../../host-context"
+import { useAuth } from "../../auth-context"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate } from "react-router-dom"
 import { Check, Copy, Download } from "lucide-react"
 import { toast } from "sonner"
 
 import { ApiError } from "../../host"
 import { formatCurrency, formatDateTime } from "../../lib/format"
+import { formatCustomer, formatInvoiceTitle, formatPosShort } from "../../lib/display-names"
 import { saveBlob } from "../../lib/download"
 import type { Invoice } from "../../lib/types"
 import { StatusBadge } from "../../components/invoices/status-badge"
@@ -69,11 +70,12 @@ export function InvoiceDetailSheet({
   const [annulOpen, setAnnulOpen] = useState(false)
   const [revertOpen, setRevertOpen] = useState(false)
   const [copied, setCopied] = useState(false)
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
 
   const detail = useQuery({
-    queryKey: ["invoices", invoiceId],
+    queryKey: ["invoices", companyId, invoiceId],
     queryFn: () => host.getInvoice(invoiceId!),
     enabled: invoiceId !== null,
     refetchInterval: (query) =>
@@ -122,7 +124,8 @@ export function InvoiceDetailSheet({
       const blob = format === "pdf"
         ? await host.downloadInvoicePdf(id)
         : await host.downloadInvoiceXml!(id)
-      saveBlob(blob, `factura-${id}.${format}`)
+      const num = invoice ? String(invoice.invoice_number).padStart(6, "0") : "sin-numero"
+      saveBlob(blob, `factura-${num}.${format}`)
     },
     onError: (error) => {
       toast.error(error instanceof ApiError ? error.message : "No se pudo descargar el comprobante")
@@ -189,14 +192,11 @@ export function InvoiceDetailSheet({
 
                 <ScrollArea className="min-h-0 flex-1">
                   <TabsContent value="resumen" className="mt-0 flex flex-col gap-3 p-5">
-                    <DetailRow label="Cliente" value={invoice.customer.name} />
-                    <DetailRow
-                      label="Documento"
-                      value={`${invoice.customer.document_type} ${invoice.customer.document_number}`}
-                    />
+                    <DetailRow label="Factura" value={formatInvoiceTitle(invoice)} />
+                    <DetailRow label="Cliente" value={formatCustomer(invoice.customer)} />
                     <DetailRow
                       label="Punto de venta"
-                      value={invoice.point_of_sale.description}
+                      value={invoice.point_of_sale ? formatPosShort(invoice.point_of_sale) : "—"}
                     />
                     <DetailRow label="Emisión" value={formatDateTime(invoice.issue_date)} />
                     {invoice.fecha_anulacion && (
@@ -276,10 +276,16 @@ export function InvoiceDetailSheet({
                     )}
                     {invoice.motivo_anulacion !== null &&
                       invoice.motivo_anulacion !== undefined && (
-                        <p className="text-sm text-muted-foreground">
-                          Motivo de anulación registrado ante el SIAT.
-                        </p>
+                        <DetailRow label="Motivo anulación (SIAT)" value={String(invoice.motivo_anulacion)} />
                       )}
+                    {invoice.contingency_event_id && (
+                      <details className="rounded-md border p-3">
+                        <summary className="cursor-pointer text-xs font-medium">Detalle técnico</summary>
+                        <p className="mt-2 truncate font-mono text-[11px] text-muted-foreground">
+                          Evento contingencia: {invoice.contingency_event_id}
+                        </p>
+                      </details>
+                    )}
                     <div className="flex flex-wrap gap-2 pt-1">
                       {host.downloadInvoiceXml && invoice.cuf && (
                         <Button
@@ -324,9 +330,9 @@ export function InvoiceDetailSheet({
                   </Button>
                 )}
                 {invoice.status === "REJECTED" && (
-                  <Button size="sm" onClick={() => navigate("/invoices/new")}>
-                    Crear corrección
-                  </Button>
+                  <p className="text-muted-foreground text-xs">
+                    Rechazada por el SIAT. Corregila desde tu ERP/POS vía API (<span className="font-mono">POST /v1/invoices/emit</span> con el payload corregido); la rechazada queda para auditoría.
+                  </p>
                 )}
                 {invoice.status === "CANCELLED" && (
                   <Button size="sm" variant="outline" onClick={() => setRevertOpen(true)}>
@@ -341,7 +347,7 @@ export function InvoiceDetailSheet({
                 )}
                 {invoice.status === "OFFLINE" && (
                   <p className="text-sm text-muted-foreground">
-                    Se enviará automáticamente cuando el SIAT vuelva a estar disponible.
+                    En contingencia: tu ERP/POS la reintenta sola; también podés reenviarla por paquete en Operación → Lotes.
                   </p>
                 )}
               </div>

@@ -16,6 +16,17 @@ import {
 import { Button } from "../components/ui/button"
 import { Skeleton } from "../components/ui/skeleton"
 
+function readinessLabel(missing: string[]): string {
+  if (missing.length === 0) return "ver detalle en cada punto de venta"
+  const labels: Record<string, string> = {
+    cuis: "código de autorización (CUIS)",
+    cufd: "código de firma del día (CUFD)",
+    catalogs: "catálogos sincronizados",
+    certificate: "certificado digital",
+  }
+  return missing.map((m) => labels[m.toLowerCase()] ?? m).join(", ")
+}
+
 function Tech({ term }: { term: string }) {
   const map: Record<string, string> = {
     CUIS: "Código Único de Inicio de Vigencia que el SIAT entrega por punto de venta. Se renueva periódicamente.",
@@ -96,7 +107,8 @@ export function SiatConnectionPage() {
       return { kind, posId, result: await ops[kind]() }
     },
     onSuccess: ({ kind, posId, result }) => {
-      const posName = posList.find((p) => p.id === posId)?.description ?? "Punto de venta"
+      const pos = posList.find((p) => p.id === posId)
+      const posName = pos ? formatPosShort(pos) : "Punto de venta"
       toast.success(
         result.reception_code
           ? `${posName} · ${kind.toUpperCase()}: ${result.reception_code}`
@@ -141,14 +153,22 @@ export function SiatConnectionPage() {
       )}
 
       <FormSection title="Checklist de conexión">
-        {readinessQuery.data != null && (
+        {readinessQuery.isPending && (
+          <p className="text-muted-foreground mb-3 text-xs">Verificando requisitos para emitir…</p>
+        )}
+        {readinessQuery.isError && (
+          <div className="mb-3">
+            <QueryErrorState error={readinessQuery.error} onRetry={() => readinessQuery.refetch()} />
+          </div>
+        )}
+        {readinessQuery.data != null && !readinessQuery.isError && (
           <p className="mb-3 text-xs">
-            Readiness:{" "}
+            Estado:{" "}
             {readinessQuery.data.ready ? (
               <span className="text-success font-medium">listo para emitir</span>
             ) : (
               <span className="font-medium text-warning">
-                falta: {(readinessQuery.data.missing ?? []).join(", ") || "ver detalle"}
+                pendiente: {readinessLabel((readinessQuery.data.missing ?? []))}
               </span>
             )}
           </p>
@@ -245,7 +265,18 @@ export function SiatConnectionPage() {
               </Button>
               </div>
               <span className="text-muted-foreground text-xs">
-                {p.cuis ? `CUIS vigente desde ${p.cuis_created_at ? formatDateTime(p.cuis_created_at) : "—"}` : "Sin CUIS"} · {p.siat_error ?? "sin errores SIAT"}
+                {p.cuis ? `CUIS vigente desde ${p.cuis_created_at ? formatDateTime(p.cuis_created_at) : "—"}` : "Sin CUIS"}
+                {" · "}
+                {p.siat_error ? (
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="underline decoration-dotted underline-offset-2" />}>
+                      con observaciones del SIAT
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-64 font-mono">{p.siat_error}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  "sin errores SIAT"
+                )}
               </span>
             </div>
           ))}

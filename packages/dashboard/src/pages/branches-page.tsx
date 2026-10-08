@@ -100,7 +100,7 @@ export function BranchesPage() {
         : host.createBranch(payload)
     },
     onSuccess: (branch) => {
-      queryClient.invalidateQueries({ queryKey: ["branches"] })
+      queryClient.invalidateQueries({ queryKey: ["branches", companyId] })
       toast.success(editing ? "Sucursal actualizada" : `Sucursal ${branch.name} creada`)
       setDialogOpen(false)
     },
@@ -113,7 +113,7 @@ export function BranchesPage() {
   const deleteMutation = useMutation({
     mutationFn: () => host.deleteBranch(deleting!.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["branches"] })
+      queryClient.invalidateQueries({ queryKey: ["branches", companyId] })
       toast.success("Sucursal eliminada")
       setDeleting(null)
     },
@@ -179,20 +179,20 @@ export function BranchesPage() {
             </EmptyContent>
           </Empty>
         ) : (
-          <div className="overflow-hidden rounded-lg border">
+          <div className="overflow-x-auto rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Código
                   </TableHead>
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Nombre
                   </TableHead>
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Dirección
                   </TableHead>
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Puntos
                   </TableHead>
                   <TableHead className="w-24" />
@@ -215,15 +215,16 @@ export function BranchesPage() {
                       <div className="flex justify-end gap-1">
                         <Button
                           variant="ghost"
-                          size="xs"
+                          size="sm"
+                          className="min-h-9"
                           onClick={() => openEdit(branch)}
                         >
                           Editar
                         </Button>
                         <Button
                           variant="ghost"
-                          size="xs"
-                          className="text-destructive hover:text-destructive"
+                          size="sm"
+                          className="min-h-9 text-destructive hover:text-destructive"
                           onClick={() => setDeleting(branch)}
                         >
                           Eliminar

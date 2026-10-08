@@ -5,7 +5,16 @@ import { LogoSupay } from "../components/logo"
 import { useAuth } from "../auth-context"
 import { HostError } from "../host"
 import { formatCompanyTitle } from "../lib/display-names"
+import { NIT_ERROR, isValidNit } from "../lib/validation"
 import { Button } from "../components/ui/button"
+
+function roleLabel(role: string): string {
+  const r = role.trim().toLowerCase()
+  if (r === "owner") return "Propietario"
+  if (r === "admin") return "Administrador"
+  if (r === "member" || r === "miembro") return "Miembro"
+  return role
+}
 
 export function CompaniesPage() {
   const { companies, companiesLoading, activeCompany, switchCompany, createCompany, refreshCompanies } = useAuth()
@@ -18,12 +27,12 @@ export function CompaniesPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const nitValid = /^\d{5,15}$/.test(nit.trim())
+  const nitValid = isValidNit(nit)
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
     if (!nitValid) {
-      setError("NIT inválido: solo dígitos, de 5 a 15 caracteres.")
+      setError(NIT_ERROR)
       return
     }
     setIsLoading(true)
@@ -88,7 +97,7 @@ export function CompaniesPage() {
                       {formatCompanyTitle(company.business_name, company.nit)}
                     </span>
                     <span className="text-muted-foreground text-xs">
-                      Rol {role} · {company.ambiente}
+                      Rol {roleLabel(role)} · {company.ambiente === "PRODUCCION" ? "Producción" : "Piloto"}
                     </span>
                   </span>
                   {isActive && <Check className="size-4 shrink-0 text-success" />}

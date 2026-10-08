@@ -1,8 +1,9 @@
-import { LogoSupay } from "../components/logo"
+import { SupayIcon } from "../components/logo"
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { useAuth } from "../auth-context"
 import { HostError } from "../host"
+import { useTheme } from "../components/theme-provider";
 
 export function SignupPage() {
   const { signup } = useAuth()
@@ -12,7 +13,8 @@ export function SignupPage() {
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
+  const {theme} = useTheme();
+  const currentTheme = theme === "dark" ? "dark" : "light";
   const passwordValid = password.length >= 8
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -50,7 +52,7 @@ export function SignupPage() {
 
       <div className="relative z-10 w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center">
-           <LogoSupay size={50} className="shrink-0 text-primary"  />
+           <SupayIcon theme={currentTheme} size={50} className="shrink-0 text-primary"  />
           <h1 className="text-foreground text-xl font-medium tracking-tight">
             Crear cuenta en Supay
           </h1>

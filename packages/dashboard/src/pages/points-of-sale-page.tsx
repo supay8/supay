@@ -92,8 +92,8 @@ export function PointsOfSalePage() {
   })
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ["point-of-sales"] })
-    queryClient.invalidateQueries({ queryKey: ["invoices"] })
+    queryClient.invalidateQueries({ queryKey: ["point-of-sales", companyId] })
+    queryClient.invalidateQueries({ queryKey: ["invoices", companyId] })
   }
 
   const toggleMutation = useMutation({
@@ -185,12 +185,15 @@ export function PointsOfSalePage() {
         <QueryErrorState error={posQuery.error} onRetry={() => posQuery.refetch()} />
       )}
 
+      {branchesQuery.isError && (
+        <QueryErrorState error={branchesQuery.error} onRetry={() => branchesQuery.refetch()} />
+      )}
+
       {!posQuery.isPending &&
         !posQuery.isError &&
         (posList.length === 0 ? (
           <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-            Todavía no hay puntos de venta. Creá el primero para empezar a
-            facturar.
+            Todavía no hay puntos de venta. Creá el primero para que tu ERP/POS pueda emitir.
           </div>
         ) : (
           <div className="flex flex-col gap-3">
@@ -315,14 +318,13 @@ export function PointsOfSalePage() {
               {[
                 ["Punto de venta", formatPosShort(detailPos)],
                 ["Sucursal", branchLabel(detailPos.branch_id, detailPos.codigo_sucursal)],
-                ["CUIS", detailPos.cuis ?? "—"],
                 ["CUIS desde", detailPos.cuis_created_at ? formatDateTime(detailPos.cuis_created_at) : "—"],
                 ["Registrado en SIAT", detailPos.siat_registered_at ? formatDateTime(detailPos.siat_registered_at) : "—"],
-                ["Estado SIAT", detailPos.siat_error ?? "sin errores"],
+                ["Estado SIAT", detailPos.siat_error ? "Con observaciones del SIAT (ver detalle)" : "Sin errores"],
               ].map(([k, v]) => (
                 <div key={k} className="flex items-start justify-between gap-4">
                   <dt className="text-muted-foreground">{k}</dt>
-                  <dd className="max-w-56 truncate text-right font-medium">{v}</dd>
+                  <dd className="max-w-56 truncate text-right font-medium" title={k === "Estado SIAT" && detailPos.siat_error ? detailPos.siat_error : v}>{v}</dd>
                 </div>
               ))}
             </dl>

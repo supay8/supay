@@ -238,7 +238,7 @@ export function CertificatePage() {
                 <Badge variant="outline">Activo</Badge>
               ) : (
                 <Badge variant="outline" className="text-muted-foreground">
-                  {cert.status}
+                  {certStatusLabel(cert.status, cert.is_active)}
                 </Badge>
               )}
             </article>

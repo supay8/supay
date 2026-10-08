@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useDashboardHost } from "../host-context"
+import { useDebouncedValue } from "../hooks/use-debounced-value"
 import { useQuery } from "@tanstack/react-query"
 
 import { useAuth } from "../auth-context"
@@ -35,15 +36,7 @@ export function ProductsPage() {
   const { activeCompany } = useAuth()
   const companyId = activeCompany?.company.id ?? ""
   const [search, setSearch] = useState("")
-  const [debounced, setDebounced] = useState("")
-
-  function handleSearch(value: string) {
-    setSearch(value)
-    window.clearTimeout((handleSearch as unknown as { t?: number }).t)
-    ;(handleSearch as unknown as { t?: number }).t = window.setTimeout(() => {
-      setDebounced(value.trim())
-    }, 350)
-  }
+  const debounced = useDebouncedValue(search.trim(), 350)
 
   const productsQuery = useQuery({
     queryKey: ["sin-products", companyId, debounced],
@@ -79,7 +72,7 @@ export function ProductsPage() {
           id="sin-search"
           placeholder="Descripción o código…"
           value={search}
-          onChange={(e) => handleSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
         />
       </div>
 
@@ -110,17 +103,17 @@ export function ProductsPage() {
             </EmptyHeader>
           </Empty>
         ) : (
-          <div className="overflow-hidden rounded-lg border">
+          <div className="overflow-x-auto rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Descripción
                   </TableHead>
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Código SIN
                   </TableHead>
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Actividad
                   </TableHead>
                 </TableRow>

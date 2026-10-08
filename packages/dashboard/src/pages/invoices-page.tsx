@@ -14,8 +14,8 @@ import {
   X,
 } from "lucide-react"
 
-import { ApiError } from "../host"
 import { formatPosShort } from "../lib/display-names"
+import { useIsMobile } from "../hooks/use-mobile"
 import { useAuth } from "../auth-context"
 import {
   INVOICE_STATUS_LABELS,
@@ -25,7 +25,7 @@ import { formatCurrency, formatDateTime, formatTime } from "../lib/format"
 import { INVOICE_STATUSES, type InvoiceStatus } from "../lib/types"
 import { StatusBadge } from "../components/invoices/status-badge"
 import { InvoiceDetailSheet } from "../components/invoices/invoice-detail-sheet"
-import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert"
+import { QueryErrorState } from "../components/shared/page-parts"
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
 import {
@@ -111,6 +111,19 @@ export function InvoicesPage() {
   const [q, setQ] = useState("")
   const [page, setPage] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const isMobile = useIsMobile()
+
+  const hasActiveFilters =
+    posFilter !== "all" || statuses.length > 0 || range !== undefined || inputValue.trim() !== ""
+
+  function clearFilters() {
+    setPosFilter("all")
+    setStatuses([])
+    setRange(undefined)
+    setInputValue("")
+    setQ("")
+    setPage(0)
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -193,7 +206,7 @@ export function InvoicesPage() {
           }}
         >
           <SelectTrigger
-            className="h-8 w-44 text-xs"
+            className="h-9 w-44 text-xs"
             aria-label="Filtrar por punto de venta"
           >
             <SelectValue />
@@ -209,7 +222,7 @@ export function InvoicesPage() {
         </Select>
 
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" className="h-8 text-xs" />}>
+          <DropdownMenuTrigger render={<Button variant="outline" className="h-9 min-h-9 text-xs" />}>
             Estado
             {statuses.length > 0 && (
               <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px]">
@@ -237,7 +250,7 @@ export function InvoicesPage() {
         <Popover>
           <PopoverTrigger
             render={
-              <Button variant="outline" className="h-8 text-xs" />
+              <Button variant="outline" className="h-9 min-h-9 text-xs" />
             }
           >
             {range?.from && range?.to
@@ -246,10 +259,10 @@ export function InvoicesPage() {
                 ? `Desde ${format(range.from, "dd/MM")}`
                 : "Fechas"}
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="start">
+          <PopoverContent className="w-auto max-w-[calc(100vw-2rem)] overflow-x-auto p-0" align="start">
             <Calendar
               mode="range"
-              numberOfMonths={2}
+              numberOfMonths={isMobile ? 1 : 2}
               selected={range}
               onSelect={selectRange}
             />
@@ -262,7 +275,7 @@ export function InvoicesPage() {
             <button
               type="button"
               aria-label={`Quitar filtro ${INVOICE_STATUS_LABELS[status]}`}
-              className="rounded-full p-0.5 hover:bg-muted"
+              className="min-h-6 min-w-6 rounded-full p-1.5 hover:bg-muted"
               onClick={() => toggleStatus(status)}
             >
               <X className="size-3" />
@@ -270,7 +283,13 @@ export function InvoicesPage() {
           </Badge>
         ))}
 
-        <InputGroup className="ml-auto h-8 w-full max-w-56">
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" className="min-h-9" onClick={clearFilters}>
+            Limpiar todo
+          </Button>
+        )}
+
+        <InputGroup className="ml-auto h-9 w-full max-w-56">
           <InputGroupAddon>
             <Search className="size-3.5" />
           </InputGroupAddon>
@@ -300,39 +319,32 @@ export function InvoicesPage() {
       </div>
 
       {listQuery.isError && (
-        <Alert variant="destructive">
-          <AlertTitle>No se pudo cargar el listado</AlertTitle>
-          <AlertDescription>
-            {listQuery.error instanceof ApiError
-              ? listQuery.error.message
-              : String(listQuery.error)}
-          </AlertDescription>
-          <Button variant="outline" size="sm" onClick={() => listQuery.refetch()}>
-            Reintentar
-          </Button>
-        </Alert>
+        <QueryErrorState
+          error={listQuery.error}
+          onRetry={() => listQuery.refetch()}
+        />
       )}
 
-      <div className="animate-fade-in overflow-hidden rounded-lg border">
+      <div className="animate-fade-in overflow-x-auto rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+              <TableHead className="text-muted-foreground text-xs font-medium">
                 N°
               </TableHead>
-              <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+              <TableHead className="text-muted-foreground text-xs font-medium">
                 Cliente
               </TableHead>
-              <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase hidden md:table-cell">
+              <TableHead className="text-muted-foreground text-xs font-medium hidden md:table-cell">
                 Punto de venta
               </TableHead>
               <TableHead className="text-muted-foreground text-right text-[11px] font-medium tracking-wider uppercase">
                 Total
               </TableHead>
-              <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+              <TableHead className="text-muted-foreground text-xs font-medium">
                 Fecha
               </TableHead>
-              <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+              <TableHead className="text-muted-foreground text-xs font-medium">
                 Estado
               </TableHead>
               <TableHead className="w-10" />
@@ -363,7 +375,7 @@ export function InvoicesPage() {
                     <div className="flex flex-col">
                       <span className="font-medium">{invoice.customer.name}</span>
                       <span className="text-muted-foreground text-[11px] md:hidden">
-                        {invoice.point_of_sale?.description ?? "—"}
+                        {invoice.point_of_sale ? formatPosShort(invoice.point_of_sale) : "—"}
                       </span>
                     </div>
                   </TableCell>

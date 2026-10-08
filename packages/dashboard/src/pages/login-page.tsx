@@ -1,9 +1,10 @@
-import { LogoSupay } from '../components/logo';
+import { SupayIcon } from '../components/logo';
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 import { HostError } from '../host';
 import { Eye, EyeClosed } from 'lucide-react';
+import { useTheme } from "../components/theme-provider";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -15,7 +16,8 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-
+  const {theme} = useTheme();
+  const currentTheme = theme === "dark" ? "dark" : "light";
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -50,7 +52,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm relative z-10">
         {/* Encabezado / Logo marca */}
         <div className="flex flex-col items-center mb-8">
-             <LogoSupay size={50} className="shrink-0 text-primary"  />
+             <SupayIcon theme={currentTheme} size={50} className="shrink-0 text-primary"  />
           <h1 className="text-xl font-medium tracking-tight text-foreground">
             Acceder a Supay
           </h1>

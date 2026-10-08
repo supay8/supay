@@ -7,6 +7,7 @@ import { Check, FileKey2, LoaderCircle } from "lucide-react"
 import { toast } from "sonner"
 
 import { ApiError } from "../host"
+import { NIT_ERROR, isValidNit } from "../lib/validation"
 import type { Company, SectorInfo } from "../lib/types"
 import {
   Tooltip,
@@ -14,6 +15,7 @@ import {
   TooltipTrigger,
 } from "../components/ui/tooltip"
 import { Badge } from "../components/ui/badge"
+import { QueryErrorState } from "../components/shared/page-parts"
 import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
 import { Label } from "../components/ui/label"
@@ -246,7 +248,8 @@ export function SetupPage() {
     },
   })
 
-  const nitValid = /^\d{5,15}$/.test(nit.trim())
+  const nitValid = isValidNit(nit)
+  const nitError = nit.trim() !== "" && !nitValid ? NIT_ERROR : null
   const step1Valid = businessName.trim() !== "" && nitValid
   const step2Valid =
     companyId !== null && branchName.trim() !== "" && posDescription.trim() !== ""
@@ -308,9 +311,13 @@ export function SetupPage() {
                 id="setup-nit"
                 data-field="nit"
                 value={nit}
+                aria-invalid={nitError !== null}
                 onChange={(e) => setNit(e.target.value)}
                 placeholder="1020304015"
               />
+              {nitError && (
+                <p role="alert" className="text-destructive text-xs">{nitError}</p>
+              )}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="setup-municipio">Municipio</Label>
@@ -409,17 +416,16 @@ export function SetupPage() {
             </div>
           )}
           {sectoresQuery.isError && (
-            <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm">
-              No se pudieron cargar las actividades.{" "}
-              <button type="button" className="underline" onClick={() => sectoresQuery.refetch()}>
-                Reintentar
-              </button>
-            </p>
+            <QueryErrorState error={sectoresQuery.error} onRetry={() => sectoresQuery.refetch()} />
           )}
           {!sectoresQuery.isPending && !sectoresQuery.isError && sectores.length === 0 && (
-            <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              Sin actividades habilitadas. Sincronizá catálogos en Conexión SIAT y volvé.
-            </p>
+            <div className="rounded-md border border-dashed p-6 text-center">
+              <p className="text-sm font-medium">Sin actividades habilitadas</p>
+              <p className="text-muted-foreground mt-1 text-xs">Sincronizá catálogos en Conexión SIAT y volvé a este paso.</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate("/company/siat")}>
+                Ir a Conexión SIAT
+              </Button>
+            </div>
           )}
           <div className="grid max-h-80 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
             {sectores.map((sector) => {

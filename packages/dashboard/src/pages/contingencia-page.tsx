@@ -95,22 +95,23 @@ export function ContingenciaPage() {
                 <TriangleAlert className="size-3.5" />
                 Modo contingencia activo · {total} factura(s) esperando envío
               </div>
+              <div className="overflow-x-auto rounded-lg border">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                    <TableHead className="text-muted-foreground text-xs font-medium">
                       N°
                     </TableHead>
-                    <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                    <TableHead className="text-muted-foreground text-xs font-medium">
                       Cliente
                     </TableHead>
-                    <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                    <TableHead className="text-muted-foreground hidden text-xs font-medium md:table-cell">
                       Punto de venta
                     </TableHead>
-                    <TableHead className="text-muted-foreground text-right text-[11px] font-medium tracking-wider uppercase">
+                    <TableHead className="text-muted-foreground text-right text-xs font-medium">
                       Total
                     </TableHead>
-                    <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                    <TableHead className="text-muted-foreground hidden text-xs font-medium lg:table-cell">
                       Fecha
                     </TableHead>
                   </TableRow>
@@ -121,20 +122,28 @@ export function ContingenciaPage() {
                       <TableCell className="font-mono text-xs">
                         {formatInvoiceTitle(invoice)}
                       </TableCell>
-                      <TableCell>{invoice.customer.name}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{invoice.customer.name}</span>
+                          <span className="text-muted-foreground text-[11px] md:hidden">
+                            {invoice.point_of_sale ? formatPosShort(invoice.point_of_sale) : "—"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground hidden text-xs md:table-cell">
                         {invoice.point_of_sale ? formatPosShort(invoice.point_of_sale) : "—"}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatCurrency(invoice.total)}
                       </TableCell>
-                      <TableCell className="text-muted-foreground text-xs">
+                      <TableCell className="text-muted-foreground hidden text-xs lg:table-cell">
                         {formatDateTime(invoice.issue_date)}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
+              </div>
               <div className="mt-2 flex justify-end gap-2">
                 <Button
                   variant="outline"

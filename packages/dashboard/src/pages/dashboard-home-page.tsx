@@ -15,7 +15,7 @@ import {
 
 import { useAuth } from "../auth-context"
 import { formatCurrency } from "../lib/format"
-import { PageHeader } from "../components/shared/page-parts"
+import { PageHeader, QueryErrorState } from "../components/shared/page-parts"
 import { Button } from "../components/ui/button"
 import { Skeleton } from "../components/ui/skeleton"
 
@@ -216,8 +216,17 @@ export function DashboardHomePage() {
       </div>
 
       {hasQueryError && (
-        <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm">
-          <p className="font-medium">No se pudo cargar el estado. Revisá tu conexión e intentá de nuevo.</p>
+        <div className="flex flex-col gap-2">
+          <QueryErrorState
+            error={posQuery.error ?? pendingQuery.error ?? rejectedQuery.error ?? offlineQuery.error ?? acceptedQuery.error}
+            onRetry={() => {
+              posQuery.refetch()
+              pendingQuery.refetch()
+              rejectedQuery.refetch()
+              offlineQuery.refetch()
+              acceptedQuery.refetch()
+            }}
+          />
           <p className="text-muted-foreground text-xs">
             Los contadores en 0 pueden ser por este error, no porque esté todo al día.
           </p>
@@ -269,7 +278,7 @@ export function DashboardHomePage() {
         <StatCard
           label="En curso"
           value={String(pendingCount)}
-          hint="PENDING + SENDING"
+          hint="Borradores enviándose"
           to="/invoices?status=PENDING"
           icon={Clock}
           variant={pendingCount > 0 ? "warning" : "default"}
@@ -285,7 +294,7 @@ export function DashboardHomePage() {
         <StatCard
           label="Contingencia"
           value={String(offlineCount)}
-          hint="OFFLINE por enviar"
+          hint="Pendientes por reenviar"
           to="/operation/contingencia"
           icon={AlertTriangle}
           variant={offlineCount > 0 ? "warning" : "default"}

@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useDashboardHost } from "../host-context"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
+import { useDebouncedValue } from "../hooks/use-debounced-value"
 import { Input } from "../components/ui/input"
 
 import { useAuth } from "../auth-context"
@@ -46,7 +47,8 @@ export function CustomersPage() {
   })
 
   const all = customersQuery.data?.items ?? []
-  const [q, setQ] = useState("")
+  const [search, setSearch] = useState("")
+  const q = useDebouncedValue(search, 300)
   const customers = all.filter((c) => {
     const needle = q.trim().toLowerCase()
     if (!needle) return true
@@ -88,8 +90,9 @@ export function CustomersPage() {
 
       <Input
         placeholder="Buscar por nombre o documento…"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
+        aria-label="Buscar receptores"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
         className="max-w-md"
       />
 
@@ -110,17 +113,17 @@ export function CustomersPage() {
             </EmptyContent>
           </Empty>
         ) : (
-          <div className="overflow-hidden rounded-lg border">
+          <div className="overflow-x-auto rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Nombre
                   </TableHead>
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Documento
                   </TableHead>
-                  <TableHead className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+                  <TableHead className="text-muted-foreground text-xs font-medium">
                     Alta
                   </TableHead>
                 </TableRow>

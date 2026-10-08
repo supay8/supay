@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "../components/ui/select"
 import { Spinner } from "../components/ui/spinner"
+import { Skeleton } from "../components/ui/skeleton"
 
 /**
  * Lotes: envío y validación de paquetes/masiva por nombres, sin pegar UUIDs.
@@ -78,12 +79,23 @@ export function LotesPage() {
       if (!host.enviarMasiva) throw new ApiError(405, "NOT_SUPPORTED", "Host sin enviarMasiva")
       return host.enviarMasiva(effectivePos, { point_of_sale_id: effectivePos, invoice_ids: ids })
     },
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       setLastReception(res.reception_code ?? null)
-      if (res.reception_code) setBatchId(res.reception_code)
-      toast.success(res.reception_code ? `Lote enviado: ${res.reception_code}` : "Lote enviado")
+      if (res.reception_code) {
+        setBatchId(res.reception_code)
+        try {
+          await navigator.clipboard.writeText(res.reception_code)
+        } catch {
+          /* portapapeles no disponible */
+        }
+      }
+      toast.success(res.reception_code ? `Lote enviado: ${res.reception_code}` : "Lote enviado", {
+        action: res.reception_code
+          ? { label: "Ir a validar", onClick: () => document.getElementById("lote-batch")?.focus() }
+          : undefined,
+      })
       setSelected({})
-      queryClient.invalidateQueries({ queryKey: ["invoices"] })
+      queryClient.invalidateQueries({ queryKey: ["invoices", companyId] })
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "No se pudo enviar el lote"),
   })
@@ -168,9 +180,7 @@ export function LotesPage() {
         </div>
 
         {posQuery.isError && (
-          <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm">
-            No se pudieron cargar los puntos de venta. Reintentá.
-          </p>
+          <QueryErrorState error={posQuery.error} onRetry={() => posQuery.refetch()} />
         )}
         {posList.length === 0 && !posQuery.isPending && !posQuery.isError && (
           <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -180,7 +190,11 @@ export function LotesPage() {
         {offlineQuery.isError ? (
           <QueryErrorState error={offlineQuery.error} onRetry={() => offlineQuery.refetch()} />
         ) : offlineQuery.isPending ? (
-          <p className="text-muted-foreground flex items-center gap-2 text-sm"><Spinner className="size-4" /> Cargando pendientes…</p>
+          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Cargando pendientes">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full rounded-md" />
+            ))}
+          </div>
         ) : offline.length === 0 ? (
           <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
             Sin facturas en contingencia para este punto de venta.
@@ -291,12 +305,12 @@ export function ComprasPage() {
       </Alert>
       <div className="flex flex-col gap-4 rounded-lg border p-4">
         {posQuery.isPending && (
-          <p className="text-muted-foreground flex items-center gap-2 text-sm"><Spinner className="size-4" /> Cargando puntos de venta…</p>
+          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Cargando puntos de venta">
+            <Skeleton className="h-9 w-full rounded-md" />
+          </div>
         )}
         {posQuery.isError && (
-          <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm">
-            No se pudieron cargar los puntos de venta. Reintentá.
-          </p>
+          <QueryErrorState error={posQuery.error} onRetry={() => posQuery.refetch()} />
         )}
         {posList.length === 0 && !posQuery.isPending && !posQuery.isError && (
           <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">

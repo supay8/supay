@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useDashboardHost } from "../../host-context"
+import { useAuth } from "../../auth-context"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
@@ -32,13 +33,15 @@ export function AnnulDialog({
   onOpenChange,
 }: AnnulDialogProps) {
   const host = useDashboardHost()
+  const { activeCompany } = useAuth()
+  const companyId = activeCompany?.company.id ?? ""
   const [motivo, setMotivo] = useState<string>("90")
   const queryClient = useQueryClient()
 
   const mutation = useMutation({
     mutationFn: () => host.annulInvoice(invoiceId!, Number(motivo)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["invoices"] })
+      queryClient.invalidateQueries({ queryKey: ["invoices", companyId] })
       toast.success(`Factura ${invoiceNumber} anulada ante el SIAT`)
       onOpenChange(false)
     },

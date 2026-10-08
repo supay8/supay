@@ -88,7 +88,7 @@ export function InvoiceDetailSheet({
   const revertMutation = useMutation({
     mutationFn: () => host.revertAnnul(invoiceId!),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["invoices"] })
+      queryClient.invalidateQueries({ queryKey: ["invoices", companyId] })
       toast.success("Anulación revertida")
       setRevertOpen(false)
     },
@@ -104,7 +104,7 @@ export function InvoiceDetailSheet({
   const siatVerifyMutation = useMutation({
     mutationFn: () => host.getSiatStatus(invoiceId!),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["invoices", invoiceId] })
+      queryClient.invalidateQueries({ queryKey: ["invoices", companyId] })
       const msg =
         data && typeof data === "object" && "estado" in data
           ? String((data as Record<string, unknown>)["estado"])
@@ -124,7 +124,7 @@ export function InvoiceDetailSheet({
       const blob = format === "pdf"
         ? await host.downloadInvoicePdf(id)
         : await host.downloadInvoiceXml!(id)
-      const num = invoice ? String(invoice.invoice_number).padStart(6, "0") : "sin-numero"
+      const num = invoice ? formatInvoiceTitle(invoice).replace("N° ", "") : "sin-numero"
       saveBlob(blob, `factura-${num}.${format}`)
     },
     onError: (error) => {
@@ -147,10 +147,7 @@ export function InvoiceDetailSheet({
           <SheetHeader className="border-b px-5 py-4">
             <div className="flex items-center justify-between gap-3">
               <SheetTitle className="text-sm font-medium">
-                Factura{" "}
-                {invoice
-                  ? String(invoice.invoice_number).padStart(6, "0")
-                  : ""}
+                {invoice ? `Factura ${formatInvoiceTitle(invoice)}` : "Factura"}
               </SheetTitle>
               {invoice && <StatusBadge status={invoice.status} />}
             </div>

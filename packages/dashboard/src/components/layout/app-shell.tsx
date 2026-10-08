@@ -3,7 +3,7 @@ import { NavLink, useLocation, Outlet } from "react-router-dom"
 import { useDashboardExtensions } from "../../dashboard-context"
 import { AppHeader } from "../../components/layout/header"
 import { SidebarUserMenu } from "../../components/layout/user-menu"
-import { LogoSupay } from "../../components/logo"
+import {  SupayIcon } from "../../components/logo"
 import {
   Sidebar,
   SidebarContent,
@@ -19,6 +19,7 @@ import {
   SidebarProvider,
   SidebarRail,
 } from "../../components/ui/sidebar"
+import { useTheme } from "../theme-provider"
 
 function NavItems({ sectionIndex }: { sectionIndex: number }) {
   const location = useLocation()
@@ -45,17 +46,20 @@ function NavItems({ sectionIndex }: { sectionIndex: number }) {
 
 export function AppShell() {
   const { navSections } = useDashboardExtensions()
+  const {theme} = useTheme();
+  const currentTheme = theme === "dark" ? "dark" : "light";
+  
 
   return (
     <SidebarProvider>
       <Sidebar collapsible="icon">
         <SidebarHeader className="h-14 justify-center border-b border-border/60">
           <div className="flex items-center gap-2 px-2 group-data-[collapsible=icon]:hidden">
-            <LogoSupay size={28} className="shrink-0 text-primary" color="currentColor" />
+            <SupayIcon size={28} theme={currentTheme} className="shrink-0 text-primary" color="currentColor" />
             <span className="text-sm font-semibold tracking-tight">Supay</span>
           </div>
           <div className="hidden group-data-[collapsible=icon]:flex justify-center">
-            <LogoSupay size={28} className="text-primary" color="currentColor" />
+            <SupayIcon size={28} theme={currentTheme} className="text-primary" color="currentColor" />
           </div>
         </SidebarHeader>
         <SidebarContent>

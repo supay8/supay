@@ -20,7 +20,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && cp src/styles.css dist/styles.css",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test \"tests/validation.test.ts\" \"tests/display-names.test.ts\""
   },
   "peerDependencies": {
     "react": "^19",

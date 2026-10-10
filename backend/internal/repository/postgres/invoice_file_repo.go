@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -41,7 +42,7 @@ func NewLegacyPostgresInvoiceFileRepository(db *gorm.DB) *PostgresInvoiceFileRep
 func (r *PostgresInvoiceFileRepository) BelongsToCompany(ctx context.Context, companyID, invoiceID string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Table("invoices").Where("id = ? AND tenant_id = ?", invoiceID, companyID).Count(&count).Error
-	return count == 1, err
+	return count == 1, repositoryError(err)
 }
 
 func (r *PostgresInvoiceFileRepository) CreateFile(ctx context.Context, file *domain.InvoiceFile) error {
@@ -54,7 +55,7 @@ func (r *PostgresInvoiceFileRepository) CreateFile(ctx context.Context, file *do
 		"kind": file.Kind, "storage_key": file.StorageKey, "sha256": file.SHA256,
 		"size": file.Size, "content_type": file.ContentType, "created_at": createdAt}
 	if err := r.db.WithContext(ctx).Table("invoice_files").Create(row).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	file.ID, file.CreatedAt = id, createdAt
 	return nil
@@ -65,10 +66,10 @@ func (r *PostgresInvoiceFileRepository) FindFile(ctx context.Context, companyID,
 	err := r.db.WithContext(ctx).Select("invoice_files.*, "+r.tenantColumn+" AS tenant_id").
 		Where(r.tenantColumn+" = ? AND invoice_id = ? AND kind = ?", companyID, invoiceID, kind).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, domain.ErrNotFound
+		return nil, repositoryError(domain.ErrNotFound)
 	}
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return &domain.InvoiceFile{ID: row.ID, CompanyID: row.CompanyID, InvoiceID: row.InvoiceID, Kind: row.Kind, StorageKey: row.StorageKey, SHA256: row.SHA256, Size: row.Size, ContentType: row.ContentType, CreatedAt: row.CreatedAt}, nil
 }
@@ -77,7 +78,7 @@ func (r *PostgresInvoiceFileRepository) DeleteFile(ctx context.Context, companyI
 	result := r.db.WithContext(ctx).
 		Where(r.tenantColumn+" = ? AND invoice_id = ? AND kind = ? AND storage_key = ?", companyID, invoiceID, kind, storageKey).
 		Delete(&invoiceFileRow{})
-	return result.Error
+	return repositoryError(result.Error)
 }
 
-var _ domain.InvoiceFileRepository = (*PostgresInvoiceFileRepository)(nil)
+var _ ports.InvoiceFileRepository = (*PostgresInvoiceFileRepository)(nil)

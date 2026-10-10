@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 // MemoryObjectStorage is a deterministic fake for use case tests.
@@ -89,4 +90,4 @@ func (s *MemoryObjectStorage) PresignGet(ctx context.Context, key string, ttl ti
 	return "memory://" + key, nil
 }
 
-var _ domain.Storage = (*MemoryObjectStorage)(nil)
+var _ ports.Storage = (*MemoryObjectStorage)(nil)

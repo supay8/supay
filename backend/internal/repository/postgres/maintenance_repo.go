@@ -8,6 +8,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -19,7 +20,7 @@ type PostgresMaintenanceRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresMaintenanceRepository(db *gorm.DB) domain.MaintenanceRepository {
+func NewPostgresMaintenanceRepository(db *gorm.DB) ports.MaintenanceRepository {
 	return &PostgresMaintenanceRepository{db: db}
 }
 
@@ -30,7 +31,7 @@ func (r *PostgresMaintenanceRepository) ListActiveCredentialTargets(ctx context.
 		Where("is_active = true").
 		Order("tenant_id ASC, codigo_sucursal ASC, codigo_punto_venta ASC").
 		Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 
 	result := make([]domain.CredentialTarget, 0, len(rows))
@@ -50,7 +51,7 @@ func (r *PostgresMaintenanceRepository) ListCertificatesDue(ctx context.Context,
 		Where("status = ? AND not_after <= ?", domain.CertificateActive, dueBefore).
 		Order("not_after ASC, tenant_id ASC").
 		Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 
 	result := make([]domain.CertificateAlertTarget, 0, len(rows))
@@ -90,7 +91,7 @@ func (r *PostgresMaintenanceRepository) MarkCertificateExpired(ctx context.Conte
 			"is_active":  false,
 			"updated_at": now,
 		})
-	return result.RowsAffected == 1, result.Error
+	return result.RowsAffected == 1, repositoryError(result.Error)
 }
 
 func (r *PostgresMaintenanceRepository) ClaimCertificateNotification(
@@ -115,7 +116,7 @@ func (r *PostgresMaintenanceRepository) ClaimCertificateNotification(
 		DoNothing: true,
 	}).Create(&row)
 	if insert.Error != nil {
-		return false, insert.Error
+		return false, repositoryError(insert.Error)
 	}
 	if insert.RowsAffected == 1 {
 		return true, nil
@@ -132,7 +133,7 @@ func (r *PostgresMaintenanceRepository) ClaimCertificateNotification(
 			"last_error": nil,
 			"updated_at": now,
 		})
-	return retry.RowsAffected == 1, retry.Error
+	return retry.RowsAffected == 1, repositoryError(retry.Error)
 }
 
 func (r *PostgresMaintenanceRepository) MarkCertificateNotificationSent(
@@ -141,14 +142,14 @@ func (r *PostgresMaintenanceRepository) MarkCertificateNotificationSent(
 	thresholdDays int,
 	deliveredAt time.Time,
 ) error {
-	return r.db.WithContext(ctx).Model(&models.CertificateNotification{}).
+	return repositoryError(r.db.WithContext(ctx).Model(&models.CertificateNotification{}).
 		Where("certificate_id = ? AND threshold_days = ? AND channel = ?", certificateID, thresholdDays, domain.CertificateNotificationWebhook).
 		Updates(map[string]any{
 			"status":       domain.CertificateNotificationSent,
 			"last_error":   nil,
 			"delivered_at": deliveredAt,
 			"updated_at":   deliveredAt,
-		}).Error
+		}).Error)
 }
 
 func (r *PostgresMaintenanceRepository) MarkCertificateNotificationFailed(
@@ -158,11 +159,11 @@ func (r *PostgresMaintenanceRepository) MarkCertificateNotificationFailed(
 	message string,
 	failedAt time.Time,
 ) error {
-	return r.db.WithContext(ctx).Model(&models.CertificateNotification{}).
+	return repositoryError(r.db.WithContext(ctx).Model(&models.CertificateNotification{}).
 		Where("certificate_id = ? AND threshold_days = ? AND channel = ?", certificateID, thresholdDays, domain.CertificateNotificationWebhook).
 		Updates(map[string]any{
 			"status":     domain.CertificateNotificationFailed,
 			"last_error": message,
 			"updated_at": failedAt,
-		}).Error
+		}).Error)
 }

@@ -45,3 +45,13 @@ func TestPoolConfigRejectsIdleAboveOpen(t *testing.T) {
 		t.Fatal("se esperaba rechazo de DB_MAX_IDLE > DB_MAX_OPEN")
 	}
 }
+
+func TestFactoryPoolModeDoesNotDependOnDeploymentEnvironment(t *testing.T) {
+	t.Setenv("DEPLOYMENT_MODE", "selfhosted")
+	t.Setenv("DB_MAX_OPEN", "")
+	t.Setenv("DB_MAX_IDLE", "")
+	got, err := poolConfigForMode("cloud")
+	if err != nil || got.maxOpen != 10 || got.maxIdle != 5 {
+		t.Fatalf("cloud factory pool=%+v err=%v", got, err)
+	}
+}

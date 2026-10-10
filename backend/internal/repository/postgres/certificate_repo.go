@@ -5,6 +5,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -13,7 +14,7 @@ type PostgresCertificateRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresCertificateRepository(db *gorm.DB) domain.CertificateRepository {
+func NewPostgresCertificateRepository(db *gorm.DB) ports.CertificateRepository {
 	return &PostgresCertificateRepository{db: db}
 }
 
@@ -44,7 +45,7 @@ func (r *PostgresCertificateRepository) Create(c *domain.Certificate) error {
 		}
 		return tx.Create(&dbModel).Error
 	}); err != nil {
-		return err
+		return repositoryError(err)
 	}
 
 	c.ID = dbModel.ID
@@ -56,7 +57,7 @@ func (r *PostgresCertificateRepository) Create(c *domain.Certificate) error {
 func (r *PostgresCertificateRepository) GetByID(id string) (*domain.Certificate, error) {
 	var dbModel models.Certificate
 	if err := r.db.Where("id = ?", id).First(&dbModel).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCertificate(&dbModel), nil
 }
@@ -66,7 +67,7 @@ func (r *PostgresCertificateRepository) GetActiveByCompany(companyID string) (*d
 	if err := r.db.Where("tenant_id = ? AND status = ?", companyID, domain.CertificateActive).
 		Order("not_after DESC").
 		First(&dbModel).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCertificate(&dbModel), nil
 }
@@ -74,7 +75,7 @@ func (r *PostgresCertificateRepository) GetActiveByCompany(companyID string) (*d
 func (r *PostgresCertificateRepository) ListByCompany(companyID string) ([]*domain.Certificate, error) {
 	var dbModels []models.Certificate
 	if err := r.db.Where("tenant_id = ?", companyID).Order("created_at DESC").Find(&dbModels).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	result := make([]*domain.Certificate, len(dbModels))
 	for i := range dbModels {
@@ -96,7 +97,7 @@ func (r *PostgresCertificateRepository) Update(c *domain.Certificate) error {
 		P12StorageRef:        c.P12StorageRef,
 		IsActive:             c.Status == domain.CertificateActive,
 	}
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return repositoryError(r.db.Transaction(func(tx *gorm.DB) error {
 		if c.Status == domain.CertificateActive {
 			if err := tx.Model(&models.Certificate{}).
 				Where("tenant_id = ? AND id <> ? AND status = ?", c.CompanyId, c.ID, domain.CertificateActive).
@@ -105,13 +106,13 @@ func (r *PostgresCertificateRepository) Update(c *domain.Certificate) error {
 			}
 		}
 		return tx.Save(&dbModel).Error
-	})
+	}))
 }
 
 func (r *PostgresCertificateRepository) Delete(id string) error {
-	return r.db.Model(&models.Certificate{}).Where("id = ?", id).Updates(map[string]any{
+	return repositoryError(r.db.Model(&models.Certificate{}).Where("id = ?", id).Updates(map[string]any{
 		"status": domain.CertificateRevoked, "is_active": false, "updated_at": time.Now(),
-	}).Error
+	}).Error)
 }
 
 func toDomainCertificate(m *models.Certificate) *domain.Certificate {

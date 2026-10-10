@@ -17,10 +17,3 @@ type ContingencyEvent struct {
 	IsSynced      bool       `json:"is_synced"`
 	CreatedAt     time.Time  `json:"created_at"`
 }
-
-type ContingencyEventRepository interface {
-	Create(e *ContingencyEvent) error
-	Update(e *ContingencyEvent) error
-	GetLatestByPointOfSale(pointOfSaleID string) (*ContingencyEvent, error)
-	GetBySiatCode(siatCode string) (*ContingencyEvent, error)
-}

@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
 type PostgresSiatActividadRepository struct{ db *gorm.DB }
 
-func NewPostgresSiatActividadRepository(db *gorm.DB) domain.SiatActividadRepository {
+func NewPostgresSiatActividadRepository(db *gorm.DB) ports.SiatActividadRepository {
 	return &PostgresSiatActividadRepository{db: db}
 }
 
@@ -24,19 +25,19 @@ func (r *PostgresSiatActividadRepository) Replace(companyID string, items []doma
 			Metadata: map[string]any{"tipo_actividad": item.TipoActividad},
 		})
 	}
-	return replaceVersionedCatalog(r.db, companyID, catalogActividades, syncedAt, rows)
+	return repositoryError(replaceVersionedCatalog(r.db, companyID, catalogActividades, syncedAt, rows))
 }
 
 func (r *PostgresSiatActividadRepository) List(companyID string) ([]*domain.SiatActividad, error) {
 	items, _, err := latestCatalogItems(r.db, companyID, catalogActividades)
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	out := make([]*domain.SiatActividad, 0, len(items))
 	for _, item := range items {
 		metadata, err := catalogMetadata(item)
 		if err != nil {
-			return nil, err
+			return nil, repositoryError(err)
 		}
 		out = append(out, &domain.SiatActividad{
 			CodigoCaeb: item.Codigo, Descripcion: item.Descripcion,
@@ -48,7 +49,7 @@ func (r *PostgresSiatActividadRepository) List(companyID string) ([]*domain.Siat
 
 type PostgresSiatLeyendaRepository struct{ db *gorm.DB }
 
-func NewPostgresSiatLeyendaRepository(db *gorm.DB) domain.SiatLeyendaRepository {
+func NewPostgresSiatLeyendaRepository(db *gorm.DB) ports.SiatLeyendaRepository {
 	return &PostgresSiatLeyendaRepository{db: db}
 }
 
@@ -62,7 +63,7 @@ func (r *PostgresSiatLeyendaRepository) Replace(companyID string, leyendas []dom
 			Metadata:    map[string]any{"codigo_actividad": legend.CodigoActividad},
 		})
 	}
-	return replaceVersionedCatalog(r.db, companyID, catalogLeyendasFactura, syncedAt, items)
+	return repositoryError(replaceVersionedCatalog(r.db, companyID, catalogLeyendasFactura, syncedAt, items))
 }
 
 func (r *PostgresSiatLeyendaRepository) List(companyID string) ([]*domain.SiatLeyenda, error) {
@@ -95,7 +96,7 @@ func (r *PostgresSiatLeyendaRepository) list(companyID, activity string) ([]*dom
 
 type PostgresSiatActividadDocSectorRepository struct{ db *gorm.DB }
 
-func NewPostgresSiatActividadDocSectorRepository(db *gorm.DB) domain.SiatActividadDocSectorRepository {
+func NewPostgresSiatActividadDocSectorRepository(db *gorm.DB) ports.SiatActividadDocSectorRepository {
 	return &PostgresSiatActividadDocSectorRepository{db: db}
 }
 
@@ -112,7 +113,7 @@ func (r *PostgresSiatActividadDocSectorRepository) Replace(companyID string, ite
 			},
 		})
 	}
-	return replaceVersionedCatalog(r.db, companyID, catalogActividadesDocSector, syncedAt, rows)
+	return repositoryError(replaceVersionedCatalog(r.db, companyID, catalogActividadesDocSector, syncedAt, rows))
 }
 
 func (r *PostgresSiatActividadDocSectorRepository) List(companyID string) ([]*domain.SiatActividadDocSector, error) {

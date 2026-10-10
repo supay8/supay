@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"encoding/json"
 	"time"
 )
@@ -37,19 +36,4 @@ type OutboxEvent struct {
 	LastError     *string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
-}
-
-// EmissionQueue is the application-facing port used by InvoiceUsecase. Its
-// PostgreSQL implementation only writes to the outbox; it never calls SIAT.
-type EmissionQueue interface {
-	EnqueueInvoiceEmission(ctx context.Context, invoiceID, tenantID, cufdID string) (*OutboxEvent, error)
-}
-
-// OutboxRepository is consumed by the dispatcher that relays persistent
-// outbox records into River.
-type OutboxRepository interface {
-	EmissionQueue
-	ClaimPending(ctx context.Context, eventType, owner string, limit int, now time.Time, lockTimeout time.Duration) ([]OutboxEvent, error)
-	MarkPublished(ctx context.Context, id, owner string, publishedAt time.Time) error
-	MarkFailed(ctx context.Context, id, owner, lastError string, nextAttempt time.Time) error
 }

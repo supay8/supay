@@ -8,6 +8,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/datatypes"
@@ -16,20 +17,15 @@ import (
 )
 
 type PostgresInvoiceRepository struct {
-	db                      *gorm.DB
-	queueEmailNotifications bool
+	db *gorm.DB
 }
 
-func NewPostgresInvoiceRepository(db *gorm.DB) domain.InvoiceRepository {
+func NewPostgresInvoiceRepository(db *gorm.DB) ports.InvoiceRepository {
 	return &PostgresInvoiceRepository{db: db}
 }
 
-func (r *PostgresInvoiceRepository) EnableEmailNotifications(enabled bool) {
-	r.queueEmailNotifications = enabled
-}
-
 func (r *PostgresInvoiceRepository) Create(inv *domain.Invoice) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return repositoryError(r.db.Transaction(func(tx *gorm.DB) error {
 		// La secuencia se incrementa atómicamente y evita escanear invoices.
 		if err := tx.Exec(`
 			INSERT INTO invoice_sequences (tenant_id, point_of_sale_id, next_number)
@@ -60,14 +56,14 @@ func (r *PostgresInvoiceRepository) Create(inv *domain.Invoice) error {
 			}
 		}
 		return nil
-	})
+	}))
 }
 
 // ListFiltered devuelve facturas paginadas según el filtro, omitiendo el
 // archivo fiscal pesado y precargando ítems. El XML vive en object storage.
 func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error) {
 	if strings.TrimSpace(filter.TenantID) == "" {
-		return nil, 0, domain.ErrMissingCompanyID
+		return nil, 0, repositoryError(domain.ErrMissingCompanyID)
 	}
 	query := r.db.Model(&models.Invoice{}).
 		Joins("JOIN points_of_sale AS invoice_pos ON invoice_pos.id = invoices.point_of_sale_id AND invoice_pos.tenant_id = invoices.tenant_id").
@@ -83,7 +79,7 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, repositoryError(err)
 	}
 	var ms []models.Invoice
 	if err := query.
@@ -92,7 +88,7 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 		Order("invoices.invoice_number DESC").
 		Limit(filter.Limit).Offset(filter.Offset).
 		Find(&ms).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, repositoryError(err)
 	}
 	res := make([]*domain.Invoice, 0, len(ms))
 	for i := range ms {
@@ -103,24 +99,24 @@ func (r *PostgresInvoiceRepository) ListFiltered(filter domain.InvoiceListFilter
 
 func (r *PostgresInvoiceRepository) GetByID(tenantID, id string) (*domain.Invoice, error) {
 	if strings.TrimSpace(tenantID) == "" {
-		return nil, domain.ErrMissingCompanyID
+		return nil, repositoryError(domain.ErrMissingCompanyID)
 	}
 	var m models.Invoice
 	if err := r.db.Preload("Items").Preload("Events").Preload("PointOfSale").Preload("Company.Config").Preload("CufdRecord").First(&m, "tenant_id = ? AND id = ?", tenantID, id).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainInvoice(&m), nil
 }
 
 func (r *PostgresInvoiceRepository) ListByPointOfSale(tenantID, pointOfSaleID string) ([]*domain.Invoice, error) {
 	if strings.TrimSpace(tenantID) == "" {
-		return nil, domain.ErrMissingCompanyID
+		return nil, repositoryError(domain.ErrMissingCompanyID)
 	}
 	var ms []models.Invoice
 	if err := r.db.Preload("Items").
 		Where("tenant_id = ? AND point_of_sale_id = ?", tenantID, pointOfSaleID).
 		Order("invoice_number ASC").Find(&ms).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	res := make([]*domain.Invoice, 0, len(ms))
 	for i := range ms {
@@ -148,50 +144,50 @@ func invoiceMutableFields(inv *domain.Invoice) map[string]any {
 
 func (r *PostgresInvoiceRepository) Update(inv *domain.Invoice) error {
 	if strings.TrimSpace(inv.CompanyId) == "" {
-		return domain.ErrMissingCompanyID
+		return repositoryError(domain.ErrMissingCompanyID)
 	}
 	var current models.Invoice
 	if err := r.db.Select("status").Where("tenant_id = ? AND id = ?", inv.CompanyId, inv.ID).First(&current).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	if domain.InvoiceStatus(current.Status) != inv.Status {
-		return domain.ErrStatusUpdateRequiresTransition
+		return repositoryError(domain.ErrStatusUpdateRequiresTransition)
 	}
 	res := r.db.Model(&models.Invoice{}).
 		Where("tenant_id = ? AND id = ? AND status = ?", inv.CompanyId, inv.ID, models.InvoiceStatus(inv.Status)).
 		Updates(invoiceMutableFields(inv))
 	if res.Error != nil {
-		return res.Error
+		return repositoryError(res.Error)
 	}
 	if res.RowsAffected == 0 {
 		if err := r.db.Select("status").Where("tenant_id = ? AND id = ?", inv.CompanyId, inv.ID).First(&current).Error; err != nil {
-			return err
+			return repositoryError(err)
 		}
-		return domain.ErrStatusUpdateRequiresTransition
+		return repositoryError(domain.ErrStatusUpdateRequiresTransition)
 	}
 	return nil
 }
 
 func (r *PostgresInvoiceRepository) TransitionStatus(tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
 	if strings.TrimSpace(tenantID) == "" {
-		return false, domain.ErrMissingCompanyID
+		return false, repositoryError(domain.ErrMissingCompanyID)
 	}
 	if err := (domain.InvoiceStateMachine{}).Transition(from, to, reason); err != nil {
-		return false, err
+		return false, repositoryError(err)
 	}
 	claimed := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var err error
-		claimed, err = transitionInvoiceStatus(tx, tenantID, id, from, to, reason, fields, event, r.queueEmailNotifications)
+		claimed, err = transitionInvoiceStatus(tx, tenantID, id, from, to, reason, fields, event)
 		return err
 	})
-	return claimed, err
+	return claimed, repositoryError(err)
 }
 
 // transitionInvoiceStatus aplica la misma transición protegida dentro de una
 // transacción existente. Los lotes la reutilizan para que el estado fiscal y
 // el evento queden atómicos con el resultado del paquete.
-func transitionInvoiceStatus(tx *gorm.DB, tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent, queueEmail bool) (bool, error) {
+func transitionInvoiceStatus(tx *gorm.DB, tenantID, id string, from, to domain.InvoiceStatus, reason domain.InvoiceTransitionReason, fields map[string]any, event *domain.InvoiceEvent) (bool, error) {
 	if strings.TrimSpace(tenantID) == "" {
 		return false, domain.ErrMissingCompanyID
 	}
@@ -221,7 +217,9 @@ func transitionInvoiceStatus(tx *gorm.DB, tenantID, id string, from, to domain.I
 	if result.RowsAffected != 1 {
 		return false, nil
 	}
-	if queueEmail && (to == domain.InvoiceAccepted || to == domain.InvoiceObserved) {
+	// Persistir únicamente el hand-off durable. La configuración del proceso
+	// controla el consumidor del outbox, nunca la atomicidad de esta escritura.
+	if to == domain.InvoiceAccepted || to == domain.InvoiceObserved {
 		if err := queueInvoiceEmailNotification(tx, tenantID, id); err != nil {
 			return false, err
 		}
@@ -299,7 +297,7 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, repositoryError(err)
 	}
 	return released, nil
 }
@@ -307,7 +305,7 @@ func (r *PostgresInvoiceRepository) ReleaseStaleSending(olderThan time.Duration)
 func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*domain.Cufd, error) {
 	var cufd models.Cufd
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ?", pointOfSaleID, at, at).Order("valid_from desc").First(&cufd).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCufd(&cufd), nil
 }
@@ -315,13 +313,13 @@ func (r *PostgresInvoiceRepository) FindActiveCufdForPointOfSale(pointOfSaleID s
 // get list of invoices by  IDS
 func (r *PostgresInvoiceRepository) GetByIDs(tenantID string, ids []string) ([]*domain.Invoice, error) {
 	if strings.TrimSpace(tenantID) == "" {
-		return nil, domain.ErrMissingCompanyID
+		return nil, repositoryError(domain.ErrMissingCompanyID)
 	}
 	var ms []models.Invoice
 	if err := r.db.Preload("Items").Preload("CufdRecord").
 		Where("tenant_id = ? AND id IN ?", tenantID, ids).
 		Order("invoice_number ASC").Find(&ms).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	res := make([]*domain.Invoice, 0, len(ms))
 	for i := range ms {

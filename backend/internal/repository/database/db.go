@@ -37,21 +37,32 @@ type poolConfig struct {
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// ConnectDB abre la conexión a PostgreSQL, configura el pool y devuelve la
-// instancia de *gorm.DB. También mantiene la variable global DB para
-// compatibilidad con código existente; el objetivo es que el contenedor de
-// dependencias sea la única fuente de verdad en el futuro.
-func ConnectDB() *gorm.DB {
-	// Cargar variables del archivo .env si existe
+// ConnectDB keeps the legacy CLI connection for migrate/seed commands.
+func ConnectDB() (*gorm.DB, error) {
 	_ = godotenv.Load()
-
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		log.Fatal("Environment variable DATABASE_URL is not set. Please set it in your .env file or environment.")
+	db, err := Open(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return nil, err
 	}
+	DB = db
+	return db, nil
+}
 
-	var err error
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+// Open constructs an owned pool and propagates errors to its caller.
+func Open(dsn string) (*gorm.DB, error) {
+	return OpenForMode(dsn, os.Getenv("DEPLOYMENT_MODE"))
+}
+
+// OpenForMode uses the factory's deployment mode for pool limits.
+func OpenForMode(dsn, deploymentMode string) (*gorm.DB, error) {
+	if strings.TrimSpace(dsn) == "" {
+		return nil, errors.New("DATABASE_URL es obligatorio")
+	}
+	pool, err := poolConfigForMode(deploymentMode)
+	if err != nil {
+		return nil, fmt.Errorf("configuración del pool: %w", err)
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		// Nivel de log configurable vía LOG_LEVEL (debug|info|warn|error).
 		// Por defecto Warn para no volcar queries con datos fiscales en producción.
 		Logger: logger.Default.LogMode(gormLogLevel()),
@@ -65,36 +76,39 @@ func ConnectDB() *gorm.DB {
 		SkipDefaultTransaction: true,
 	})
 	if err != nil {
-		log.Fatalf("Error of connection to PostgreSQL: %v", err)
+		if db != nil {
+			if pool, poolErr := db.DB(); poolErr == nil {
+				_ = pool.Close()
+			}
+		}
+		return nil, fmt.Errorf("conexión PostgreSQL: %w", err)
 	}
 
-	sqlDB, err := DB.DB()
+	sqldb, err := db.DB()
 	if err != nil {
-		log.Fatalf("No se pudo obtener sql.DB del pool GORM: %v", err)
+		return nil, fmt.Errorf("pool GORM: %w", err)
 	}
-	pool, err := poolConfigFromEnv()
-	if err != nil {
-		log.Fatalf("Configuración inválida del pool PostgreSQL: %v", err)
-	}
-	sqlDB.SetMaxOpenConns(pool.maxOpen)
-	sqlDB.SetMaxIdleConns(pool.maxIdle)
-	sqlDB.SetConnMaxLifetime(30 * time.Minute) // recicla antes que LB/RDS cierre conns stale
-	sqlDB.SetConnMaxIdleTime(5 * time.Minute)  // libera idles tras burst nocturno
-	log.Printf("🔌 Pool DB configurado: MaxOpen=%d MaxIdle=%d MaxLifetime=30m MaxIdleTime=5m", pool.maxOpen, pool.maxIdle)
+	sqldb.SetMaxOpenConns(pool.maxOpen)
+	sqldb.SetMaxIdleConns(pool.maxIdle)
+	sqldb.SetConnMaxLifetime(30 * time.Minute) // recicla antes que LB/RDS cierre conns stale
+	sqldb.SetConnMaxIdleTime(5 * time.Minute)  // libera idles tras burst nocturno
+	log.Printf("🔌 Pool db configurado: MaxOpen=%d MaxIdle=%d MaxLifetime=30m MaxIdleTime=5m", pool.maxOpen, pool.maxIdle)
 
 	// Configurar la zona horaria de la sesión PostgreSQL a America/La_Paz para
 	// que las consultas y visualizaciones de timestamps muestren la hora de Bolivia.
-	if err := DB.Exec("SET TIME ZONE 'America/La_Paz'").Error; err != nil {
+	if err := db.Exec("SET TIME ZONE 'America/La_Paz'").Error; err != nil {
 		log.Printf("⚠️ No se pudo configurar Timezone La Paz en PostgreSQL: %v (se usa UTC por defecto)", err)
 	}
 
 	fmt.Println("Connection stablished with PostgreSQL database successfully!")
 
-	return DB
+	return db, nil
 }
 
-func poolConfigFromEnv() (poolConfig, error) {
-	cloud := strings.EqualFold(strings.TrimSpace(os.Getenv("DEPLOYMENT_MODE")), "cloud")
+func poolConfigFromEnv() (poolConfig, error) { return poolConfigForMode(os.Getenv("DEPLOYMENT_MODE")) }
+
+func poolConfigForMode(mode string) (poolConfig, error) {
+	cloud := strings.EqualFold(strings.TrimSpace(mode), "cloud")
 	defaults := poolConfig{maxOpen: 60, maxIdle: 15}
 	if cloud {
 		defaults = poolConfig{maxOpen: 10, maxIdle: 5}

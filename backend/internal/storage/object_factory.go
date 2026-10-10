@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"github.com/brandsrx/supay/internal/config"
-	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
-func NewObjectStorageFromConfig(ctx context.Context, cfg config.Config) (domain.Storage, error) {
+func NewObjectStorageFromConfig(ctx context.Context, cfg config.Config) (ports.Storage, error) {
 	if err := cfg.ValidateStorage(); err != nil {
 		return nil, err
 	}

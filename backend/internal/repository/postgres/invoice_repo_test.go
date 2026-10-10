@@ -11,6 +11,7 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/repository/database"
+	"github.com/brandsrx/supay/internal/testutil"
 	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -30,6 +31,12 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("conexión a BD de pruebas: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("pool de BD de pruebas: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	testutil.LockPostgres(t, sqlDB)
 	if err := database.MigrateDB(db); err != nil {
 		t.Fatalf("migraciones: %v", err)
 	}
@@ -252,7 +259,6 @@ func TestClaimForEmissionEsAtomica(t *testing.T) {
 func TestAcceptedTransitionQueuesInvoiceEmailInSameTransaction(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewPostgresInvoiceRepository(db).(*PostgresInvoiceRepository)
-	repo.EnableEmailNotifications(true)
 	f := seedFixture(t, db)
 	if err := db.Model(&models.TenantConfig{}).Where("tenant_id = ?", f.companyID).
 		Update("settings", datatypes.JSON([]byte(`{"invoice_email":{"enabled":true}}`))).Error; err != nil {
@@ -291,7 +297,6 @@ func TestAcceptedTransitionQueuesInvoiceEmailInSameTransaction(t *testing.T) {
 func TestAcceptedTransitionDoesNotQueueInvoiceEmailWhenTenantDisabled(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewPostgresInvoiceRepository(db).(*PostgresInvoiceRepository)
-	repo.EnableEmailNotifications(true)
 	f := seedFixture(t, db)
 
 	inv := nuevaFacturaPendiente(f)
@@ -317,7 +322,6 @@ func TestAcceptedTransitionDoesNotQueueInvoiceEmailWhenTenantDisabled(t *testing
 func TestAcceptedTransitionDoesNotQueueInvoiceEmailWithoutRecipient(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewPostgresInvoiceRepository(db).(*PostgresInvoiceRepository)
-	repo.EnableEmailNotifications(true)
 	f := seedFixture(t, db)
 	if err := db.Model(&models.TenantConfig{}).Where("tenant_id = ?", f.companyID).
 		Update("settings", datatypes.JSON([]byte(`{"invoice_email":{"enabled":true}}`))).Error; err != nil {

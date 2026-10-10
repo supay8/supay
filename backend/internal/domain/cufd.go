@@ -14,10 +14,3 @@ type Cufd struct {
 	Active        bool      `json:"active"`
 	CreatedAt     time.Time `json:"created_at"`
 }
-
-type CufdRepository interface {
-	Create(c *Cufd) error
-	GetActiveByPos(pointOfSaleID string) (*Cufd, error)
-	GetByPosAndWindow(pointOfSaleID string, from, to time.Time) (*Cufd, error)
-	DeactivateExpired() error
-}

@@ -28,9 +28,9 @@ func (r *PostgresAuthRepository) CreateUser(user *domain.User) error {
 	}
 	if err := r.db.Create(&model).Error; err != nil {
 		if isUniqueViolation(err) {
-			return domain.ErrUserEmailConflict
+			return repositoryError(domain.ErrUserEmailConflict)
 		}
-		return err
+		return repositoryError(err)
 	}
 	*user = *toDomainUser(&model)
 	return nil
@@ -39,7 +39,7 @@ func (r *PostgresAuthRepository) CreateUser(user *domain.User) error {
 func (r *PostgresAuthRepository) GetUserByEmail(email string) (*domain.User, error) {
 	var user models.User
 	if err := r.db.Where("lower(email) = ?", strings.ToLower(strings.TrimSpace(email))).First(&user).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainUser(&user), nil
 }
@@ -47,7 +47,7 @@ func (r *PostgresAuthRepository) GetUserByEmail(email string) (*domain.User, err
 func (r *PostgresAuthRepository) GetUserByID(id string) (*domain.User, error) {
 	var user models.User
 	if err := r.db.Where("id = ?", id).First(&user).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainUser(&user), nil
 }
@@ -59,7 +59,7 @@ func (r *PostgresAuthRepository) HasCompanyAccess(userID, companyID string) (boo
 		Joins("JOIN tenants AS t ON t.id = ut.tenant_id AND t.is_active = true AND t.auth_organization_id IS NULL").
 		Where("ut.user_id = ? AND ut.tenant_id = ?", userID, companyID).
 		Count(&count).Error
-	return count > 0, err
+	return count > 0, repositoryError(err)
 }
 
 func (r *PostgresAuthRepository) ListCompanies(userID string) ([]domain.UserCompany, error) {
@@ -67,7 +67,7 @@ func (r *PostgresAuthRepository) ListCompanies(userID string) ([]domain.UserComp
 	if err := r.db.Model(&models.UserTenant{}).
 		Joins("JOIN tenants AS t ON t.id = user_tenants.tenant_id AND t.is_active = true AND t.auth_organization_id IS NULL").
 		Where("user_id = ?", userID).Order("user_tenants.created_at ASC").Find(&memberships).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	result := make([]domain.UserCompany, 0, len(memberships))
 	companyRepo := &PostgresCompanyRepository{db: r.db}
@@ -77,7 +77,7 @@ func (r *PostgresAuthRepository) ListCompanies(userID string) ([]domain.UserComp
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, repositoryError(err)
 		}
 		result = append(result, domain.UserCompany{Company: company, Role: membership.Role})
 	}
@@ -85,7 +85,7 @@ func (r *PostgresAuthRepository) ListCompanies(userID string) ([]domain.UserComp
 }
 
 func (r *PostgresAuthRepository) CreateCompanyForUser(userID string, company *domain.Company) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return repositoryError(r.db.Transaction(func(tx *gorm.DB) error {
 		if err := createCompany(tx, company); err != nil {
 			if isUniqueViolation(err) {
 				return domain.ErrCompanyNitConflict
@@ -98,7 +98,7 @@ func (r *PostgresAuthRepository) CreateCompanyForUser(userID string, company *do
 			Role:     domain.CompanyRoleOwner,
 		}
 		return tx.Create(&membership).Error
-	})
+	}))
 }
 
 func toDomainUser(user *models.User) *domain.User {

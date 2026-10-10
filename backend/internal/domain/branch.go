@@ -18,12 +18,3 @@ type Branch struct {
 	Active         bool      `json:"active"`
 	CreatedAt      time.Time `json:"created_at"`
 }
-
-type BranchRepository interface {
-	Create(branch *Branch) error
-	GetByID(id string) (*Branch, error)
-	GetByCompanyAndSucursal(companyID string, codigoSucursal int) (*Branch, error)
-	List(companyID string) ([]*Branch, error)
-	Update(branch *Branch) error
-	Delete(id string) error
-}

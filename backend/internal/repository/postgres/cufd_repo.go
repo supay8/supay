@@ -6,6 +6,7 @@ import (
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -13,7 +14,7 @@ type PostgresCufdRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresCufdRepository(db *gorm.DB) domain.CufdRepository {
+func NewPostgresCufdRepository(db *gorm.DB) ports.CufdRepository {
 	return &PostgresCufdRepository{db: db}
 }
 
@@ -21,10 +22,10 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 	var tenantID string
 	if err := r.db.Model(&models.PointOfSale{}).
 		Select("tenant_id").Where("id = ?", c.PointOfSaleID).Scan(&tenantID).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	if tenantID == "" {
-		return gorm.ErrRecordNotFound
+		return repositoryError(gorm.ErrRecordNotFound)
 	}
 	model := models.Cufd{
 		TenantId:      tenantID,
@@ -52,7 +53,7 @@ func (r *PostgresCufdRepository) Create(c *domain.Cufd) error {
 		}
 		return tx.Create(&model).Error
 	}); err != nil {
-		return err
+		return repositoryError(err)
 	}
 	c.ID = model.ID
 	c.CreatedAt = model.CreatedAt
@@ -64,7 +65,7 @@ func (r *PostgresCufdRepository) GetActiveByPos(pointOfSaleID string) (*domain.C
 	now := time.Now().In(siat.LaPaz)
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ? AND is_active = true", pointOfSaleID, now, now).
 		Order("created_at DESC").First(&m).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCufd(&m), nil
 }
@@ -76,11 +77,11 @@ func (r *PostgresCufdRepository) GetByPosAndWindow(pointOfSaleID string, from, t
 	var m models.Cufd
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND valid_to >= ?", pointOfSaleID, from, to).
 		Order("is_active DESC, created_at DESC").First(&m).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCufd(&m), nil
 }
 
 func (r *PostgresCufdRepository) DeactivateExpired() error {
-	return r.db.Model(&models.Cufd{}).Where("valid_to < ? AND is_active = true", time.Now().In(siat.LaPaz)).Update("is_active", false).Error
+	return repositoryError(r.db.Model(&models.Cufd{}).Where("valid_to < ? AND is_active = true", time.Now().In(siat.LaPaz)).Update("is_active", false).Error)
 }

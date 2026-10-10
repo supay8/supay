@@ -15,10 +15,11 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/storage"
 )
 
-func storageContract(t *testing.T, s domain.Storage) {
+func storageContract(t *testing.T, s ports.Storage) {
 	t.Helper()
 	ctx := context.Background()
 	key := fmt.Sprintf("companies/company1/invoices/invoice1/%d.xml", time.Now().UnixNano())

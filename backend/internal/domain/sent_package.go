@@ -68,22 +68,3 @@ type BatchInvoiceDocument struct {
 	Archivo     string
 	HashArchivo string
 }
-
-// SentPackageRepository define el contrato para la persistencia de envíos.
-type SentPackageRepository interface {
-	Create(pkg *SentPackage) error
-	GetByID(id string) (*SentPackage, error)
-	GetByCodigoRecepcion(codigoRecepcion string) (*SentPackage, error)
-	ListByPointOfSale(pointOfSaleID string) ([]*SentPackage, error)
-	ListByCompany(companyID string) ([]*SentPackage, error)
-	Update(pkg *SentPackage) error
-}
-
-// FiscalBatchRepository reserva y reconcilia un envío junto con sus facturas.
-// La reserva sobrevive a errores de transporte: un resultado incierto requiere
-// conciliación y nunca habilita automáticamente un nuevo envío.
-type FiscalBatchRepository interface {
-	ReserveBatch(pkg *SentPackage, invoiceIDs []string, expectedStatus InvoiceStatus) error
-	UpdateBatch(pkg *SentPackage, invoiceStatus *InvoiceStatus) error
-	ListPendingBatchInvoices(companyID, posID string, status InvoiceStatus, eventID *string) ([]*Invoice, error)
-}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 type LocalObjectStorage struct {
@@ -255,4 +256,4 @@ func (s *LocalObjectStorage) VerifySignedURL(key, filename, expiryText, signatur
 
 func mustDecodeHex(s string) []byte { b, _ := hex.DecodeString(s); return b }
 
-var _ domain.Storage = (*LocalObjectStorage)(nil)
+var _ ports.Storage = (*LocalObjectStorage)(nil)

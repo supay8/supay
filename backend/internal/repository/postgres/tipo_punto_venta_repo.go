@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
 type PostgresTipoPuntoVentaRepository struct{ db *gorm.DB }
 
-func NewPostgresTipoPuntoVentaRepository(db *gorm.DB) domain.TipoPuntoVentaRepository {
+func NewPostgresTipoPuntoVentaRepository(db *gorm.DB) ports.TipoPuntoVentaRepository {
 	return &PostgresTipoPuntoVentaRepository{db: db}
 }
 
@@ -20,19 +21,19 @@ func (r *PostgresTipoPuntoVentaRepository) Replace(companyID string, tipos []dom
 	for _, tipo := range tipos {
 		items = append(items, versionedCatalogItem{Code: strconv.Itoa(tipo.CodigoClasificador), Description: tipo.Descripcion})
 	}
-	return replaceVersionedCatalog(r.db, companyID, catalogTipoPuntoVenta, syncedAt, items)
+	return repositoryError(replaceVersionedCatalog(r.db, companyID, catalogTipoPuntoVenta, syncedAt, items))
 }
 
 func (r *PostgresTipoPuntoVentaRepository) List(companyID string) ([]*domain.TipoPuntoVenta, error) {
 	items, version, err := latestCatalogItems(r.db, companyID, catalogTipoPuntoVenta)
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	result := make([]*domain.TipoPuntoVenta, 0, len(items))
 	for _, item := range items {
 		code, err := strconv.Atoi(item.Codigo)
 		if err != nil {
-			return nil, err
+			return nil, repositoryError(err)
 		}
 		row := &domain.TipoPuntoVenta{CompanyID: companyID, CodigoClasificador: code, Descripcion: item.Descripcion}
 		if version != nil {
@@ -49,12 +50,12 @@ func (r *PostgresTipoPuntoVentaRepository) List(companyID string) ([]*domain.Tip
 func (r *PostgresTipoPuntoVentaRepository) FindByClasificador(companyID string, codigoClasificador int) (*domain.TipoPuntoVenta, error) {
 	items, err := r.List(companyID)
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	for _, item := range items {
 		if item.CodigoClasificador == codigoClasificador {
 			return item, nil
 		}
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, repositoryError(gorm.ErrRecordNotFound)
 }

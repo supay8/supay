@@ -3,6 +3,7 @@ package postgres
 import (
 	"time"
 
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -24,24 +25,24 @@ func (r *PostgresApiKeyRepository) FindByPrefix(prefix string) (*models.ApiKey, 
 	if err := r.db.Model(&models.ApiKey{}).
 		Joins("JOIN tenants AS t ON t.id = api_keys.tenant_id AND t.is_active = true").
 		Where("key_prefix = ? AND api_keys.is_active = true", prefix).First(&key).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	if key.ExpiresAt != nil && key.ExpiresAt.Before(time.Now()) {
-		return nil, gorm.ErrRecordNotFound
+		return nil, repositoryError(gorm.ErrRecordNotFound)
 	}
 	return &key, nil
 }
 
 // TouchLastUsed actualiza el timestamp de último uso.
 func (r *PostgresApiKeyRepository) TouchLastUsed(id string) error {
-	return r.db.Model(&models.ApiKey{}).Where("id = ?", id).Update("last_used_at", time.Now()).Error
+	return repositoryError(r.db.Model(&models.ApiKey{}).Where("id = ?", id).Update("last_used_at", time.Now()).Error)
 }
 
 // HashKey genera un hash bcrypt de una API key plana.
 func HashKey(plain string) (string, error) {
 	b, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
 	if err != nil {
-		return "", err
+		return "", repositoryError(err)
 	}
 	return string(b), nil
 }
@@ -52,27 +53,36 @@ func VerifyKey(plain, hash string) bool {
 }
 
 // Create inserta una nueva API key.
-func (r *PostgresApiKeyRepository) Create(key *models.ApiKey) error {
-	return r.db.Create(key).Error
+func (r *PostgresApiKeyRepository) Create(key *domain.ApiKey) error {
+	model := apiKeyModel(key)
+	if err := r.db.Create(&model).Error; err != nil {
+		return repositoryError(err)
+	}
+	*key = apiKeyDomain(model)
+	return nil
 }
 
 // ListByTenant devuelve todas las API keys de un tenant ordenadas por fecha de creación.
-func (r *PostgresApiKeyRepository) ListByTenant(tenantID string) ([]models.ApiKey, error) {
+func (r *PostgresApiKeyRepository) ListByTenant(tenantID string) ([]domain.ApiKey, error) {
 	var keys []models.ApiKey
 	err := r.db.Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&keys).Error
-	return keys, err
+	out := make([]domain.ApiKey, len(keys))
+	for i, key := range keys {
+		out[i] = apiKeyDomain(key)
+	}
+	return out, repositoryError(err)
 }
 
 // GetByID busca una API key por su ID.
 func (r *PostgresApiKeyRepository) GetByID(id string) (*models.ApiKey, error) {
 	var key models.ApiKey
 	if err := r.db.First(&key, "id = ?", id).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return &key, nil
 }
 
 // Deactivate desactiva una API key (soft delete por tenant).
 func (r *PostgresApiKeyRepository) Deactivate(id, tenantID string) error {
-	return r.db.Model(&models.ApiKey{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("is_active", false).Error
+	return repositoryError(r.db.Model(&models.ApiKey{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("is_active", false).Error)
 }

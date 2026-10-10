@@ -3,6 +3,7 @@ package postgres
 import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -12,7 +13,7 @@ type PostgresInvoiceEventRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresInvoiceEventRepository(db *gorm.DB) domain.InvoiceEventRepository {
+func NewPostgresInvoiceEventRepository(db *gorm.DB) ports.InvoiceEventRepository {
 	return &PostgresInvoiceEventRepository{db: db}
 }
 
@@ -26,7 +27,7 @@ func (r *PostgresInvoiceEventRepository) Create(event *domain.InvoiceEvent) erro
 		model.ID = uuid.NewString()
 	}
 	if err := r.db.Create(&model).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	event.ID = model.ID
 	event.CreatedAt = model.CreatedAt
@@ -37,7 +38,7 @@ func (r *PostgresInvoiceEventRepository) List(invoiceID string) ([]*domain.Invoi
 	var rows []models.InvoiceEvent
 	if err := r.db.Where("invoice_id = ?", invoiceID).
 		Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	result := make([]*domain.InvoiceEvent, 0, len(rows))
 	for i := range rows {

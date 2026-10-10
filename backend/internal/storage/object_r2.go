@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 type ObjectR2Config struct {
@@ -187,4 +188,4 @@ func (s *R2ObjectStorage) PresignGet(ctx context.Context, key string, ttl time.D
 	return request.URL, nil
 }
 
-var _ domain.Storage = (*R2ObjectStorage)(nil)
+var _ ports.Storage = (*R2ObjectStorage)(nil)

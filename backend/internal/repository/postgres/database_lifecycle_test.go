@@ -3,12 +3,13 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/models"
-	"github.com/google/uuid"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/models"
+	"github.com/google/uuid"
 )
 
 func TestDatabaseCustomerContactPreservesInvoiceSnapshot(t *testing.T) {
@@ -144,7 +145,7 @@ func TestDatabaseAuthAuthoritiesAndArchive(t *testing.T) {
 	if ok, err := cloudRepo.HasCompanyAccess(cloudUID, cloud.companyID); err != nil || !ok {
 		t.Fatalf("cloud access: %v %v", ok, err)
 	}
-	key := &models.ApiKey{CompanyId: cloud.companyID, KeyHash: uuid.NewString(), KeyPrefix: "test-key", Scopes: []string{"read", "write"}, IsActive: true}
+	key := &domain.ApiKey{CompanyId: cloud.companyID, KeyHash: uuid.NewString(), KeyPrefix: "test-key", Scopes: []string{"read", "write"}, IsActive: true}
 	keys := NewPostgresApiKeyRepository(db)
 	if err := keys.Create(key); err != nil {
 		t.Fatal(err)

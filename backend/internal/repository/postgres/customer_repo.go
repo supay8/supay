@@ -3,6 +3,7 @@ package postgres
 import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -11,7 +12,7 @@ type PostgresCustomerRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresCustomerRepository(db *gorm.DB) domain.CustomerRepository {
+func NewPostgresCustomerRepository(db *gorm.DB) ports.CustomerRepository {
 	return &PostgresCustomerRepository{db: db}
 }
 
@@ -28,7 +29,7 @@ func (r *PostgresCustomerRepository) Create(c *domain.Customer) error {
 		CodigoCliente:  c.CodigoCliente,
 	}
 	if err := r.db.Create(&dbModel).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	c.ID = dbModel.ID
 	c.CreatedAt = dbModel.CreatedAt
@@ -38,7 +39,7 @@ func (r *PostgresCustomerRepository) Create(c *domain.Customer) error {
 func (r *PostgresCustomerRepository) GetByID(id string) (*domain.Customer, error) {
 	var m models.Customer
 	if err := r.db.Where("id = ? AND is_active = true", id).First(&m).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCustomer(&m), nil
 }
@@ -52,20 +53,20 @@ func (r *PostgresCustomerRepository) GetByCompanyAndFiscalIdentity(companyID str
 		AND COALESCE(email, '') = ? AND is_active = true`,
 		companyID, models.DocumentType(documentType), documentNumber, complement, name, email)
 	if err := query.First(&m).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCustomer(&m), nil
 }
 
 func (r *PostgresCustomerRepository) List(companyID string) ([]*domain.Customer, error) {
 	if companyID == "" {
-		return nil, domain.ErrMissingCompanyID
+		return nil, repositoryError(domain.ErrMissingCompanyID)
 	}
 	var modelsList []models.Customer
 	if err := r.db.Raw(`SELECT DISTINCT ON (document_type, document_number, COALESCE(complement, '')) *
 		FROM customers WHERE tenant_id = ? AND is_active = true
 		ORDER BY document_type, document_number, COALESCE(complement, ''), created_at DESC, id DESC`, companyID).Scan(&modelsList).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	res := make([]*domain.Customer, 0, len(modelsList))
 	for i := range modelsList {

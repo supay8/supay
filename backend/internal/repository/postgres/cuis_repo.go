@@ -6,12 +6,13 @@ import (
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
 type PostgresCuisRepository struct{ db *gorm.DB }
 
-func NewPostgresCuisRepository(db *gorm.DB) domain.CuisRepository {
+func NewPostgresCuisRepository(db *gorm.DB) ports.CuisRepository {
 	return &PostgresCuisRepository{db: db}
 }
 
@@ -19,10 +20,10 @@ func (r *PostgresCuisRepository) Create(c *domain.Cuis) error {
 	var tenantID string
 	if err := r.db.Model(&models.PointOfSale{}).
 		Select("tenant_id").Where("id = ?", c.PointOfSaleID).Scan(&tenantID).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	if tenantID == "" {
-		return gorm.ErrRecordNotFound
+		return repositoryError(gorm.ErrRecordNotFound)
 	}
 	var validTo *time.Time
 	if !c.ValidTo.IsZero() {
@@ -42,7 +43,7 @@ func (r *PostgresCuisRepository) Create(c *domain.Cuis) error {
 		}
 		return tx.Create(&row).Error
 	}); err != nil {
-		return err
+		return repositoryError(err)
 	}
 	c.ID, c.CreatedAt = row.ID, row.CreatedAt
 	return nil
@@ -53,15 +54,15 @@ func (r *PostgresCuisRepository) GetActiveByPos(pointOfSaleID string) (*domain.C
 	now := time.Now().In(siat.LaPaz)
 	if err := r.db.Where("point_of_sale_id = ? AND valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?) AND is_active = true", pointOfSaleID, now, now).
 		Order("created_at DESC").First(&row).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainCuis(&row), nil
 }
 
 func (r *PostgresCuisRepository) DeactivateExpired() error {
-	return r.db.Model(&models.Cuis{}).
+	return repositoryError(r.db.Model(&models.Cuis{}).
 		Where("valid_to < ? AND is_active = true", time.Now().In(siat.LaPaz)).
-		Update("is_active", false).Error
+		Update("is_active", false).Error)
 }
 
 func toDomainCuis(row *models.Cuis) *domain.Cuis {

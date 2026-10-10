@@ -4,31 +4,28 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/models"
-	"github.com/google/uuid"
-	"gorm.io/datatypes"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
+	"github.com/google/uuid"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PostgresSentPackageRepository struct {
-	db                      *gorm.DB
-	queueEmailNotifications bool
+	db *gorm.DB
 }
 
-var _ domain.FiscalBatchRepository = (*PostgresSentPackageRepository)(nil)
+var _ ports.FiscalBatchRepository = (*PostgresSentPackageRepository)(nil)
 
 func NewPostgresSentPackageRepository(db *gorm.DB) *PostgresSentPackageRepository {
 	return &PostgresSentPackageRepository{db: db}
-}
-
-func (r *PostgresSentPackageRepository) EnableEmailNotifications(enabled bool) {
-	r.queueEmailNotifications = enabled
 }
 
 func (r *PostgresSentPackageRepository) Create(pkg *domain.SentPackage) error {
@@ -37,7 +34,7 @@ func (r *PostgresSentPackageRepository) Create(pkg *domain.SentPackage) error {
 		dbModel.ID = uuid.NewString()
 	}
 	if err := r.db.Create(&dbModel).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	pkg.ID = dbModel.ID
 	pkg.CreatedAt = dbModel.CreatedAt
@@ -78,22 +75,22 @@ func toModelSentPackage(pkg *domain.SentPackage) models.SentPackage {
 func (r *PostgresSentPackageRepository) GetByID(id string) (*domain.SentPackage, error) {
 	var dbModel models.SentPackage
 	if err := r.db.Where("id = ?", id).First(&dbModel).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	pkg := toDomainSentPackage(&dbModel)
-	return pkg, r.loadMembership([]*domain.SentPackage{pkg})
+	return pkg, repositoryError(r.loadMembership([]*domain.SentPackage{pkg}))
 }
 
 func (r *PostgresSentPackageRepository) GetByCodigoRecepcion(codigoRecepcion string) (*domain.SentPackage, error) {
 	if codigoRecepcion == "" {
-		return nil, gorm.ErrRecordNotFound
+		return nil, repositoryError(gorm.ErrRecordNotFound)
 	}
 	var dbModel models.SentPackage
 	if err := r.db.Where("codigo_recepcion = ?", codigoRecepcion).First(&dbModel).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	pkg := toDomainSentPackage(&dbModel)
-	return pkg, r.loadMembership([]*domain.SentPackage{pkg})
+	return pkg, repositoryError(r.loadMembership([]*domain.SentPackage{pkg}))
 }
 
 func (r *PostgresSentPackageRepository) ListByPointOfSale(pointOfSaleID string) ([]*domain.SentPackage, error) {
@@ -101,10 +98,10 @@ func (r *PostgresSentPackageRepository) ListByPointOfSale(pointOfSaleID string) 
 	if err := r.db.Where("point_of_sale_id = ?", pointOfSaleID).
 		Order("created_at DESC").
 		Find(&dbModels).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	pkgs := toDomainSentPackages(dbModels)
-	return pkgs, r.loadMembership(pkgs)
+	return pkgs, repositoryError(r.loadMembership(pkgs))
 }
 
 func (r *PostgresSentPackageRepository) ListByCompany(companyID string) ([]*domain.SentPackage, error) {
@@ -112,14 +109,14 @@ func (r *PostgresSentPackageRepository) ListByCompany(companyID string) ([]*doma
 	if err := r.db.Where("tenant_id = ?", companyID).
 		Order("created_at DESC").
 		Find(&dbModels).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	pkgs := toDomainSentPackages(dbModels)
-	return pkgs, r.loadMembership(pkgs)
+	return pkgs, repositoryError(r.loadMembership(pkgs))
 }
 
 func (r *PostgresSentPackageRepository) Update(pkg *domain.SentPackage) error {
-	return r.UpdateBatch(pkg, nil)
+	return repositoryError(r.UpdateBatch(pkg, nil))
 }
 
 func toDomainSentPackage(dbModel *models.SentPackage) *domain.SentPackage {
@@ -185,7 +182,7 @@ func (r *PostgresSentPackageRepository) loadMembership(pkgs []*domain.SentPackag
 
 func (r *PostgresSentPackageRepository) ListPendingBatchInvoices(companyID, posID string, status domain.InvoiceStatus, eventID *string) ([]*domain.Invoice, error) {
 	if status != domain.InvoicePending && status != domain.InvoiceOffline {
-		return nil, fmt.Errorf("estado no reservable: %s", status)
+		return nil, repositoryError(fmt.Errorf("estado no reservable: %s", status))
 	}
 	query := r.db.Where("tenant_id = ? AND point_of_sale_id = ? AND status = ?", companyID, posID, status).
 		Where("(siat_reception_code IS NULL OR btrim(siat_reception_code) = '')").
@@ -202,7 +199,7 @@ func (r *PostgresSentPackageRepository) ListPendingBatchInvoices(companyID, posI
 	var rows []models.Invoice
 	if err := query.Preload("Items").Preload("CufdRecord").
 		Order("invoice_number, id").Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	invoices := make([]*domain.Invoice, 0, len(rows))
 	for i := range rows {
@@ -213,30 +210,30 @@ func (r *PostgresSentPackageRepository) ListPendingBatchInvoices(companyID, posI
 
 func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, invoiceIDs []string, expectedStatus domain.InvoiceStatus) error {
 	if pkg == nil || len(invoiceIDs) == 0 {
-		return fmt.Errorf("el lote debe contener facturas")
+		return repositoryError(fmt.Errorf("el lote debe contener facturas"))
 	}
 	if expectedStatus != domain.InvoicePending && expectedStatus != domain.InvoiceOffline {
-		return fmt.Errorf("estado no reservable: %s", expectedStatus)
+		return repositoryError(fmt.Errorf("estado no reservable: %s", expectedStatus))
 	}
 	if pkg.CodigoRecepcion != "" || pkg.CantidadFacturas != len(invoiceIDs) {
-		return fmt.Errorf("metadatos de reserva de lote inconsistentes")
+		return repositoryError(fmt.Errorf("metadatos de reserva de lote inconsistentes"))
 	}
 	if (pkg.Type != domain.PackageTypeMasiva || expectedStatus != domain.InvoicePending) &&
 		(pkg.Type != domain.PackageTypePaquete || expectedStatus != domain.InvoiceOffline) {
-		return fmt.Errorf("tipo de lote incompatible con el estado de sus facturas")
+		return repositoryError(fmt.Errorf("tipo de lote incompatible con el estado de sus facturas"))
 	}
 	if (pkg.Type == domain.PackageTypeMasiva && len(pkg.Documents) != len(invoiceIDs)) ||
 		(len(pkg.Documents) > 0 && len(pkg.Documents) != len(invoiceIDs)) {
-		return fmt.Errorf("documentos preparados inconsistentes con el lote")
+		return repositoryError(fmt.Errorf("documentos preparados inconsistentes con el lote"))
 	}
 	documents := make(map[string]domain.BatchInvoiceDocument, len(pkg.Documents))
 	for i, document := range pkg.Documents {
 		if strings.TrimSpace(document.Cuf) == "" || strings.TrimSpace(document.Xml) == "" {
-			return fmt.Errorf("el documento preparado requiere CUF y XML")
+			return repositoryError(fmt.Errorf("el documento preparado requiere CUF y XML"))
 		}
 		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(document.Xml)))
 		if document.XmlHash != "" && document.XmlHash != hash {
-			return fmt.Errorf("hash del XML preparado inconsistente")
+			return repositoryError(fmt.Errorf("hash del XML preparado inconsistente"))
 		}
 		document.XmlHash = hash
 		documents[invoiceIDs[i]] = document
@@ -245,7 +242,7 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 	sort.Strings(orderedIDs)
 	for i, id := range orderedIDs {
 		if id == "" || (i > 0 && orderedIDs[i-1] == id) {
-			return fmt.Errorf("facturas vacías o repetidas en el lote")
+			return repositoryError(fmt.Errorf("facturas vacías o repetidas en el lote"))
 		}
 	}
 	m := toModelSentPackage(pkg)
@@ -343,18 +340,18 @@ func (r *PostgresSentPackageRepository) ReserveBatch(pkg *domain.SentPackage, in
 		pkg.ID, pkg.Status, pkg.CreatedAt, pkg.SentAt = m.ID, domain.PackageStatusSending, m.CreatedAt, m.SentAt
 		pkg.InvoiceIDs = slices.Clone(invoiceIDs)
 	}
-	return err
+	return repositoryError(err)
 }
 
 func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, invoiceStatus *domain.InvoiceStatus) error {
 	if pkg == nil || pkg.ID == "" {
-		return fmt.Errorf("el lote requiere un identificador")
+		return repositoryError(fmt.Errorf("el lote requiere un identificador"))
 	}
 	if invoiceStatus != nil && *invoiceStatus != domain.InvoiceSent && *invoiceStatus != domain.InvoiceAccepted &&
 		*invoiceStatus != domain.InvoiceObserved && *invoiceStatus != domain.InvoiceRejected {
-		return fmt.Errorf("estado de conciliación no permitido: %s", *invoiceStatus)
+		return repositoryError(fmt.Errorf("estado de conciliación no permitido: %s", *invoiceStatus))
 	}
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return repositoryError(r.db.Transaction(func(tx *gorm.DB) error {
 		var current models.SentPackage
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", pkg.ID).First(&current).Error; err != nil {
 			return err
@@ -448,7 +445,7 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 					return err
 				}
 				claimed, err := transitionInvoiceStatus(tx, pkg.CompanyId, invoice.ID,
-					domain.InvoiceStatus(invoice.Status), *invoiceStatus, reason, values, event, r.queueEmailNotifications)
+					domain.InvoiceStatus(invoice.Status), *invoiceStatus, reason, values, event)
 				if err != nil {
 					return err
 				}
@@ -464,7 +461,7 @@ func (r *PostgresSentPackageRepository) UpdateBatch(pkg *domain.SentPackage, inv
 			}
 		}
 		return nil
-	})
+	}))
 }
 
 func batchTransitionReason(status domain.InvoiceStatus) (domain.InvoiceTransitionReason, error) {

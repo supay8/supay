@@ -16,11 +16,3 @@ type Customer struct {
 	CodigoCliente  string    `json:"codigo_cliente"`
 	CreatedAt      time.Time `json:"created_at"`
 }
-
-// CustomerRepository es append-only: no expone Update ni Delete.
-type CustomerRepository interface {
-	Create(c *Customer) error
-	GetByID(id string) (*Customer, error)
-	GetByCompanyAndFiscalIdentity(companyID string, documentType, documentNumber string, complement *string, name string, email string) (*Customer, error)
-	List(companyID string) ([]*Customer, error)
-}

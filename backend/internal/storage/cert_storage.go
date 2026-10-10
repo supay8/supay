@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +71,7 @@ type LocalCertStorage struct {
 
 func NewLocalCertStorage(basePath string) (*LocalCertStorage, error) {
 	if basePath == "" {
-		log.Fatal("La variable STORAGE_PATH no se detecto")
+		return nil, fmt.Errorf("STORAGE_PATH es obligatorio")
 	}
 	if !filepath.IsAbs(basePath) {
 		cwd, err := os.Getwd()
@@ -84,7 +83,6 @@ func NewLocalCertStorage(basePath string) (*LocalCertStorage, error) {
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("cert local storage: mkdir %q: %w", basePath, err)
 	}
-	log.Println(basePath + "   ------------------------------------")
 	return &LocalCertStorage{basePath: basePath}, nil
 }
 

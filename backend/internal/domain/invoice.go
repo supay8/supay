@@ -111,25 +111,3 @@ type InvoiceListFilter struct {
 	Limit         int
 	Offset        int
 }
-
-type InvoiceRepository interface {
-	// Create persiste la factura (borrador PENDING) asignando el número
-	// correlativo por point_of_sale_id bajo advisory lock (atómico).
-	Create(inv *Invoice) error
-	GetByID(tenantID, id string) (*Invoice, error)
-	GetByIDs(tenantID string, ids []string) ([]*Invoice, error)
-	ListByPointOfSale(tenantID, pointOfSaleID string) ([]*Invoice, error)
-	// ListFiltered devuelve el listado paginado según el filtro, sin los
-	// campos pesados (xml/archivo), junto con el total de coincidencias.
-	ListFiltered(filter InvoiceListFilter) ([]*Invoice, int64, error)
-	Update(inv *Invoice) error
-	TransitionStatus(tenantID, id string, from, to InvoiceStatus, reason InvoiceTransitionReason, fields map[string]any, event *InvoiceEvent) (bool, error)
-	// ClaimForEmission marca la factura como SENDING si está PENDING
-	// (transición atómica), retornando false si el estado ya no es PENDING.
-	ClaimForEmission(tenantID, id string) (bool, error)
-	// ReleaseStaleSending revierte a PENDING las facturas atascadas en SENDING
-	// durante más de olderThan (crash del proceso, fallo del update final),
-	// devolviendo cuántas fueron liberadas.
-	ReleaseStaleSending(olderThan time.Duration) (int64, error)
-	FindActiveCufdForPointOfSale(pointOfSaleID string, at time.Time) (*Cufd, error)
-}

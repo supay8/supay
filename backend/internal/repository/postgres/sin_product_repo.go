@@ -7,18 +7,19 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type PostgresSinProductRepository struct{ db *gorm.DB }
 
-func NewPostgresSinProductRepository(db *gorm.DB) domain.SinProductRepository {
+func NewPostgresSinProductRepository(db *gorm.DB) ports.SinProductRepository {
 	return &PostgresSinProductRepository{db: db}
 }
 
 func (r *PostgresSinProductRepository) Replace(companyID string, products []domain.SinProduct, syncedAt time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return repositoryError(r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("tenant_id = ?", companyID).Delete(&models.SinProduct{}).Error; err != nil {
 			return err
 		}
@@ -45,7 +46,7 @@ func (r *PostgresSinProductRepository) Replace(companyID string, products []doma
 			return nil
 		}
 		return tx.Create(&rows).Error
-	})
+	}))
 }
 
 func (r *PostgresSinProductRepository) List(companyID, query string, codigoActividad int64, limit, offset int) ([]*domain.SinProduct, int64, error) {
@@ -65,11 +66,11 @@ func (r *PostgresSinProductRepository) List(companyID, query string, codigoActiv
 	}
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, repositoryError(err)
 	}
 	var rows []models.SinProduct
 	if err := base.Order("codigo_producto_sin ASC").Limit(limit).Offset(offset).Find(&rows).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, repositoryError(err)
 	}
 	out := make([]*domain.SinProduct, 0, len(rows))
 	for i := range rows {
@@ -83,7 +84,7 @@ func (r *PostgresSinProductRepository) ListAll(companyID string) ([]*domain.SinP
 	if err := r.db.Where("tenant_id = ? AND is_active = true", companyID).
 		Order("codigo_producto_sin ASC").
 		Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	out := make([]*domain.SinProduct, 0, len(rows))
 	for i := range rows {
@@ -95,7 +96,7 @@ func (r *PostgresSinProductRepository) ListAll(companyID string) ([]*domain.SinP
 func (r *PostgresSinProductRepository) GetByCode(companyID string, code int64) (*domain.SinProduct, error) {
 	var row models.SinProduct
 	if err := r.db.First(&row, "tenant_id = ? AND codigo_producto_sin = ? AND is_active = true", companyID, code).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainSinProduct(&row), nil
 }

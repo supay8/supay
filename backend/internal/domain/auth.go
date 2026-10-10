@@ -29,15 +29,3 @@ type UserCompany struct {
 	Company *Company `json:"company"`
 	Role    string   `json:"role"`
 }
-
-// AuthRepository agrupa la persistencia que necesita la autenticación humana.
-// CreateCompanyForUser debe crear la empresa y la membresía owner de forma
-// atómica para no dejar tenants huérfanos.
-type AuthRepository interface {
-	CreateUser(user *User) error
-	GetUserByEmail(email string) (*User, error)
-	GetUserByID(id string) (*User, error)
-	HasCompanyAccess(userID, companyID string) (bool, error)
-	ListCompanies(userID string) ([]UserCompany, error)
-	CreateCompanyForUser(userID string, company *Company) error
-}

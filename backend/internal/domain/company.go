@@ -49,12 +49,3 @@ type Company struct {
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }
-
-// CompanyRepository define el contrato para la persistencia
-type CompanyRepository interface {
-	Create(company *Company) error
-	GetByNit(nit string) (*Company, error)
-	GetByID(id string) (*Company, error)
-	Update(company *Company) error
-	Delete(id string) error
-}

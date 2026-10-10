@@ -7,12 +7,13 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
 type PostgresCatalogRepository struct{ db *gorm.DB }
 
-func NewPostgresCatalogRepository(db *gorm.DB) domain.CatalogRepository {
+func NewPostgresCatalogRepository(db *gorm.DB) ports.CatalogRepository {
 	return &PostgresCatalogRepository{db: db}
 }
 
@@ -21,19 +22,19 @@ func (r *PostgresCatalogRepository) Replace(companyID, tipo string, items []doma
 	for _, item := range items {
 		rows = append(rows, versionedCatalogItem{Code: strconv.Itoa(item.Codigo), Description: item.Descripcion})
 	}
-	return replaceVersionedCatalog(r.db, companyID, tipo, syncedAt, rows)
+	return repositoryError(replaceVersionedCatalog(r.db, companyID, tipo, syncedAt, rows))
 }
 
 func (r *PostgresCatalogRepository) List(companyID, tipo string) ([]*domain.CatalogItem, error) {
 	rows, _, err := latestCatalogItems(r.db, companyID, tipo)
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	result := make([]*domain.CatalogItem, 0, len(rows))
 	for _, row := range rows {
 		code, err := strconv.Atoi(row.Codigo)
 		if err != nil {
-			return nil, err
+			return nil, repositoryError(err)
 		}
 		result = append(result, &domain.CatalogItem{Codigo: code, Descripcion: row.Descripcion, Tipo: tipo})
 	}
@@ -61,7 +62,7 @@ func (r *PostgresCatalogRepository) ListAll(companyID string) (map[string][]*dom
 			AND latest.tipo = v.tipo AND latest.version = v.version
 		ORDER BY v.tipo, i.codigo`, companyID).Scan(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	result := make(map[string][]*domain.CatalogItem)
 	for _, row := range rows {

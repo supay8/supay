@@ -38,13 +38,3 @@ type Certificate struct {
 
 	Company Company `json:"company"`
 }
-
-// CertificateRepository define el contrato para la persistencia de certificados.
-type CertificateRepository interface {
-	Create(cert *Certificate) error
-	GetByID(id string) (*Certificate, error)
-	GetActiveByCompany(companyID string) (*Certificate, error)
-	ListByCompany(companyID string) ([]*Certificate, error)
-	Update(cert *Certificate) error
-	Delete(id string) error
-}

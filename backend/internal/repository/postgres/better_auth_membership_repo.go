@@ -19,5 +19,5 @@ func (r *BetterAuthMembershipRepository) HasCompanyAccess(userID, companyID stri
 		Joins("JOIN tenants AS tenant ON tenant.auth_organization_id = member.organization_id AND tenant.is_active = true").
 		Where("member.user_id = ? AND tenant.id = ?", userID, companyID).
 		Count(&count).Error
-	return count > 0, err
+	return count > 0, repositoryError(err)
 }

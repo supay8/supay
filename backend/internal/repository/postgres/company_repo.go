@@ -5,6 +5,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -14,7 +15,7 @@ type PostgresCompanyRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresCompanyRepository(db *gorm.DB) domain.CompanyRepository {
+func NewPostgresCompanyRepository(db *gorm.DB) ports.CompanyRepository {
 	return &PostgresCompanyRepository{db: db}
 }
 
@@ -23,9 +24,9 @@ func (r *PostgresCompanyRepository) Create(c *domain.Company) error {
 		return createCompany(tx, c)
 	}); err != nil {
 		if isUniqueViolation(err) {
-			return domain.ErrCompanyNitConflict
+			return repositoryError(domain.ErrCompanyNitConflict)
 		}
-		return err
+		return repositoryError(err)
 	}
 	return nil
 }
@@ -77,7 +78,7 @@ func createCompany(db *gorm.DB, c *domain.Company) error {
 func (r *PostgresCompanyRepository) GetByNit(nit string) (*domain.Company, error) {
 	var tenant models.Company
 	if err := r.db.Where("nit = ? AND is_active = true", nit).First(&tenant).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return r.withTenantConfig(&tenant)
 }
@@ -85,7 +86,7 @@ func (r *PostgresCompanyRepository) GetByNit(nit string) (*domain.Company, error
 func (r *PostgresCompanyRepository) GetByID(id string) (*domain.Company, error) {
 	var tenant models.Company
 	if err := r.db.Where("id = ? AND is_active = true", id).First(&tenant).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return r.withTenantConfig(&tenant)
 }
@@ -139,11 +140,11 @@ func optionalString(value string) *string {
 func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 	var tenant models.Company
 	if err := r.db.Where("id = ?", c.ID).First(&tenant).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	var tenantConfig models.TenantConfig
 	if err := r.db.Where("tenant_id = ?", c.ID).First(&tenantConfig).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 
 	tenant.Nit = c.Nit
@@ -161,7 +162,7 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 
 	settings, err := tenantSettings(tenantConfig.Settings, c.CertificateWebhookURL, c.InvoiceEmailEnabled)
 	if err != nil {
-		return err
+		return repositoryError(err)
 	}
 	if err := r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&tenant).Error; err != nil {
@@ -176,9 +177,9 @@ func (r *PostgresCompanyRepository) Update(c *domain.Company) error {
 		}).Error
 	}); err != nil {
 		if isUniqueViolation(err) {
-			return domain.ErrCompanyNitConflict
+			return repositoryError(domain.ErrCompanyNitConflict)
 		}
-		return err
+		return repositoryError(err)
 	}
 
 	c.UpdatedAt = tenant.UpdatedAt
@@ -228,6 +229,6 @@ func invoiceEmailEnabled(raw json.RawMessage) bool {
 }
 
 func (r *PostgresCompanyRepository) Delete(id string) error {
-	return r.db.Model(&models.Company{}).Where("id = ? AND is_active = true", id).
-		Update("is_active", false).Error
+	return repositoryError(r.db.Model(&models.Company{}).Where("id = ? AND is_active = true", id).
+		Update("is_active", false).Error)
 }

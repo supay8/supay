@@ -41,39 +41,32 @@ func (InvoiceStateMachine) Transition(from, to InvoiceStatus, reason InvoiceTran
 	return nil
 }
 
+type invoiceTransition struct{ from, to InvoiceStatus }
+
+// This table is private and read-only after initialization. Reasons are part
+// of the state machine, so recovery cannot bypass cancellation/emission rules.
+var allowedTransitions = map[invoiceTransition]map[InvoiceTransitionReason]struct{}{
+	{InvoicePending, InvoiceSending}:    {TransitionEmissionStart: {}},
+	{InvoiceSending, InvoicePending}:    {TransitionTransportFailure: {}, TransitionStaleRecovery: {}},
+	{InvoiceSending, InvoiceOffline}:    {TransitionContingency: {}},
+	{InvoiceSending, InvoiceSent}:       {TransitionBatchReserved: {}},
+	{InvoiceOffline, InvoiceSent}:       {TransitionBatchReserved: {}},
+	{InvoiceSending, InvoiceAccepted}:   {TransitionSIATAccepted: {}, TransitionSIATReconciliation: {}},
+	{InvoiceSending, InvoiceObserved}:   {TransitionSIATObserved: {}, TransitionSIATReconciliation: {}},
+	{InvoiceSending, InvoiceRejected}:   {TransitionSIATRejected: {}, TransitionSIATReconciliation: {}},
+	{InvoiceObserved, InvoiceAccepted}:  {TransitionSIATAccepted: {}, TransitionSIATReconciliation: {}},
+	{InvoiceObserved, InvoiceRejected}:  {TransitionSIATRejected: {}, TransitionSIATReconciliation: {}},
+	{InvoiceSent, InvoiceAccepted}:      {TransitionSIATAccepted: {}, TransitionSIATReconciliation: {}},
+	{InvoiceSent, InvoiceObserved}:      {TransitionSIATObserved: {}, TransitionSIATReconciliation: {}},
+	{InvoiceSent, InvoiceRejected}:      {TransitionSIATRejected: {}, TransitionSIATReconciliation: {}},
+	{InvoiceAccepted, InvoiceCancelled}: {TransitionCancellation: {}, TransitionSIATReconciliation: {}},
+	{InvoiceCancelled, InvoiceAccepted}: {TransitionCancellationRevert: {}, TransitionSIATReconciliation: {}},
+}
+
+func CanTransition(from, to InvoiceStatus, reason InvoiceTransitionReason) bool {
+	_, ok := allowedTransitions[invoiceTransition{from, to}][reason]
+	return ok
+}
 func transitionAllowed(from, to InvoiceStatus, reason InvoiceTransitionReason) bool {
-	switch {
-	case from == InvoicePending && to == InvoiceSending:
-		return reason == TransitionEmissionStart
-	case from == InvoiceSending && to == InvoicePending:
-		return reason == TransitionTransportFailure || reason == TransitionStaleRecovery
-	case from == InvoiceSending && to == InvoiceOffline:
-		return reason == TransitionContingency
-	case from == InvoiceSending && to == InvoiceSent:
-		return reason == TransitionBatchReserved
-	case from == InvoiceOffline && to == InvoiceSent:
-		return reason == TransitionBatchReserved
-	case from == InvoiceSending && to == InvoiceAccepted:
-		return reason == TransitionSIATAccepted || reason == TransitionSIATReconciliation
-	case from == InvoiceSending && to == InvoiceObserved:
-		return reason == TransitionSIATObserved || reason == TransitionSIATReconciliation
-	case from == InvoiceSending && to == InvoiceRejected:
-		return reason == TransitionSIATRejected || reason == TransitionSIATReconciliation
-	case from == InvoiceObserved && to == InvoiceAccepted:
-		return reason == TransitionSIATAccepted || reason == TransitionSIATReconciliation
-	case from == InvoiceObserved && to == InvoiceRejected:
-		return reason == TransitionSIATRejected || reason == TransitionSIATReconciliation
-	case from == InvoiceSent && to == InvoiceAccepted:
-		return reason == TransitionSIATAccepted || reason == TransitionSIATReconciliation
-	case from == InvoiceSent && to == InvoiceObserved:
-		return reason == TransitionSIATObserved || reason == TransitionSIATReconciliation
-	case from == InvoiceSent && to == InvoiceRejected:
-		return reason == TransitionSIATRejected || reason == TransitionSIATReconciliation
-	case from == InvoiceAccepted && to == InvoiceCancelled:
-		return reason == TransitionCancellation || reason == TransitionSIATReconciliation
-	case from == InvoiceCancelled && to == InvoiceAccepted:
-		return reason == TransitionCancellationRevert || reason == TransitionSIATReconciliation
-	default:
-		return false
-	}
+	return CanTransition(from, to, reason)
 }

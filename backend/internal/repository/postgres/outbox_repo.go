@@ -9,6 +9,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -23,7 +24,7 @@ func NewPostgresOutboxRepository(db *gorm.DB) *PostgresOutboxRepository {
 func (r *PostgresOutboxRepository) EnqueueInvoiceEmission(ctx context.Context, invoiceID, tenantID, cufdID string) (*domain.OutboxEvent, error) {
 	payload, err := json.Marshal(domain.InvoiceEmissionPayload{InvoiceID: invoiceID, TenantID: tenantID})
 	if err != nil {
-		return nil, fmt.Errorf("serializar evento de emisión: %w", err)
+		return nil, repositoryError(fmt.Errorf("serializar evento de emisión: %w", err))
 	}
 
 	var event models.OutboxEvent
@@ -92,7 +93,7 @@ func (r *PostgresOutboxRepository) EnqueueInvoiceEmission(ctx context.Context, i
 		).Scan(&event).Error
 	})
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return outboxToDomain(&event), nil
 }
@@ -126,7 +127,7 @@ func (r *PostgresOutboxRepository) ClaimPending(ctx context.Context, eventType, 
 		FROM candidates
 		WHERE event.id = candidates.id
 		RETURNING event.*`, eventType, now, staleBefore, limit, now, owner, now).Scan(&rows).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	events := make([]domain.OutboxEvent, 0, len(rows))
 	for i := range rows {
@@ -147,10 +148,10 @@ func (r *PostgresOutboxRepository) MarkPublished(ctx context.Context, id, owner 
 			"updated_at":   publishedAt,
 		})
 	if result.Error != nil {
-		return result.Error
+		return repositoryError(result.Error)
 	}
 	if result.RowsAffected != 1 {
-		return fmt.Errorf("outbox %s no estaba reclamado por %s", id, owner)
+		return repositoryError(fmt.Errorf("outbox %s no estaba reclamado por %s", id, owner))
 	}
 	return nil
 }
@@ -170,10 +171,10 @@ func (r *PostgresOutboxRepository) MarkFailed(ctx context.Context, id, owner, la
 			"updated_at":   time.Now().UTC(),
 		})
 	if result.Error != nil {
-		return result.Error
+		return repositoryError(result.Error)
 	}
 	if result.RowsAffected != 1 {
-		return fmt.Errorf("outbox %s no estaba reclamado por %s", id, owner)
+		return repositoryError(fmt.Errorf("outbox %s no estaba reclamado por %s", id, owner))
 	}
 	return nil
 }
@@ -189,4 +190,4 @@ func outboxToDomain(event *models.OutboxEvent) *domain.OutboxEvent {
 	}
 }
 
-var _ domain.OutboxRepository = (*PostgresOutboxRepository)(nil)
+var _ ports.OutboxRepository = (*PostgresOutboxRepository)(nil)

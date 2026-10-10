@@ -1,10 +1,8 @@
 package domain
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 	"path"
 	"regexp"
 	"strings"
@@ -29,14 +27,6 @@ type ObjectInfo struct {
 	ContentType string
 	SHA256      string
 	CreatedAt   time.Time
-}
-
-type Storage interface {
-	Put(context.Context, string, io.Reader, PutOptions) (ObjectInfo, error)
-	Get(context.Context, string) (io.ReadCloser, ObjectInfo, error)
-	Stat(context.Context, string) (ObjectInfo, error)
-	Delete(context.Context, string) error
-	PresignGet(context.Context, string, time.Duration, string) (string, error)
 }
 
 // ValidateObjectKey accepts only portable relative keys and rejects traversal

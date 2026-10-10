@@ -12,8 +12,3 @@ type InvoiceEvent struct {
 	Payload   []byte
 	CreatedAt time.Time
 }
-
-type InvoiceEventRepository interface {
-	Create(event *InvoiceEvent) error
-	List(invoiceID string) ([]*InvoiceEvent, error)
-}

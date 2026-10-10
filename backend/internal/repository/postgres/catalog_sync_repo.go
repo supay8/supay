@@ -3,6 +3,7 @@ package postgres
 import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -10,7 +11,7 @@ import (
 
 type PostgresCatalogSyncStateRepository struct{ db *gorm.DB }
 
-func NewPostgresCatalogSyncStateRepository(db *gorm.DB) domain.CatalogSyncStateRepository {
+func NewPostgresCatalogSyncStateRepository(db *gorm.DB) ports.CatalogSyncStateRepository {
 	return &PostgresCatalogSyncStateRepository{db: db}
 }
 
@@ -18,20 +19,20 @@ func NewPostgresCatalogSyncStateRepository(db *gorm.DB) domain.CatalogSyncStateR
 // una sola sentencia (ON CONFLICT sobre la unicidad company+pos+operación).
 func (r *PostgresCatalogSyncStateRepository) Upsert(state domain.CatalogSyncState) error {
 	row := models.CatalogSyncState{ID: uuid.NewString(), CompanyId: state.CompanyID, PointOfSaleId: state.PointOfSaleID, Operation: state.Operation, Status: state.Status, RowsSaved: state.RowsSaved, SyncedAt: state.SyncedAt, Error: state.Error}
-	return r.db.Clauses(clause.OnConflict{
+	return repositoryError(r.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: "tenant_id"},
 			{Name: "point_of_sale_id"},
 			{Name: "operation"},
 		},
 		DoUpdates: clause.AssignmentColumns([]string{"status", "rows_saved", "synced_at", "error", "updated_at"}),
-	}).Create(&row).Error
+	}).Create(&row).Error)
 }
 
 func (r *PostgresCatalogSyncStateRepository) List(companyID, pointOfSaleID string) ([]*domain.CatalogSyncState, error) {
 	var rows []models.CatalogSyncState
 	if err := r.db.Where("tenant_id = ? AND point_of_sale_id = ?", companyID, pointOfSaleID).Order("operation ASC").Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	out := make([]*domain.CatalogSyncState, 0, len(rows))
 	for i := range rows {

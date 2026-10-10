@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -37,6 +38,8 @@ func NewPostgresInvoiceEmailNotificationRepository(db *gorm.DB) *PostgresInvoice
 	return &PostgresInvoiceEmailNotificationRepository{db: db}
 }
 
+// queueInvoiceEmailNotification escribe el outbox de entrega en la transacción
+// fiscal, incluso si el dispatcher está detenido. No publica tareas ni emails.
 func queueInvoiceEmailNotification(tx *gorm.DB, tenantID, invoiceID string) error {
 	return tx.Exec(`
 		INSERT INTO invoice_email_notifications (tenant_id, invoice_id, recipient, is_automatic)
@@ -56,7 +59,7 @@ func (r *PostgresInvoiceEmailNotificationRepository) QueueDelivery(ctx context.C
 	recipient = strings.ToLower(strings.TrimSpace(recipient))
 	address, err := mail.ParseAddress(recipient)
 	if err != nil || address.Address != recipient {
-		return "", domain.NewBadRequestError("recipient debe ser una dirección de email válida")
+		return "", repositoryError(domain.NewBadRequestError("recipient debe ser una dirección de email válida"))
 	}
 	var id string
 	err = r.db.WithContext(ctx).Raw(`
@@ -68,10 +71,10 @@ func (r *PostgresInvoiceEmailNotificationRepository) QueueDelivery(ctx context.C
     AND tc.settings @> '{"invoice_email":{"enabled":true}}'::jsonb
   RETURNING id`, recipient, tenantID, invoiceID).Scan(&id).Error
 	if err != nil {
-		return "", err
+		return "", repositoryError(err)
 	}
 	if id == "" {
-		return "", domain.NewConflictError("factura o tenant no disponible para entrega de email")
+		return "", repositoryError(domain.NewConflictError("factura o tenant no disponible para entrega de email"))
 	}
 	return id, nil
 }
@@ -98,7 +101,7 @@ func (r *PostgresInvoiceEmailNotificationRepository) ClaimPending(ctx context.Co
 		FROM candidates WHERE n.id = candidates.id RETURNING n.*`,
 		now, now.Add(-lockTimeout), limit, now, owner, now).Scan(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	result := make([]domain.InvoiceEmailNotification, 0, len(rows))
 	for i := range rows {
@@ -108,17 +111,17 @@ func (r *PostgresInvoiceEmailNotificationRepository) ClaimPending(ctx context.Co
 }
 
 func (r *PostgresInvoiceEmailNotificationRepository) MarkEnqueued(ctx context.Context, id, owner, taskName string, now time.Time) error {
-	return r.updateClaimed(ctx, id, owner, map[string]any{
+	return repositoryError(r.updateClaimed(ctx, id, owner, map[string]any{
 		"status": domain.InvoiceEmailEnqueued, "task_name": taskName, "locked_at": nil,
 		"locked_by": nil, "last_error": nil, "updated_at": now,
-	})
+	}))
 }
 
 func (r *PostgresInvoiceEmailNotificationRepository) MarkPublishFailed(ctx context.Context, id, owner, message string, nextAttempt time.Time) error {
-	return r.updateClaimed(ctx, id, owner, map[string]any{
+	return repositoryError(r.updateClaimed(ctx, id, owner, map[string]any{
 		"status": domain.InvoiceEmailPending, "available_at": nextAttempt, "locked_at": nil,
 		"locked_by": nil, "last_error": truncateEmailError(message), "updated_at": time.Now().UTC(),
-	})
+	}))
 }
 
 func (r *PostgresInvoiceEmailNotificationRepository) updateClaimed(ctx context.Context, id, owner string, values map[string]any) error {
@@ -145,14 +148,14 @@ func (r *PostgresInvoiceEmailNotificationRepository) ClaimDelivery(ctx context.C
 		WHERE id = ? AND (status = 'ENQUEUED' OR (status = 'SENDING' AND locked_at < ?))
 		RETURNING *`, now, now, id, now.Add(-lockTimeout)).Scan(&row)
 	if result.Error != nil {
-		return nil, false, result.Error
+		return nil, false, repositoryError(result.Error)
 	}
 	if row.ID != "" {
 		n := emailNotificationToDomain(row)
 		return &n, true, nil
 	}
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; err != nil {
-		return nil, false, err
+		return nil, false, repositoryError(err)
 	}
 	n := emailNotificationToDomain(row)
 	return &n, false, nil
@@ -163,10 +166,10 @@ func (r *PostgresInvoiceEmailNotificationRepository) MarkSent(ctx context.Contex
 		Where("id = ? AND status = ?", id, domain.InvoiceEmailSending).
 		Updates(map[string]any{"status": domain.InvoiceEmailSent, "sent_at": now, "locked_at": nil, "locked_by": nil, "last_error": nil, "updated_at": now})
 	if result.Error != nil {
-		return result.Error
+		return repositoryError(result.Error)
 	}
 	if result.RowsAffected != 1 {
-		return fmt.Errorf("notificación %s no estaba en envío", id)
+		return repositoryError(fmt.Errorf("notificación %s no estaba en envío", id))
 	}
 	return nil
 }
@@ -176,10 +179,10 @@ func (r *PostgresInvoiceEmailNotificationRepository) MarkDeliveryFailed(ctx cont
 		Where("id = ? AND status = ?", id, domain.InvoiceEmailSending).
 		Updates(map[string]any{"status": domain.InvoiceEmailEnqueued, "locked_at": nil, "locked_by": nil, "last_error": truncateEmailError(message), "updated_at": now})
 	if result.Error != nil {
-		return result.Error
+		return repositoryError(result.Error)
 	}
 	if result.RowsAffected != 1 {
-		return fmt.Errorf("notificación %s no estaba en envío", id)
+		return repositoryError(fmt.Errorf("notificación %s no estaba en envío", id))
 	}
 	return nil
 }
@@ -202,4 +205,4 @@ func emailNotificationToDomain(row invoiceEmailNotificationRow) domain.InvoiceEm
 	}
 }
 
-var _ domain.InvoiceEmailNotificationRepository = (*PostgresInvoiceEmailNotificationRepository)(nil)
+var _ ports.InvoiceEmailNotificationRepository = (*PostgresInvoiceEmailNotificationRepository)(nil)

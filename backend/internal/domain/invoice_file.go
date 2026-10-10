@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"time"
 )
 
@@ -15,11 +14,4 @@ type InvoiceFile struct {
 	Size        int64
 	ContentType string
 	CreatedAt   time.Time
-}
-
-type InvoiceFileRepository interface {
-	BelongsToCompany(ctx context.Context, companyID, invoiceID string) (bool, error)
-	CreateFile(ctx context.Context, file *InvoiceFile) error
-	FindFile(ctx context.Context, companyID, invoiceID, kind string) (*InvoiceFile, error)
-	DeleteFile(ctx context.Context, companyID, invoiceID, kind, storageKey string) error
 }

@@ -41,17 +41,3 @@ type PointOfSale struct {
 	SiatResponse     json.RawMessage `json:"siat_response,omitempty"`
 	SiatError        *string         `json:"siat_error,omitempty"`
 }
-
-// PointOfSaleRepository define el contrato para la persistencia
-type PointOfSaleRepository interface {
-	// Create persiste un punto de venta calculando automáticamente el
-	// codigoPuntoVenta (MAX+1) bajo advisory lock para evitar colisiones
-	// bajo concurrencia. Si pos.CodigoPuntoVenta ya es > 0 se respeta ese
-	// código local (el índice único valida colisiones).
-	Create(pos *PointOfSale) error
-	GetByID(id string) (*PointOfSale, error)
-	List(companyID string) ([]*PointOfSale, error)
-	ListByBranch(branchID string) ([]*PointOfSale, error)
-	Update(pos *PointOfSale) error
-	Delete(id string) error
-}

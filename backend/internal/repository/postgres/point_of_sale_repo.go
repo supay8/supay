@@ -6,6 +6,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -14,7 +15,7 @@ type PostgresPointOfSaleRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresPointOfSaleRepository(db *gorm.DB) domain.PointOfSaleRepository {
+func NewPostgresPointOfSaleRepository(db *gorm.DB) ports.PointOfSaleRepository {
 	return &PostgresPointOfSaleRepository{db: db}
 }
 
@@ -22,7 +23,7 @@ func (r *PostgresPointOfSaleRepository) Create(pos *domain.PointOfSale) error {
 	// Serializa la creación por (empresa, sucursal) con un advisory lock de
 	// PostgreSQL para que el cálculo de codigoPuntoVenta (MAX+1) y el insert
 	// sean atómicos. El índice único compuesto es la red de seguridad final.
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return repositoryError(r.db.Transaction(func(tx *gorm.DB) error {
 		lockKey := pos.CompanyId + "|" + strconv.Itoa(pos.CodigoSucursal)
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error; err != nil {
 			return err
@@ -73,28 +74,28 @@ func (r *PostgresPointOfSaleRepository) Create(pos *domain.PointOfSale) error {
 		pos.ID = dbModel.ID
 		pos.CreatedAt = dbModel.CreatedAt
 		return nil
-	})
+	}))
 }
 
 func (r *PostgresPointOfSaleRepository) GetByID(id string) (*domain.PointOfSale, error) {
 	if _, err := uuid.Parse(id); err != nil {
-		return nil, domain.NewBadRequestError("point_of_sale_id debe ser un UUID válido")
+		return nil, repositoryError(domain.NewBadRequestError("point_of_sale_id debe ser un UUID válido"))
 	}
 	var dbModel models.PointOfSale
 
 	if err := r.db.Where("id = ? AND is_active = true", id).First(&dbModel).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return toDomainPointOfSale(&dbModel), nil
 }
 
 func (r *PostgresPointOfSaleRepository) List(companyID string) ([]*domain.PointOfSale, error) {
 	if companyID == "" {
-		return nil, domain.ErrMissingCompanyID
+		return nil, repositoryError(domain.ErrMissingCompanyID)
 	}
 	var dbModels []models.PointOfSale
 	if err := r.db.Where("tenant_id = ? AND is_active = true", companyID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 
 	pointsOfSale := make([]*domain.PointOfSale, 0, len(dbModels))
@@ -107,7 +108,7 @@ func (r *PostgresPointOfSaleRepository) List(companyID string) ([]*domain.PointO
 func (r *PostgresPointOfSaleRepository) ListByBranch(branchID string) ([]*domain.PointOfSale, error) {
 	var dbModels []models.PointOfSale
 	if err := r.db.Where("branch_id = ? AND is_active = true", branchID).Order("created_at ASC").Find(&dbModels).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 
 	pointsOfSale := make([]*domain.PointOfSale, 0, len(dbModels))
@@ -120,7 +121,7 @@ func (r *PostgresPointOfSaleRepository) ListByBranch(branchID string) ([]*domain
 func (r *PostgresPointOfSaleRepository) Update(pos *domain.PointOfSale) error {
 	var dbModel models.PointOfSale
 	if err := r.db.Where("id = ?", pos.ID).First(&dbModel).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 
 	dbModel.CompanyId = pos.CompanyId
@@ -143,16 +144,16 @@ func (r *PostgresPointOfSaleRepository) Update(pos *domain.PointOfSale) error {
 
 	if err := r.db.Save(&dbModel).Error; err != nil {
 		if isUniqueViolation(err) {
-			return domain.ErrPointOfSaleCodeConflict
+			return repositoryError(domain.ErrPointOfSaleCodeConflict)
 		}
-		return err
+		return repositoryError(err)
 	}
 	return nil
 }
 
 func (r *PostgresPointOfSaleRepository) Delete(id string) error {
-	return r.db.Model(&models.PointOfSale{}).Where("id = ? AND is_active = true", id).
-		Update("is_active", false).Error
+	return repositoryError(r.db.Model(&models.PointOfSale{}).Where("id = ? AND is_active = true", id).
+		Update("is_active", false).Error)
 }
 
 func toDomainPointOfSale(dbModel *models.PointOfSale) *domain.PointOfSale {

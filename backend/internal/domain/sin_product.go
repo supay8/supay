@@ -14,14 +14,6 @@ type SinProduct struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-type SinProductRepository interface {
-	Replace(companyID string, products []SinProduct, syncedAt time.Time) error
-	// List pagina productos activos. codigoActividad=0 no filtra por actividad.
-	List(companyID, query string, codigoActividad int64, limit, offset int) ([]*SinProduct, int64, error)
-	ListAll(companyID string) ([]*SinProduct, error)
-	GetByCode(companyID string, code int64) (*SinProduct, error)
-}
-
 type CatalogSyncState struct {
 	CompanyID     string     `json:"company_id"`
 	PointOfSaleID string     `json:"point_of_sale_id"`
@@ -36,9 +28,4 @@ type CatalogReadiness struct {
 	Ready   bool               `json:"ready"`
 	Missing []string           `json:"missing,omitempty"`
 	States  []CatalogSyncState `json:"states"`
-}
-
-type CatalogSyncStateRepository interface {
-	Upsert(state CatalogSyncState) error
-	List(companyID, pointOfSaleID string) ([]*CatalogSyncState, error)
 }

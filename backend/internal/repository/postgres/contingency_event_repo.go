@@ -3,6 +3,7 @@ package postgres
 import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/models"
+	"github.com/brandsrx/supay/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -10,7 +11,7 @@ type PostgresContingencyEventRepository struct {
 	db *gorm.DB
 }
 
-func NewPostgresContingencyEventRepository(db *gorm.DB) domain.ContingencyEventRepository {
+func NewPostgresContingencyEventRepository(db *gorm.DB) ports.ContingencyEventRepository {
 	return &PostgresContingencyEventRepository{db: db}
 }
 
@@ -18,10 +19,10 @@ func (r *PostgresContingencyEventRepository) Create(e *domain.ContingencyEvent) 
 	var tenantID string
 	if err := r.db.Model(&models.PointOfSale{}).
 		Select("tenant_id").Where("id = ?", e.PointOfSaleID).Scan(&tenantID).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	if tenantID == "" {
-		return gorm.ErrRecordNotFound
+		return repositoryError(gorm.ErrRecordNotFound)
 	}
 	m := models.ContingencyEvent{
 		TenantId:      tenantID,
@@ -34,7 +35,7 @@ func (r *PostgresContingencyEventRepository) Create(e *domain.ContingencyEvent) 
 		IsSynced:      e.IsSynced,
 	}
 	if err := r.db.Create(&m).Error; err != nil {
-		return err
+		return repositoryError(err)
 	}
 	e.ID = m.ID
 	e.CreatedAt = m.CreatedAt
@@ -43,7 +44,7 @@ func (r *PostgresContingencyEventRepository) Create(e *domain.ContingencyEvent) 
 
 func (r *PostgresContingencyEventRepository) Update(e *domain.ContingencyEvent) error {
 	if e == nil || e.ID == "" {
-		return gorm.ErrRecordNotFound
+		return repositoryError(gorm.ErrRecordNotFound)
 	}
 	result := r.db.Model(&models.ContingencyEvent{}).
 		Where("id = ? AND point_of_sale_id = ?", e.ID, e.PointOfSaleID).
@@ -56,10 +57,10 @@ func (r *PostgresContingencyEventRepository) Update(e *domain.ContingencyEvent) 
 			"is_synced":       e.IsSynced,
 		})
 	if result.Error != nil {
-		return result.Error
+		return repositoryError(result.Error)
 	}
 	if result.RowsAffected != 1 {
-		return gorm.ErrRecordNotFound
+		return repositoryError(gorm.ErrRecordNotFound)
 	}
 	return nil
 }
@@ -71,7 +72,7 @@ func (r *PostgresContingencyEventRepository) GetLatestByPointOfSale(pointOfSaleI
 	var m models.ContingencyEvent
 	if err := r.db.Where("point_of_sale_id = ?", pointOfSaleID).
 		Order("start_date DESC, created_at DESC").First(&m).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return &domain.ContingencyEvent{
 		ID:            m.ID,
@@ -89,7 +90,7 @@ func (r *PostgresContingencyEventRepository) GetLatestByPointOfSale(pointOfSaleI
 func (r *PostgresContingencyEventRepository) GetBySiatCode(siatCode string) (*domain.ContingencyEvent, error) {
 	var m models.ContingencyEvent
 	if err := r.db.Where("siat_event_code = ?", siatCode).First(&m).Error; err != nil {
-		return nil, err
+		return nil, repositoryError(err)
 	}
 	return &domain.ContingencyEvent{
 		ID:            m.ID,

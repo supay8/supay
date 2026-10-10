@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
 	"github.com/brandsrx/supay/internal/models"
 )
 
@@ -70,7 +70,7 @@ func TenantMiddleware(lookup ApiKeyLookup) func(http.Handler) http.Handler {
 
 			ctx := WithCompanyID(r.Context(), companyID)
 			// Fallback temporal para no romper el provider SIAT durante la transición.
-			ctx = siat.WithCompanyID(ctx, companyID)
+			ctx = fiscal.WithCompanyID(ctx, companyID)
 			r = r.WithContext(ctx)
 			next.ServeHTTP(w, r)
 		})
@@ -111,7 +111,7 @@ func TenantAccessMiddleware(lookup ApiKeyLookup, verifier AccessTokenVerifier, m
 					return
 				}
 				ctx := WithCompanyID(r.Context(), companyID)
-				ctx = siat.WithCompanyID(ctx, companyID)
+				ctx = fiscal.WithCompanyID(ctx, companyID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -145,7 +145,7 @@ func TenantAccessMiddleware(lookup ApiKeyLookup, verifier AccessTokenVerifier, m
 
 			ctx := WithUserID(r.Context(), userID)
 			ctx = WithCompanyID(ctx, companyID)
-			ctx = siat.WithCompanyID(ctx, companyID)
+			ctx = fiscal.WithCompanyID(ctx, companyID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

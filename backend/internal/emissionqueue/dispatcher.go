@@ -9,6 +9,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/observability"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 )
 
@@ -17,7 +18,7 @@ type OutboxPublisher interface {
 }
 
 type Dispatcher struct {
-	repo        domain.OutboxRepository
+	repo        ports.OutboxRepository
 	publisher   OutboxPublisher
 	owner       string
 	interval    time.Duration
@@ -32,7 +33,7 @@ func (d *Dispatcher) WithMetrics(metrics *observability.Metrics) *Dispatcher {
 	return d
 }
 
-func NewDispatcher(repo domain.OutboxRepository, publisher OutboxPublisher, interval time.Duration, batchSize int, lockTimeout time.Duration) *Dispatcher {
+func NewDispatcher(repo ports.OutboxRepository, publisher OutboxPublisher, interval time.Duration, batchSize int, lockTimeout time.Duration) *Dispatcher {
 	if interval <= 0 {
 		interval = 500 * time.Millisecond
 	}

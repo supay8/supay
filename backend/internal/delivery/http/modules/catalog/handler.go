@@ -5,7 +5,7 @@ import (
 
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
@@ -120,7 +120,7 @@ func (h *handler) listParametric(w http.ResponseWriter, r *http.Request) {
 
 // listPerfilesDocumentoSector expone metadata multi-sector de Supay (no SIAT).
 func (h *handler) listPerfilesDocumentoSector(w http.ResponseWriter, r *http.Request) {
-	perfiles := siat.PerfilesSector()
+	perfiles := fiscal.PerfilesSector()
 	items := make([]map[string]any, 0, len(perfiles))
 	for _, p := range perfiles {
 		campos := make([]map[string]any, 0, len(p.Campos))
@@ -151,7 +151,7 @@ func (h *handler) getPerfilDocumentoSector(w http.ResponseWriter, r *http.Reques
 		deliveryHttp.RespondValidation(w, "codigo de documento-sector inválido")
 		return
 	}
-	for _, p := range siat.PerfilesSector() {
+	for _, p := range fiscal.PerfilesSector() {
 		if p.Codigo != codigo {
 			continue
 		}

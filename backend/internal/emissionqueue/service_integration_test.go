@@ -12,6 +12,7 @@ import (
 	"github.com/brandsrx/supay/internal/models"
 	"github.com/brandsrx/supay/internal/repository/database"
 	repository "github.com/brandsrx/supay/internal/repository/postgres"
+	"github.com/brandsrx/supay/internal/testutil"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -39,6 +40,12 @@ func TestEmissionQueuePendingToAcceptedWithTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("conexión a BD de pruebas: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("pool de BD de pruebas: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	testutil.LockPostgres(t, sqlDB)
 	if err := database.MigrateDB(db); err != nil {
 		t.Fatalf("migraciones: %v", err)
 	}

@@ -46,8 +46,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	db, err := database.ConnectDB()
+	if err != nil {
+		return err
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
 	dispatcher := invoiceemail.NewDispatcher(
-		postgres.NewPostgresInvoiceEmailNotificationRepository(database.ConnectDB()),
+		postgres.NewPostgresInvoiceEmailNotificationRepository(db),
 		publisher, cfg.InvoiceEmail.DispatchBatchSize, cfg.InvoiceEmail.PublishLockTimeout,
 	)
 	for {

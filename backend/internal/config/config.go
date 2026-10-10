@@ -14,13 +14,15 @@ import (
 )
 
 type Config struct {
+	DatabaseURL        string
+	AutoMigrate        bool
 	Port               string
 	RunMode            RunMode
 	CORSAllowedOrigins []string
 	// SIAT y SiatModalidad se mantienen por compatibilidad pero están
 	// desacoplados: ya no se valida NIT/Token/Cert al iniciar. El
 	// SiatClientProvider resuelve credenciales por CompanyId.
-	// Deprecated: no usar en código nuevo; preferir SiatInfra.
+	// Deprecated: no usar en código nuevo; preferir SiatInfra. Sunset: 2026-12-31.
 	SIAT          siat.Config `json:"-"`
 	SiatModalidad int         `json:"-"`
 	// SiatSandbox habilita respuestas fiscales deterministas únicamente cuando
@@ -323,8 +325,10 @@ func Load() Config {
 	}
 
 	return Config{
-		Port:    getEnv("PORT", "8081"),
-		RunMode: runMode,
+		DatabaseURL: os.Getenv("DATABASE_URL"),
+		AutoMigrate: strings.EqualFold(strings.TrimSpace(os.Getenv("AUTO_MIGRATE")), "true"),
+		Port:        getEnv("PORT", "8081"),
+		RunMode:     runMode,
 		CORSAllowedOrigins: parseCSVEnv("CORS_ALLOWED_ORIGINS", []string{
 			"http://localhost:3000",
 			"http://127.0.0.1:3000",

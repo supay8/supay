@@ -9,7 +9,10 @@ import (
 
 func main() {
 	_ = godotenv.Load()
-	db := database.ConnectDB()
+	db, err := database.ConnectDB()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if err := database.MigrateDB(db); err != nil {
 		log.Fatalf("migración fallida: %v", err)

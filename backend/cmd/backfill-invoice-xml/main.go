@@ -26,7 +26,10 @@ type legacyInvoiceXML struct {
 func main() {
 	_ = godotenv.Load()
 	cfg := appconfig.Load()
-	db := database.ConnectDB()
+	db, err := database.ConnectDB()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	var legacyColumnCount int64
 	if err := db.Raw(`

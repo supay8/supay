@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 type PDFGenerator interface {
@@ -37,8 +38,8 @@ type Sender interface {
 }
 
 type Processor struct {
-	repo        domain.InvoiceEmailNotificationRepository
-	invoices    domain.InvoiceRepository
+	repo        ports.InvoiceEmailNotificationRepository
+	invoices    ports.InvoiceRepository
 	files       InvoiceFileReader
 	pdf         PDFGenerator
 	sender      Sender
@@ -46,7 +47,7 @@ type Processor struct {
 	now         func() time.Time
 }
 
-func NewProcessor(repo domain.InvoiceEmailNotificationRepository, invoices domain.InvoiceRepository, files InvoiceFileReader, pdf PDFGenerator, sender Sender, lockTimeout time.Duration) *Processor {
+func NewProcessor(repo ports.InvoiceEmailNotificationRepository, invoices ports.InvoiceRepository, files InvoiceFileReader, pdf PDFGenerator, sender Sender, lockTimeout time.Duration) *Processor {
 	if lockTimeout <= 0 {
 		lockTimeout = 10 * time.Minute
 	}

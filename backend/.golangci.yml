@@ -1,0 +1,61 @@
+version: "2"
+run:
+  timeout: 5m
+  relative-path-mode: cfg
+linters:
+  default: none
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        core:
+          files:
+            - "${base-path}/internal/usecase/*.go"
+            - "${base-path}/internal/usecase/**/*.go"
+            - "${base-path}/internal/domain/*.go"
+            - "${base-path}/internal/domain/**/*.go"
+            - "${base-path}/internal/ports/*.go"
+            - "${base-path}/internal/ports/**/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/brandsrx/supay/internal/adapters
+              desc: "El núcleo consume contratos de internal/ports, nunca adaptadores."
+            - pkg: github.com/brandsrx/supay/internal/repository
+              desc: "La persistencia se inyecta mediante puertos."
+            - pkg: github.com/brandsrx/supay/internal/models
+              desc: "Los modelos ORM pertenecen a infraestructura."
+            - pkg: github.com/brandsrx/supay/internal/storage
+              desc: "El almacenamiento se inyecta mediante puertos."
+            - pkg: github.com/brandsrx/supay/internal/auth
+              desc: "La autenticación se inyecta mediante puertos."
+            - pkg: github.com/brandsrx/supay/internal/crypto
+              desc: "El cifrado se inyecta mediante puertos."
+            - pkg: github.com/brandsrx/supay/internal/config
+              desc: "La configuración se resuelve en el composition root."
+            - pkg: github.com/brandsrx/supay/internal/app
+              desc: "El núcleo no conoce su composición."
+            - pkg: github.com/brandsrx/supay/internal/delivery
+              desc: "El núcleo no conoce transportes de entrada."
+            - pkg: gorm.io
+              desc: "El núcleo no depende de GORM."
+            - pkg: github.com/ron86i/go-siat
+              desc: "El SDK SIAT solo pertenece a adaptadores."
+        delivery:
+          files:
+            - "${base-path}/internal/delivery/*.go"
+            - "${base-path}/internal/delivery/**/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/brandsrx/supay/internal/adapters
+              desc: "delivery no debe invocar adapters directamente; usa casos de uso y puertos."
+        domain:
+          files:
+            - "${base-path}/internal/domain/*.go"
+            - "${base-path}/internal/domain/**/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/brandsrx/supay/internal/usecase
+              desc: "El dominio es independiente de la aplicación."
+            - pkg: github.com/brandsrx/supay/internal/ports
+              desc: "Los puertos dependen del dominio; nunca al revés."

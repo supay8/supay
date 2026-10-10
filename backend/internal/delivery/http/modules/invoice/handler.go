@@ -12,9 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	deliveryHttp "github.com/brandsrx/supay/internal/delivery/http"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
@@ -28,7 +29,7 @@ type invoiceService interface {
 	EmitSimplified(ctx context.Context, req usecase.MinimalInvoiceRequest) (*domain.Invoice, error)
 	GetByID(ctx context.Context, id string) (*domain.Invoice, error)
 	ListInvoices(filter domain.InvoiceListFilter) ([]*domain.Invoice, int64, error)
-	Emit(ctx context.Context, id string) (*domain.Invoice, error)
+	ports.InvoiceEmitter
 	VerifyStatus(ctx context.Context, id string) (*domain.Invoice, error)
 	Annul(ctx context.Context, id string, codigoMotivo int) (*domain.Invoice, error)
 	RevertAnnul(ctx context.Context, id string) (*domain.Invoice, error)
@@ -428,7 +429,7 @@ func (h *handler) sectores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	perfiles := siat.PerfilesSector()
+	perfiles := fiscal.PerfilesSector()
 	salida := make([]sectorDTO, 0, len(perfiles))
 	for _, p := range perfiles {
 		campos := make([]sectorCampoDTO, 0, len(p.Campos))

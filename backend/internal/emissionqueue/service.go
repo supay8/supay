@@ -11,6 +11,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/observability"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivertype"
@@ -43,7 +44,7 @@ type Service struct {
 	started          bool
 }
 
-func NewService(db *gorm.DB, outbox domain.OutboxRepository, processor InvoiceEmissionProcessor, cfg Config) (*Service, error) {
+func NewService(db *gorm.DB, outbox ports.OutboxRepository, processor InvoiceEmissionProcessor, cfg Config) (*Service, error) {
 	if db == nil {
 		return nil, errors.New("cola de emisión: base de datos no configurada")
 	}

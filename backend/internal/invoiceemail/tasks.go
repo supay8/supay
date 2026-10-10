@@ -10,7 +10,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
-	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -97,7 +97,7 @@ func (p *CloudTasksPublisher) Publish(ctx context.Context, notificationID string
 }
 
 type Dispatcher struct {
-	repo        domain.InvoiceEmailNotificationRepository
+	repo        ports.InvoiceEmailNotificationRepository
 	publisher   TaskPublisher
 	owner       string
 	batchSize   int
@@ -105,7 +105,7 @@ type Dispatcher struct {
 	now         func() time.Time
 }
 
-func NewDispatcher(repo domain.InvoiceEmailNotificationRepository, publisher TaskPublisher, batchSize int, lockTimeout time.Duration) *Dispatcher {
+func NewDispatcher(repo ports.InvoiceEmailNotificationRepository, publisher TaskPublisher, batchSize int, lockTimeout time.Duration) *Dispatcher {
 	if batchSize <= 0 {
 		batchSize = 100
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/observability"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/usecase"
 	"github.com/riverqueue/river"
 )
@@ -25,9 +26,7 @@ type InvoiceEmissionArgs struct {
 
 func (InvoiceEmissionArgs) Kind() string { return InvoiceEmissionJobKind }
 
-type InvoiceEmissionProcessor interface {
-	ProcessEmission(ctx context.Context, tenantID, invoiceID string) (*domain.Invoice, error)
-}
+type InvoiceEmissionProcessor = ports.InvoiceEmissionProcessor
 
 type InvoiceEmissionWorker struct {
 	river.WorkerDefaults[InvoiceEmissionArgs]

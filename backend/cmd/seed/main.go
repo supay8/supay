@@ -19,7 +19,9 @@ func main() {
 	fmt.Println("🔧 Seed SIAT: creando company y point of sale de prueba...")
 
 	cfg := appconfig.Load()
-	database.ConnectDB()
+	if _, err := database.ConnectDB(); err != nil {
+		log.Fatal(err)
+	}
 
 	companyRepo := postgres.NewPostgresCompanyRepository(database.DB)
 	posRepo := postgres.NewPostgresPointOfSaleRepository(database.DB)

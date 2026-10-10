@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 // invoiceCustomerDTO es la representación mínima del cliente en una factura.
@@ -37,38 +38,38 @@ type invoiceItemDTO struct {
 // Omite campos pesados (XML, entidades completas) a menos que se pidan con
 // ?include=xml,company,point_of_sale,cufd,customer,archivo.
 type invoiceDTO struct {
-	ID                    string               `json:"id"`
-	CompanyId             string               `json:"company_id"`
-	CustomerId            string               `json:"customer_id"`
-	PointOfSaleId         string               `json:"point_of_sale_id"`
-	CufdId                string               `json:"cufd_id,omitempty"`
-	ContingencyEventId    *string              `json:"contingency_event_id,omitempty"`
-	AjustaFacturaId       *string              `json:"ajusta_factura_id,omitempty"`
-	InvoiceNumber         int                  `json:"invoice_number"`
-	Status                domain.InvoiceStatus `json:"status"`
-	Cuf                   *string              `json:"cuf,omitempty"`
-	Subtotal              float64              `json:"subtotal"`
-	Discount              float64              `json:"discount"`
-	Total                 float64              `json:"total"`
-	CodigoMetodoPago      int                  `json:"codigo_metodo_pago"`
-	CodigoMoneda          int                  `json:"codigo_moneda"`
-	TipoCambio            float64              `json:"tipo_cambio"`
-	CodigoDocumentoSector int                  `json:"codigo_documento_sector"`
-	CodigoTipoFactura     int                  `json:"codigo_tipo_factura"`
-	Layout                string               `json:"layout,omitempty"`
-	Modalidad             int                  `json:"modalidad"`
-	NombreEstudiante      *string              `json:"nombre_estudiante,omitempty"`
-	PeriodoFacturado      *string              `json:"periodo_facturado,omitempty"`
-	SectorData            json.RawMessage      `json:"sector_data,omitempty"`
-	EmissionType          string               `json:"emission_type"`
-	IssueDate             time.Time            `json:"issue_date"`
-	MotivoAnulacion       *int                 `json:"motivo_anulacion,omitempty"`
-	FechaAnulacion        *time.Time           `json:"fecha_anulacion,omitempty"`
-	SiatReceptionCode     *string              `json:"siat_reception_code,omitempty"`
-	SiatMensajes          []siat.Mensaje       `json:"siat_mensajes,omitempty"`
-	Customer              *invoiceCustomerDTO  `json:"customer"`
-	Items                 []invoiceItemDTO     `json:"items"`
-	CreatedAt             time.Time            `json:"created_at"`
+	ID                    string                `json:"id"`
+	CompanyId             string                `json:"company_id"`
+	CustomerId            string                `json:"customer_id"`
+	PointOfSaleId         string                `json:"point_of_sale_id"`
+	CufdId                string                `json:"cufd_id,omitempty"`
+	ContingencyEventId    *string               `json:"contingency_event_id,omitempty"`
+	AjustaFacturaId       *string               `json:"ajusta_factura_id,omitempty"`
+	InvoiceNumber         int                   `json:"invoice_number"`
+	Status                domain.InvoiceStatus  `json:"status"`
+	Cuf                   *string               `json:"cuf,omitempty"`
+	Subtotal              float64               `json:"subtotal"`
+	Discount              float64               `json:"discount"`
+	Total                 float64               `json:"total"`
+	CodigoMetodoPago      int                   `json:"codigo_metodo_pago"`
+	CodigoMoneda          int                   `json:"codigo_moneda"`
+	TipoCambio            float64               `json:"tipo_cambio"`
+	CodigoDocumentoSector int                   `json:"codigo_documento_sector"`
+	CodigoTipoFactura     int                   `json:"codigo_tipo_factura"`
+	Layout                string                `json:"layout,omitempty"`
+	Modalidad             int                   `json:"modalidad"`
+	NombreEstudiante      *string               `json:"nombre_estudiante,omitempty"`
+	PeriodoFacturado      *string               `json:"periodo_facturado,omitempty"`
+	SectorData            json.RawMessage       `json:"sector_data,omitempty"`
+	EmissionType          string                `json:"emission_type"`
+	IssueDate             time.Time             `json:"issue_date"`
+	MotivoAnulacion       *int                  `json:"motivo_anulacion,omitempty"`
+	FechaAnulacion        *time.Time            `json:"fecha_anulacion,omitempty"`
+	SiatReceptionCode     *string               `json:"siat_reception_code,omitempty"`
+	SiatMensajes          []ports.FiscalMessage `json:"siat_mensajes,omitempty"`
+	Customer              *invoiceCustomerDTO   `json:"customer"`
+	Items                 []invoiceItemDTO      `json:"items"`
+	CreatedAt             time.Time             `json:"created_at"`
 
 	// Campos opt-in por ?include=
 	Company     *domain.Company     `json:"company,omitempty"`
@@ -166,7 +167,7 @@ func toInvoiceDTO(inv *domain.Invoice, includes map[string]bool) invoiceDTO {
 	}
 
 	if inv.SiatMensajes != nil && *inv.SiatMensajes != "" {
-		var msgs []siat.Mensaje
+		var msgs []ports.FiscalMessage
 		if err := json.Unmarshal([]byte(*inv.SiatMensajes), &msgs); err == nil {
 			dto.SiatMensajes = msgs
 		}
@@ -253,7 +254,7 @@ func humanizarClave(clave string) string {
 	return strings.Join(words, " ")
 }
 
-func aSectorCampoDTO(c siat.CampoSector) sectorCampoDTO {
+func aSectorCampoDTO(c fiscal.CampoSector) sectorCampoDTO {
 	dto := sectorCampoDTO{
 		JSON:      c.JSON,
 		Requerido: c.Requerido,

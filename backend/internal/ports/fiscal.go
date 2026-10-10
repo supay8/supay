@@ -427,9 +427,6 @@ type FiscalSyncResult struct {
 	Mensajes             []FiscalMessage           `json:"mensajes,omitempty"`
 }
 
-// FiscalService es el puerto que abstrae todas las operaciones fiscales
-// (SIAT real o sandbox). El dominio/application depende de esta interfaz,
-// nunca de implementaciones concretas ni del SDK go-siat.
 // OfflineFiscalService is an optional capability implemented by adapters that
 // can build and sign an offline invoice without contacting the SIAT.
 type OfflineFiscalService interface {
@@ -444,20 +441,19 @@ type FiscalBatchPreparer interface {
 	PreparePackage(ctx context.Context, pkg FiscalPackage) (FiscalPackage, error)
 }
 
+// FiscalService composes capabilities at the adapter boundary. Consumers should
+// request the smallest capability they need.
 type FiscalService interface {
-	Emit(ctx context.Context, doc FiscalDocument) (FiscalResult, error)
-	VerifyStatus(ctx context.Context, query FiscalDocumentQuery) (FiscalDocumentResult, error)
-	Annul(ctx context.Context, query FiscalDocumentQuery, codigoMotivo int) (FiscalDocumentResult, error)
-	RevertAnnul(ctx context.Context, query FiscalDocumentQuery) (FiscalDocumentResult, error)
-	RequestCUIS(ctx context.Context, req CredentialRequest) (CuisResult, error)
-	RequestCUFD(ctx context.Context, req CredentialRequest) (CufdResult, error)
-	RegisterSignificantEvent(ctx context.Context, ev FiscalEvent) (FiscalEventResult, error)
-	SendPackage(ctx context.Context, pkg FiscalPackage) (FiscalPackageResult, error)
-	ValidatePackage(ctx context.Context, pkg FiscalPackage, codigoRecepcion string) (FiscalPackageResult, error)
-	SendBulk(ctx context.Context, bulk FiscalBulk) (FiscalPackageResult, error)
-	ValidateBulk(ctx context.Context, bulk FiscalBulk, codigoRecepcion string) (FiscalPackageResult, error)
-	SendPurchases(ctx context.Context, p FiscalPurchase) (FiscalPurchaseResult, error)
-	SignXML(ctx context.Context, req FiscalSignRequest) (FiscalSignResult, error)
-	EmitAdjustment(ctx context.Context, adj FiscalAdjustment) (FiscalAdjustmentResult, error)
-	Synchronize(ctx context.Context, req FiscalSyncRequest, op FiscalSyncOperation) (FiscalSyncResult, error)
+	FiscalSingle
+	FiscalOperations
+}
+
+// FiscalOperations is the composite used by synchronization, events and lots.
+type FiscalOperations interface {
+	FiscalSynchronizer
+	FiscalEvents
+	FiscalBatch
+	FiscalSigner
+	SendPurchases(context.Context, FiscalPurchase) (FiscalPurchaseResult, error)
+	EmitAdjustment(context.Context, FiscalAdjustment) (FiscalAdjustmentResult, error)
 }

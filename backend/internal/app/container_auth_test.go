@@ -10,24 +10,27 @@ import (
 	"github.com/brandsrx/supay/internal/repository/postgres"
 )
 
-func TestContainerSelectsSelfHostedAuthDependencies(t *testing.T) {
-	container := NewContainer(config.Config{
+func TestFactorySelectsSelfHostedAuthDependencies(t *testing.T) {
+	application := &App{cfg: config.Config{
 		DeploymentMode: "selfhosted",
 		JWTSecret:      strings.Repeat("s", 32),
 		JWTIssuer:      "supay-test",
 		JWTAccessTTL:   time.Hour,
-	}, nil)
+	}}
 
-	if _, ok := container.AccessTokenVerifier().(*authn.JWTManager); !ok {
-		t.Fatalf("self-hosted debe usar JWTManager, recibió %T", container.AccessTokenVerifier())
+	configureRepositories(application)
+	bindings := selfHostedAuth(application)
+
+	if _, ok := bindings.Tokens.(*authn.JWTManager); !ok {
+		t.Fatalf("self-hosted debe usar JWTManager, recibió %T", bindings.Tokens)
 	}
-	if _, ok := container.CompanyMemberships().(*postgres.PostgresAuthRepository); !ok {
-		t.Fatalf("self-hosted debe usar PostgresAuthRepository, recibió %T", container.CompanyMemberships())
+	if _, ok := bindings.Memberships.(*postgres.PostgresAuthRepository); !ok {
+		t.Fatalf("self-hosted debe usar PostgresAuthRepository, recibió %T", bindings.Memberships)
 	}
 }
 
-func TestContainerSelectsBetterAuthCloudDependencies(t *testing.T) {
-	container := NewContainer(config.Config{
+func TestFactorySelectsBetterAuthCloudDependencies(t *testing.T) {
+	application := &App{cfg: config.Config{
 		DeploymentMode: "cloud",
 		BetterAuth: config.BetterAuthConfig{
 			JWKSURL:      "https://auth.supay.test/api/auth/jwks",
@@ -36,12 +39,14 @@ func TestContainerSelectsBetterAuthCloudDependencies(t *testing.T) {
 			JWKSCacheTTL: time.Hour,
 			HTTPTimeout:  time.Second,
 		},
-	}, nil)
+	}}
 
-	if _, ok := container.AccessTokenVerifier().(*authn.BetterAuthVerifier); !ok {
-		t.Fatalf("cloud debe usar BetterAuthVerifier, recibió %T", container.AccessTokenVerifier())
+	bindings := cloudAuth(application)
+
+	if _, ok := bindings.Tokens.(*authn.BetterAuthVerifier); !ok {
+		t.Fatalf("cloud debe usar BetterAuthVerifier, recibió %T", bindings.Tokens)
 	}
-	if _, ok := container.CompanyMemberships().(*postgres.BetterAuthMembershipRepository); !ok {
-		t.Fatalf("cloud debe usar BetterAuthMembershipRepository, recibió %T", container.CompanyMemberships())
+	if _, ok := bindings.Memberships.(*postgres.BetterAuthMembershipRepository); !ok {
+		t.Fatalf("cloud debe usar BetterAuthMembershipRepository, recibió %T", bindings.Memberships)
 	}
 }

@@ -8,17 +8,23 @@ import (
 )
 
 func TestFiscalServiceDoesNotFallbackToSandbox(t *testing.T) {
-	c := NewContainer(config.Config{}, nil)
+	c := &App{cfg: config.Config{StorageDriver: "none"}}
+	if err := configureSIAT(c); err != nil {
+		t.Fatal(err)
+	}
 
-	if got := c.FiscalService(); got != nil {
+	if got := c.fiscalService; got != nil {
 		t.Fatalf("FiscalService() = %T; want nil without real credentials", got)
 	}
 }
 
 func TestFiscalServiceUsesSandboxOnlyWhenExplicitlyEnabled(t *testing.T) {
-	c := NewContainer(config.Config{SiatSandbox: true}, nil)
+	c := &App{cfg: config.Config{SiatSandbox: true}}
+	if err := configureSIAT(c); err != nil {
+		t.Fatal(err)
+	}
 
-	if _, ok := c.FiscalService().(*sandbox.FiscalService); !ok {
-		t.Fatalf("FiscalService() = %T; want *sandbox.FiscalService", c.FiscalService())
+	if _, ok := c.fiscalService.(*sandbox.FiscalService); !ok {
+		t.Fatalf("FiscalService() = %T; want *sandbox.FiscalService", c.fiscalService)
 	}
 }

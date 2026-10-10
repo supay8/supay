@@ -3,158 +3,121 @@ package siat
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"time"
-
-	"github.com/ron86i/go-siat/v2/pkg/models/invoices"
 )
 
-// Este archivo implementa el aplicador genérico de builders del SDK go-siat.
-// Los ~50 builders de factura no comparten una interfaz común (cada uno define
-// sus métodos With* con tipos que varían: *int vs *int64, etc.), por lo que la
-// construcción se hace por reflexión convirtiendo cada argumento al tipo exacto
-// que declara el método. Un campo cuyo método no existe en ese builder se omite
-// (los XSD de notas y boletos no tienen montoTotal, moneda, etc.).
+//go:generate go run ./internal/buildergen
 
-// llamarMetodo invoca metodo sobre builder con args convertidos al tipo exacto
-// de los parámetros declarados. tolerante=true omite en silencio cuando el
-// método no existe en el builder (campo sin equivalente en ese XSD); con
-// tolerante=false devuelve error.
-func llamarMetodo(builder any, metodo string, tolerante bool, args ...any) {
-	if metodo == "" {
+// SDK builder types are private. Typed closures infer their types at compile
+// time and expose only this internal implementation detail to the serializer.
+type typedSDKBuilder struct {
+	setters map[string]func(any)
+	build   func() any
+}
+
+func invocarCtor(ctor func() *typedSDKBuilder) any { return ctor() }
+func tieneMetodo(builder any, method string) bool {
+	_, ok := builder.(*typedSDKBuilder).setters[method]
+	return ok
+}
+func llamarBuild(builder any) any { return builder.(*typedSDKBuilder).build() }
+func llamarMetodo(builder any, method string, optional bool, args ...any) {
+	if method == "" {
 		return
 	}
-	m := reflect.ValueOf(builder).MethodByName(metodo)
-	if !m.IsValid() {
-		if tolerante {
+	setter, ok := builder.(*typedSDKBuilder).setters[method]
+	if !ok {
+		if optional {
 			return
 		}
-		panic(fmt.Sprintf("el builder %T no expone el método %s", builder, metodo))
+		panic(fmt.Sprintf("campo fiscal no soportado: %s", method))
 	}
-	mt := m.Type()
-	nFijos := mt.NumIn()
-	if mt.IsVariadic() {
-		nFijos--
+	if len(args) != 1 {
+		panic("SDK setter requires one argument")
 	}
-	if (!mt.IsVariadic() && mt.NumIn() != len(args)) || (mt.IsVariadic() && len(args) < nFijos) {
-		panic(fmt.Sprintf("%T.%s espera %d argumentos, se pasaron %d", builder, metodo, mt.NumIn(), len(args)))
-	}
-	convertidos := make([]reflect.Value, len(args))
-	for i, arg := range args {
-		param := mt.In(i)
-		if mt.IsVariadic() && i >= nFijos {
-			// Los argumentos variádicos se convierten al tipo del elemento y
-			// viajan individuales (reflect.Call no acepta el slice).
-			param = param.Elem()
-		}
-		cv, ok := convertirArg(param, arg)
-		if !ok {
-			panic(fmt.Sprintf("%T.%s: no se pudo convertir %T (%v) al parámetro %s",
-				builder, metodo, arg, arg, param))
-		}
-		convertidos[i] = cv
-	}
-	m.Call(convertidos)
+	setter(args[0])
 }
-
-// convertirArg adapta un valor (string/int/int64/float64/time.Time o punteros a
-// ellos) al tipo exacto del parámetro del builder: string, int, int64, float64,
-// time.Time o punteros a cualquiera de ellos. Devuelve ok=false para omitir el
-// campo (valor nil o incompatible).
-func convertirArg(param reflect.Type, valor any) (reflect.Value, bool) {
-	if valor == nil {
-		return reflect.Value{}, false
+func setBuilderValue[T, B any](setter func(T) B, value any) { setter(builderArg[T](value)) }
+func setBuilderSlice[T, B any](setter func([]T) B, value any) {
+	if item, ok := value.(T); ok {
+		setter([]T{item})
+		return
 	}
-	if raw, ok := valor.(json.RawMessage); ok {
-		decoded := reflect.New(param)
-		if err := json.Unmarshal(raw, decoded.Interface()); err != nil {
-			return reflect.Value{}, false
+	if item, ok := value.(*T); ok && item != nil {
+		setter([]T{*item})
+		return
+	}
+	setter(builderSliceArg[[]T](value))
+}
+func setBuilderVariadic[T, B any](setter func(...T) B, value any) {
+	if item, ok := value.(T); ok {
+		setter(item)
+		return
+	}
+	if item, ok := value.(*T); ok && item != nil {
+		setter(*item)
+		return
+	}
+	setter(builderSliceArg[[]T](value)...)
+}
+func builderArg[T any](value any) T {
+	if typed, ok := value.(T); ok {
+		return typed
+	}
+	if ptr, ok := value.(*T); ok && ptr != nil {
+		return *ptr
+	}
+	var out T
+	data, err := json.Marshal(value)
+	if text, ok := value.(string); ok {
+		switch any(out).(type) {
+		case int64, *int64, int, *int:
+			if _, e := strconv.ParseInt(text, 10, 64); e == nil {
+				data = []byte(text)
+			}
 		}
-		return decoded.Elem(), true
 	}
-	v := reflect.ValueOf(valor)
-	if v.Type() == param {
-		return v, true
-	}
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return reflect.Value{}, false
-		}
-		valor = v.Elem().Interface()
-	}
-	if param.Kind() == reflect.Pointer {
-		elem, ok := convertirArg(param.Elem(), valor)
-		if !ok {
-			return reflect.Value{}, false
-		}
-		p := reflect.New(param.Elem())
-		p.Elem().Set(elem)
-		return p, true
-	}
-	// Algunos builders (p.ej. CompraVentaTasas) reciben los detalles como
-	// slice: se envuelve el detalle individual en un slice de un elemento.
-	if param.Kind() == reflect.Slice {
-		elem, ok := convertirArg(param.Elem(), valor)
-		if !ok {
-			return reflect.Value{}, false
-		}
-		s := reflect.MakeSlice(param, 1, 1)
-		s.Index(0).Set(elem)
-		return s, true
-	}
-	switch param.Kind() {
-	case reflect.String:
-		switch n := valor.(type) {
-		case string:
-			return reflect.ValueOf(n).Convert(param), true
+	switch any(out).(type) {
+	case string, *string:
+		switch n := value.(type) {
 		case int64:
-			return reflect.ValueOf(strconv.FormatInt(n, 10)).Convert(param), true
+			data, _ = json.Marshal(strconv.FormatInt(n, 10))
 		case float64:
-			return reflect.ValueOf(strconv.FormatFloat(n, 'f', -1, 64)).Convert(param), true
-		}
-	case reflect.Int, reflect.Int32:
-		n, ok := aEntero(valor)
-		if !ok {
-			return reflect.Value{}, false
-		}
-		return reflect.ValueOf(int(n)).Convert(param), true
-	case reflect.Int64:
-		if n, ok := aEntero(valor); ok {
-			return reflect.ValueOf(n).Convert(param), true
-		}
-		if s, esStr := valor.(string); esStr {
-			if parsed, err := strconv.ParseInt(s, 10, 64); err == nil {
-				return reflect.ValueOf(parsed).Convert(param), true
-			}
-		}
-		return reflect.Value{}, false
-	case reflect.Float64, reflect.Float32:
-		f, ok := aFlotante(valor)
-		if !ok {
-			return reflect.Value{}, false
-		}
-		return reflect.ValueOf(f).Convert(param), true
-	case reflect.Struct:
-		if param == reflect.TypeOf(time.Time{}) {
-			if t, ok := valor.(time.Time); ok {
-				return reflect.ValueOf(t), true
-			}
-		}
-	case reflect.Bool:
-		if b, ok := valor.(bool); ok {
-			return reflect.ValueOf(b), true
+			data, _ = json.Marshal(strconv.FormatFloat(n, 'f', -1, 64))
 		}
 	}
-	return reflect.Value{}, false
+	if err == nil {
+		err = json.Unmarshal(data, &out)
+	}
+	if err != nil {
+		panic(fmt.Errorf("valor %T incompatible con el campo fiscal: %w", value, err))
+	}
+	return out
 }
-
+func builderSliceArg[T any](value any) T {
+	if typed, ok := value.(T); ok {
+		return typed
+	}
+	var out T
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	if err = json.Unmarshal(data, &out); err == nil {
+		return out
+	}
+	if err = json.Unmarshal(append(append([]byte{'['}, data...), ']'), &out); err != nil {
+		panic(err)
+	}
+	return out
+}
 func aEntero(v any) (int64, bool) {
 	switch n := v.(type) {
-	case int64:
-		return n, true
 	case int:
 		return int64(n), true
+	case int64:
+		return n, true
 	case float64:
 		return int64(n), true
 	case float32:
@@ -162,7 +125,6 @@ func aEntero(v any) (int64, bool) {
 	}
 	return 0, false
 }
-
 func aFlotante(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -176,19 +138,22 @@ func aFlotante(v any) (float64, bool) {
 	}
 	return 0, false
 }
-
-func tieneMetodo(v any, metodo string) bool {
-	return reflect.ValueOf(v).MethodByName(metodo).IsValid()
-}
-
-// esPunteroNil reporta si el valor es nil o un puntero tipado a nil
-// ((*string)(nil), etc.), caso en el que el campo debe omitirse.
 func esPunteroNil(v any) bool {
-	if v == nil {
+	switch p := v.(type) {
+	case nil:
 		return true
+	case *string:
+		return p == nil
+	case *int:
+		return p == nil
+	case *int64:
+		return p == nil
+	case *float64:
+		return p == nil
+	case *time.Time:
+		return p == nil
 	}
-	rv := reflect.ValueOf(v)
-	return rv.Kind() == reflect.Pointer && rv.IsNil()
+	return false
 }
 
 // construirCabecera crea el builder de cabecera del sector, aplica los campos
@@ -378,7 +343,7 @@ func construirDetalleConCodigo(p *SectorProfile, item ItemFactura, nroItem int, 
 	// sectores con DetallePar (47/48) es 1 para original y 2 para devolución;
 	// para el resto (24, etc.) es el correlativo secuencial.
 	llamarMetodo(det, "WithCodigoDetalleTransaccion", true, codigoTransaccion)
-	// Campos sectoriales de detalle: se aplican mediante reflexión NO tolerante.
+	// Campos sectoriales de detalle: se aplican mediante llamadas tipadas NO tolerantes.
 	// Si Supay declara un campo en CamposDetalle pero el builder no tiene el
 	// método With* correspondiente, llamarMetodo con tolerante=false produce un
 	// error explícito (panic que buildFacturaSDK convierte en error).
@@ -387,7 +352,7 @@ func construirDetalleConCodigo(p *SectorProfile, item ItemFactura, nroItem int, 
 }
 
 // aplicarCamposDetalle valida y aplica los datos sectoriales del item sobre el
-// builder de detalle usando la misma reflexión que los campos de cabecera. Un
+// builder de detalle usando las mismas llamadas tipadas que la cabecera. Un
 // item sin DatosSector conserva el comportamiento anterior solo si el perfil no
 // declara CamposDetalle requeridos. Si el builder no expone el método With*
 // declarado, se produce un error explícito.
@@ -424,8 +389,10 @@ func construirFactura(p *SectorProfile, req SolicitudFactura, cuf string, valore
 			originals = req.Items
 		}
 		originalProfile := *p
+		originalCore := *p.SectorProfile
+		originalProfile.SectorProfile = &originalCore
 		originalProfile.CamposDetalle = nil
-		originalProfile.builders.detalle = func() any { return invoices.NewNotaDetalleOriginalBuilder() }
+		originalProfile.builders.detalle = func() any { return newNotaDetalleOriginalBuilder() }
 		for i, item := range originals {
 			item.DatosSector = nil
 			llamarMetodo(root, "AddDetalleOriginal", false, construirDetalle(&originalProfile, item, i+1))
@@ -449,17 +416,4 @@ func construirFactura(p *SectorProfile, req SolicitudFactura, cuf string, valore
 		construirDetalles(p, root, req.Items)
 	}
 	return llamarBuild(root)
-}
-
-// llamarBuild invoca Build() sobre cualquier builder del SDK.
-func llamarBuild(builder any) any {
-	v := reflect.ValueOf(builder).MethodByName("Build")
-	if !v.IsValid() {
-		panic(fmt.Sprintf("el builder %T no expone Build()", builder))
-	}
-	out := v.Call(nil)
-	if len(out) == 0 {
-		panic(fmt.Sprintf("Build() de %T no devolvió nada", builder))
-	}
-	return out[0].Interface()
 }

@@ -5,15 +5,13 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
+	fiscalsync "github.com/brandsrx/supay/internal/adapters/siat/sync"
 	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/ron86i/go-siat/v2/pkg/models"
 	"golang.org/x/crypto/pkcs12"
@@ -318,122 +316,18 @@ func normalizeP12DER(data []byte) []byte {
 	return normalized
 }
 
-// cuisYaVigente detecta el mensaje 980 del SIAT ("EXISTE UN CUIS VIGENTE PARA
-// LA SUCURSAL O PUNTO DE VENTA"). En ese caso el SIAT responde
-// transaccion=false pero incluye el CUIS vigente en <codigo>: no es un fallo,
-// es la reemisión del código existente.
-func cuisYaVigente(err error) bool {
-	var siatErr *goSiat.SiatError
-	return errors.As(err, &siatErr) && siatErr.SiatCode == goSiat.CodeExisteCuisVigente
-}
-
-// SolicitarCUIS solicita un CUIS al SIAT usando el SDK go-siat.
 func (s *Service) SolicitarCUIS(ctx context.Context, req SolicitudCuis) (*RespuestaCuis, error) {
-	if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
-		return nil, err
-	}
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-
-	request := models.NewCuisBuilder().
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoModalidad(req.CodigoModalidad).
-		Build()
-
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.sdk.Codigos().SolicitudCuis(ctx, request)
-	if err != nil {
-		return nil, fmt.Errorf("siat cuis: %w", err)
-	}
-
-	result := resp.Body.Content.RespuestaCuis
-
-	if err := goSiat.Verify(result); err != nil {
-		// 980 con código presente: éxito — el propio SIAT devuelve el CUIS
-		// vigente en la misma respuesta; se normaliza como transacción OK y
-		// se conservan los mensajes para trazabilidad.
-		if !cuisYaVigente(err) || result.Codigo == "" {
-			return nil, fmt.Errorf("siat cuis: %w", err)
-		}
-		result.Transaccion = true
-	}
-
-	return &RespuestaCuis{
-		Codigo:        result.Codigo,
-		FechaVigencia: XMLDateTime{Time: SIATWallClockToInstant(result.FechaVigencia)},
-		Transaccion:   result.Transaccion,
-		Mensajes:      toMensajes(result.MensajesList),
-	}, nil
+	return fiscalsync.New(s.sdk).SolicitarCUIS(ctx, req)
 }
-
-// SolicitarCUFD solicita un CUFD al SIAT usando el SDK go-siat.
 func (s *Service) SolicitarCUFD(ctx context.Context, req SolicitudCufd) (*RespuestaCufd, error) {
-	if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
-		return nil, err
-	}
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-
-	request := models.NewCufdBuilder().
-		WithCodigoSucursal(req.CodigoSucursal).
-		WithCodigoPuntoVenta(req.CodigoPuntoVenta).
-		WithCodigoModalidad(req.CodigoModalidad).
-		WithCuis(req.Cuis).
-		Build()
-
-	ctx = withDynamicConfig(ctx, s.sdk.Config(), req.CodigoAmbiente, req.CodigoSistema, req.Nit)
-
-	resp, err := s.sdk.Codigos().SolicitudCufd(ctx, request)
-	if err != nil {
-		return nil, fmt.Errorf("siat cufd: %w", err)
-	}
-	if err := goSiat.Verify(resp.Body.Content.RespuestaCufd); err != nil {
-		return nil, fmt.Errorf("siat cufd: %w", err)
-	}
-
-	result := resp.Body.Content.RespuestaCufd
-	return &RespuestaCufd{
-		Codigo:        result.Codigo,
-		CodigoControl: result.CodigoControl,
-		Direccion:     result.Direccion,
-		FechaVigencia: XMLDateTime{Time: SIATWallClockToInstant(result.FechaVigencia)},
-		Transaccion:   result.Transaccion,
-		Mensajes:      toMensajes(result.MensajesList),
-	}, nil
+	return fiscalsync.New(s.sdk).SolicitarCUFD(ctx, req)
 }
-
-// withDynamicConfig sobreescribe la identidad del contribuyente (NIT, sistema,
-// ambiente) por empresa en el contexto de la petición, sin tocar la config global.
 func withDynamicConfig(ctx context.Context, base goSiat.Config, ambiente int, sistema, nit string) context.Context {
-	// The SDK identity is configured once in goSiat.Config. Keep the arguments
-	// for source compatibility with older callers, but never replace the global
-	// identity per request.
-	return goSiat.WithDynamicConfig(ctx, base)
+	return fiscalsync.WithDynamicConfig(ctx, base, ambiente, sistema, nit)
 }
-
-func applyIdentityValues(cfg goSiat.Config, ambiente *int, sistema *string, nit *string) error {
-	if *ambiente == 0 {
-		*ambiente = cfg.CodigoAmbiente
-	} else if *ambiente != cfg.CodigoAmbiente {
-		return fmt.Errorf("siat identidad: codigoAmbiente de la solicitud (%d) no coincide con Config (%d)", *ambiente, cfg.CodigoAmbiente)
-	}
-	if strings.TrimSpace(*sistema) == "" {
-		*sistema = cfg.CodigoSistema
-	} else if strings.TrimSpace(*sistema) != strings.TrimSpace(cfg.CodigoSistema) {
-		return fmt.Errorf("siat identidad: codigoSistema de la solicitud no coincide con Config")
-	}
-	if strings.TrimSpace(*nit) == "" {
-		*nit = strconv.FormatInt(cfg.Nit, 10)
-	} else if parsed := parseNit(*nit); parsed != cfg.Nit {
-		return fmt.Errorf("siat identidad: nit de la solicitud no coincide con Config")
-	}
-	return nil
+func applyIdentityValues(cfg goSiat.Config, ambiente *int, sistema, nit *string) error {
+	return fiscalsync.ApplyIdentityValues(cfg, ambiente, sistema, nit)
 }
-
 func (s *Service) applyIdentity(req *SolicitudFactura) error {
 	cfg := s.sdk.Config()
 	return applyIdentityValues(cfg, &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit)
@@ -444,28 +338,4 @@ func (s *Service) applyDocumentIdentity(req *SolicitudDocumento) error {
 	return applyIdentityValues(cfg, &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit)
 }
 
-// toMensajes convierte la lista de mensajes del SIAT (tipo interno del SDK) a
-// la representación propia de la aplicación mediante reflexión, ya que el
-// paquete interno del SDK no puede importarse por nombre.
-func toMensajes(msgs any) []Mensaje {
-	v := reflect.ValueOf(msgs)
-	if !v.IsValid() || v.Kind() != reflect.Slice {
-		return nil
-	}
-	out := make([]Mensaje, 0, v.Len())
-	for i := 0; i < v.Len(); i++ {
-		elem := v.Index(i)
-		if elem.Kind() == reflect.Pointer {
-			elem = elem.Elem()
-		}
-		var m Mensaje
-		if f := elem.FieldByName("Codigo"); f.IsValid() {
-			m.Codigo = int(f.Int())
-		}
-		if f := elem.FieldByName("Descripcion"); f.IsValid() {
-			m.Descripcion = f.String()
-		}
-		out = append(out, m)
-	}
-	return out
-}
+func toMensajes(msgs any) []Mensaje { return fiscalsync.Mensajes(msgs) }

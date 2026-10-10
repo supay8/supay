@@ -1,8 +1,6 @@
 package siat
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -10,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/siat/batch"
+	"github.com/brandsrx/supay/internal/ports"
 	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/ron86i/go-siat/v2/pkg/models"
 	"github.com/ron86i/go-siat/v2/pkg/utils"
@@ -133,20 +133,12 @@ func (s *Service) prepararPaquete(ctx context.Context, req SolicitudPaqueteFactu
 	tipoFactura := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
 	codigoEmision := req.codigoEmision()
 
-	facturas := make([]any, 0, len(req.Facturas))
-	cufs := make([]string, 0, len(req.Facturas))
-	prepared := req.hasPersistedXML()
-	if perfil.HasBuilder() && !prepared {
-		for i := range req.Facturas {
-			if err := applyIdentityValues(s.sdk.Config(), &req.Facturas[i].CodigoAmbiente, &req.Facturas[i].CodigoSistema, &req.Facturas[i].Nit); err != nil {
-				return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
-			}
-			factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
-			if err != nil {
-				return nil, fmt.Errorf("siat paquete factura %d: %w", i+1, err)
-			}
-			facturas = append(facturas, factura)
-			cufs = append(cufs, cuf)
+	var packed ports.PackedLot
+	var cufs []string
+	if perfil.HasBuilder() {
+		packed, cufs, err = s.prepararXMLLote(req.Facturas, codigoEmision)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -172,19 +164,8 @@ func (s *Service) prepararPaquete(ctx context.Context, req SolicitudPaqueteFactu
 		// envía vacío para evitar el xsi:nil.
 		WithCafc(&emptyStr)
 
-	if prepared {
-		archivo, hash, err := empaquetarXMLPersistidos(req.Facturas)
-		if err != nil {
-			return nil, fmt.Errorf("siat paquete: %w", err)
-		}
-		paquete.WithArchivo(archivo).WithHashArchivo(hash).WithCantidadFacturas(len(req.Facturas))
-		for _, factura := range req.Facturas {
-			cufs = append(cufs, factura.Cuf)
-		}
-	} else if perfil.HasBuilder() {
-		if err := paquete.WithFacturas(facturas, s.sdk.Config()); err != nil {
-			return nil, fmt.Errorf("siat paquete: no se pudo empaquetar las facturas: %w", err)
-		}
+	if perfil.HasBuilder() {
+		paquete.WithArchivo(packed.Archive).WithHashArchivo(packed.Hash).WithCantidadFacturas(len(req.Facturas))
 	} else {
 		paquete.WithArchivo(req.Archivo).WithHashArchivo(req.HashArchivo).WithCantidadFacturas(len(req.Facturas))
 	}
@@ -516,21 +497,11 @@ func validarXMLPersistido(f SolicitudFactura, perfil *SectorProfile, paquete Sol
 	return nil
 }
 
-func empaquetarXMLPersistidos(facturas []SolicitudFactura) (archivo, hash string, err error) {
-	var buffer bytes.Buffer
-	writer := tar.NewWriter(&buffer)
-	for i, factura := range facturas {
-		data := []byte(factura.XML)
-		if err := writer.WriteHeader(&tar.Header{Name: fmt.Sprintf("factura_%d.xml", i+1), Mode: 0600, Size: int64(len(data))}); err != nil {
-			return "", "", err
-		}
-		if _, err := writer.Write(data); err != nil {
-			return "", "", err
-		}
+func empaquetarXMLPersistidos(facturas []SolicitudFactura) (string, string, error) {
+	docs := make([][]byte, len(facturas))
+	for i, f := range facturas {
+		docs[i] = []byte(f.XML)
 	}
-	if err := writer.Close(); err != nil {
-		return "", "", err
-	}
-	hash, archivo, err = utils.CompressAndHash(buffer.Bytes())
-	return archivo, hash, err
+	packed, err := (batch.Packer{}).PackLot(docs)
+	return packed.Archive, packed.Hash, err
 }

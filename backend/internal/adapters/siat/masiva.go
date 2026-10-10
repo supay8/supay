@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/brandsrx/supay/internal/ports"
 	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/ron86i/go-siat/v2/pkg/models"
 )
@@ -96,19 +97,12 @@ func (s *Service) prepararMasiva(ctx context.Context, req SolicitudMasivaFactura
 	tipoFactura := perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
 	codigoEmision := req.codigoEmision()
 
-	facturas := make([]any, 0, len(req.Facturas))
-	cufs := make([]string, 0, len(req.Facturas))
+	var packed ports.PackedLot
+	var cufs []string
 	if perfil.HasBuilder() {
-		for i := range req.Facturas {
-			if err := applyIdentityValues(s.sdk.Config(), &req.Facturas[i].CodigoAmbiente, &req.Facturas[i].CodigoSistema, &req.Facturas[i].Nit); err != nil {
-				return nil, fmt.Errorf("siat masiva factura %d: %w", i+1, err)
-			}
-			factura, cuf, _, err := buildFacturaSDK(req.Facturas[i], codigoEmision)
-			if err != nil {
-				return nil, fmt.Errorf("siat masiva factura %d: %w", i+1, err)
-			}
-			facturas = append(facturas, factura)
-			cufs = append(cufs, cuf)
+		packed, cufs, err = s.prepararXMLLote(req.Facturas, codigoEmision)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -127,9 +121,7 @@ func (s *Service) prepararMasiva(ctx context.Context, req SolicitudMasivaFactura
 		WithFechaEnvio(time.Now().In(LaPaz))
 
 	if perfil.HasBuilder() {
-		if err := lote.WithFacturas(facturas, s.sdk.Config()); err != nil {
-			return nil, fmt.Errorf("siat masiva: no se pudo empaquetar las facturas: %w", err)
-		}
+		lote.WithArchivo(packed.Archive).WithHashArchivo(packed.Hash).WithCantidadFacturas(len(req.Facturas))
 	} else {
 		lote.WithArchivo(req.Archivo).WithHashArchivo(req.HashArchivo).WithCantidadFacturas(len(req.Facturas))
 	}

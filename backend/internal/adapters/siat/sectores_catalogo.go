@@ -1,10 +1,6 @@
 package siat
 
-import (
-	"reflect"
-
-	"github.com/ron86i/go-siat/v2/pkg/models/invoices"
-)
+import "github.com/brandsrx/supay/internal/domain/fiscal"
 
 // catalogoSectores es el registro de todos los documentos-sector soportados,
 // construido a partir del catálogo normativo del SIAT y de las fachadas del SDK
@@ -16,23 +12,23 @@ import (
 // Ajuste → 3 (notas de crédito/débito y conciliación).
 var catalogoSectores = []*SectorProfile{
 	sector(1, "Compra y Venta", TipoDocumentoFacturaConCredito, FachadaCompraVenta,
-		b(invoices.NewCompraVentaBuilder, invoices.NewCompraVentaCabeceraBuilder, invoices.NewCompraVentaDetalleBuilder)),
+		b(newCompraVentaBuilder, newCompraVentaCabeceraBuilder, newCompraVentaDetalleBuilder)),
 
 	sector(2, "Alquiler de Bienes Inmuebles", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewAlquilerBienInmuebleBuilder, invoices.NewAlquilerBienInmuebleCabeceraBuilder, invoices.NewAlquilerBienInmuebleDetalleBuilder),
+		b(newAlquilerBienInmuebleBuilder, newAlquilerBienInmuebleCabeceraBuilder, newAlquilerBienInmuebleDetalleBuilder),
 		campoE("periodo_facturado", "WithPeriodoFacturado", "string", true, "Período facturado", "2026-08")),
 
 	sector(3, "Comercial de Exportación", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewComercialExportacionBuilder, invoices.NewComercialExportacionCabeceraBuilder, invoices.NewComercialExportacionDetalleBuilder)),
+		b(newComercialExportacionBuilder, newComercialExportacionCabeceraBuilder, newComercialExportacionDetalleBuilder)),
 
 	sector(4, "Libre Consignación", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewLibreConsignacionBuilder, invoices.NewLibreConsignacionCabeceraBuilder, invoices.NewLibreConsignacionDetalleBuilder)),
+		b(newLibreConsignacionBuilder, newLibreConsignacionCabeceraBuilder, newLibreConsignacionDetalleBuilder)),
 
 	sector(5, "Venta en Zona Franca", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewZonaFrancaBuilder, invoices.NewZonaFrancaCabeceraBuilder, invoices.NewZonaFrancaDetalleBuilder)),
+		b(newZonaFrancaBuilder, newZonaFrancaCabeceraBuilder, newZonaFrancaDetalleBuilder)),
 
 	sector(6, "Servicio Turístico y Hospedaje", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewTurismoHospedajeBuilder, invoices.NewTurismoHospedajeCabeceraBuilder, invoices.NewTurismoHospedajeDetalleBuilder),
+		b(newTurismoHospedajeBuilder, newTurismoHospedajeCabeceraBuilder, newTurismoHospedajeDetalleBuilder),
 		campo("fecha_ingreso_hospedaje", "WithFechaIngresoHospedaje", "fecha", false),
 		campo("cantidad_habitaciones", "WithCantidadHabitaciones", "int", false),
 		campo("cantidad_huespedes", "WithCantidadHuespedes", "int", false),
@@ -41,85 +37,85 @@ var catalogoSectores = []*SectorProfile{
 		campo("razon_social_operador_turismo", "WithRazonSocialOperadorTurismo", "string", false)),
 
 	sector(7, "Seguridad Alimentaria y Abastecimiento", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewSeguridadAlimentariaBuilder, invoices.NewSeguridadAlimentariaCabeceraBuilder, invoices.NewSeguridadAlimentariaDetalleBuilder)),
+		b(newSeguridadAlimentariaBuilder, newSeguridadAlimentariaCabeceraBuilder, newSeguridadAlimentariaDetalleBuilder)),
 
 	func() *SectorProfile {
 		p := sector(8, "Tasa Cero (libros y transporte internacional de carga)", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-			b(invoices.NewTasaCeroBuilder, invoices.NewTasaCeroCabeceraBuilder, invoices.NewTasaCeroDetalleBuilder))
+			b(newTasaCeroBuilder, newTasaCeroCabeceraBuilder, newTasaCeroDetalleBuilder))
 		p.MontoSujetoIvaCero = true
 		return p
 	}(),
 
 	sector(9, "Compra y Venta de Moneda Extranjera", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewMonedaExtranjeraBuilder, invoices.NewMonedaExtranjeraCabeceraBuilder, invoices.NewMonedaExtranjeraDetalleBuilder),
+		b(newMonedaExtranjeraBuilder, newMonedaExtranjeraCabeceraBuilder, newMonedaExtranjeraDetalleBuilder),
 		campo("codigo_tipo_operacion", "WithCodigoTipoOperacion", "int", false),
 		campo("tipo_cambio_oficial", "WithTipoCambioOficial", "float", false),
 		campo("ingreso_diferencia_cambio", "WithIngresoDiferenciaCambio", "float", false)),
 
 	sector(10, "Dutty Free", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewDuttyFreeBuilder, invoices.NewDuttyFreeCabeceraBuilder, invoices.NewDuttyFreeDetalleBuilder)),
+		b(newDuttyFreeBuilder, newDuttyFreeCabeceraBuilder, newDuttyFreeDetalleBuilder)),
 
 	sectorEducativo(11, "Sectores Educativos",
-		b(invoices.NewSectorEducativoBuilder, invoices.NewSectorEducativoCabeceraBuilder, invoices.NewSectorEducativoDetalleBuilder)),
+		b(newSectorEducativoBuilder, newSectorEducativoCabeceraBuilder, newSectorEducativoDetalleBuilder)),
 
 	sector(12, "Comercialización de Hidrocarburos", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewComercializacionHidroBuilder, invoices.NewComercializacionHidroCabeceraBuilder, invoices.NewComercializacionHidroDetalleBuilder)),
+		b(newComercializacionHidroBuilder, newComercializacionHidroCabeceraBuilder, newComercializacionHidroDetalleBuilder)),
 
 	sector(13, "Servicios Básicos", TipoDocumentoFacturaConCredito, FachadaServicioBasico,
-		b(invoices.NewServicioBasicoBuilder, invoices.NewServicioBasicoCabeceraBuilder, invoices.NewServicioBasicoDetalleBuilder),
+		b(newServicioBasicoBuilder, newServicioBasicoCabeceraBuilder, newServicioBasicoDetalleBuilder),
 		camposServicioBasico()...),
 
 	sector(14, "Productos Alcanzados por el ICE", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewAlcanzadaIceBuilder, invoices.NewAlcanzadaIceCabeceraBuilder, invoices.NewAlcanzadaIceDetalleBuilder)),
+		b(newAlcanzadaIceBuilder, newAlcanzadaIceCabeceraBuilder, newAlcanzadaIceDetalleBuilder)),
 
 	sector(15, "Entidades Financieras", TipoDocumentoFacturaConCredito, FachadaEntidadFinanciera,
-		b(invoices.NewEntidadFinancieraBuilder, invoices.NewEntidadFinancieraCabeceraBuilder, invoices.NewEntidadFinancieraDetalleBuilder),
+		b(newEntidadFinancieraBuilder, newEntidadFinancieraCabeceraBuilder, newEntidadFinancieraDetalleBuilder),
 		campo("monto_total_arrendamiento_financiero", "WithMontoTotalArrendamientoFinanciero", "float", false)),
 
 	sector(16, "Hoteles", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewHotelBuilder, invoices.NewHotelCabeceraBuilder, invoices.NewHotelDetalleBuilder),
+		b(newHotelBuilder, newHotelCabeceraBuilder, newHotelDetalleBuilder),
 		camposHospedaje()...),
 
 	sector(17, "Hospitales / Clínicas", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewHospitalClinicaBuilder, invoices.NewHospitalClinicaCabeceraBuilder, invoices.NewHospitalClinicaDetalleBuilder),
+		b(newHospitalClinicaBuilder, newHospitalClinicaCabeceraBuilder, newHospitalClinicaDetalleBuilder),
 		campo("modalidad_servicio", "WithModalidadServicio", "string", false)),
 
 	sector(18, "Juegos de Azar", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewJuegoAzarBuilder, invoices.NewJuegoAzarCabeceraBuilder, invoices.NewJuegoAzarDetalleBuilder)),
+		b(newJuegoAzarBuilder, newJuegoAzarCabeceraBuilder, newJuegoAzarDetalleBuilder)),
 
 	sector(19, "Hidrocarburos Alcanzada IEHD", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewHidrocarburoAlcanzadaIehdBuilder, invoices.NewHidrocarburoAlcanzadaIehdCabeceraBuilder, invoices.NewHidrocarburoAlcanzadaIehdDetalleBuilder)),
+		b(newHidrocarburoAlcanzadaIehdBuilder, newHidrocarburoAlcanzadaIehdCabeceraBuilder, newHidrocarburoAlcanzadaIehdDetalleBuilder)),
 
 	sector(20, "Comercial de Exportación de Minerales", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewComercialExportacionMineraBuilder, invoices.NewComercialExportacionMineraCabeceraBuilder, invoices.NewComercialExportacionMineraDetalleBuilder)),
+		b(newComercialExportacionMineraBuilder, newComercialExportacionMineraCabeceraBuilder, newComercialExportacionMineraDetalleBuilder)),
 
 	sector(21, "Venta de Minerales", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewVentaMineralBuilder, invoices.NewVentaMineralCabeceraBuilder, invoices.NewVentaMineralDetalleBuilder)),
+		b(newVentaMineralBuilder, newVentaMineralCabeceraBuilder, newVentaMineralDetalleBuilder)),
 
 	sector(22, "Telecomunicaciones", TipoDocumentoFacturaConCredito, FachadaTelecomunicaciones,
-		b(invoices.NewTelecomunicacionesBuilder, invoices.NewTelecomunicacionesCabeceraBuilder, invoices.NewTelecomunicacionesDetalleBuilder),
+		b(newTelecomunicacionesBuilder, newTelecomunicacionesCabeceraBuilder, newTelecomunicacionesDetalleBuilder),
 		campo("nit_conjunto", "WithNitConjunto", "int", false)),
 
 	func() *SectorProfile {
 		p := sector(23, "Prevalorada", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-			b(invoices.NewPrevaloradaBuilder, invoices.NewPrevaloradaCabeceraBuilder, invoices.NewPrevaloradaDetalleBuilder))
+			b(newPrevaloradaBuilder, newPrevaloradaCabeceraBuilder, newPrevaloradaDetalleBuilder))
 		p.DetalleUnico = true
 		return p
 	}(),
 
 	nota(24, "Nota de Crédito-Débito",
-		invoices.NewNotaCreditoDebitoBuilder, invoices.NewNotaCreditoDebitoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoBuilder,
+		newNotaCreditoDebitoBuilder, newNotaCreditoDebitoCabeceraBuilder, newNotaDetalleCreditoDebitoBuilder,
 		notasCampos()...),
 
 	notaLayout(24, "Nota Fiscal de Crédito-Débito", "nota_fiscal_credito_debito",
-		invoices.NewNotaFiscalCreditoDebitoBuilder, invoices.NewNotaFiscalCreditoDebitoCabeceraBuilder, invoices.NewNotaDetalleFiscalCreditoDebitoBuilder,
+		newNotaFiscalCreditoDebitoBuilder, newNotaFiscalCreditoDebitoCabeceraBuilder, newNotaDetalleFiscalCreditoDebitoBuilder,
 		notasCampos()...),
 
 	sector(28, "Comercial de Exportación de Servicios", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewComercialExportacionServicioBuilder, invoices.NewComercialExportacionServicioCabeceraBuilder, invoices.NewComercialExportacionServicioDetalleBuilder)),
+		b(newComercialExportacionServicioBuilder, newComercialExportacionServicioCabeceraBuilder, newComercialExportacionServicioDetalleBuilder)),
 
 	sectorAjuste(29, "Nota de Conciliación",
-		invoices.NewNotaConciliacionBuilder, invoices.NewNotaConciliacionCabeceraBuilder, invoices.NewNotaDetalleConciliacionBuilder,
+		newNotaConciliacionBuilder, newNotaConciliacionCabeceraBuilder, newNotaDetalleConciliacionBuilder,
 		campo("numero_autorizacion_cuf", "WithNumeroAutorizacionCuf", "string", true),
 		campo("fecha_emision_factura", "WithFechaEmisionFactura", "fecha", true),
 		campo("monto_total_original", "WithMontoTotalOriginal", "float", true),
@@ -129,7 +125,7 @@ var catalogoSectores = []*SectorProfile{
 		campo("debito_fiscal_iva", "WithDebitoFiscalIva", "float", false)),
 
 	sector(30, "Boleto Aéreo", TipoDocumentoFacturaSinCredito, FachadaBoletoAereo,
-		b(invoices.NewBoletoAereoBuilder, invoices.NewBoletoAereoCabeceraBuilder, nil),
+		b(newBoletoAereoBuilder, newBoletoAereoCabeceraBuilder, nil),
 		campo("nombre_pasajero", "WithNombrePasajero", "string", true),
 		campo("numero_documento_pasajero", "WithNumeroDocumentoPasajero", "string", true),
 		campo("codigo_iata_linea_aerea", "WithCodigoIataLineaAerea", "int", false),
@@ -140,59 +136,59 @@ var catalogoSectores = []*SectorProfile{
 		campo("monto_tarifa", "WithMontoTarifa", "float", false)),
 
 	sector(31, "Suministro de Energía", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewSuministroEnergiaBuilder, invoices.NewSuministroEnergiaCabeceraBuilder, invoices.NewSuministroEnergiaDetalleBuilder)),
+		b(newSuministroEnergiaBuilder, newSuministroEnergiaCabeceraBuilder, newSuministroEnergiaDetalleBuilder)),
 
 	sector(33, "Tasa Cero IVA Ley N° 1613", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
 		buildersSector{}),
 
 	sector(34, "Seguros", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewSegurosBuilder, invoices.NewSegurosCabeceraBuilder, invoices.NewSegurosDetalleBuilder)),
+		b(newSegurosBuilder, newSegurosCabeceraBuilder, newSegurosDetalleBuilder)),
 
 	sector(35, "Compra Venta Bonificaciones", TipoDocumentoFacturaConCredito, FachadaCompraVenta,
-		b(invoices.NewCompraVentaBonificacionesBuilder, invoices.NewCompraVentaBonificacionesCabeceraBuilder, invoices.NewCompraVentaBonificacionesDetalleBuilder)),
+		b(newCompraVentaBonificacionesBuilder, newCompraVentaBonificacionesCabeceraBuilder, newCompraVentaBonificacionesDetalleBuilder)),
 
 	func() *SectorProfile {
 		p := sector(36, "Prevalorada Sin Derecho a Crédito Fiscal", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-			b(invoices.NewPrevaloradaSinDerechoCreditoFiscalBuilder, invoices.NewPrevaloradaSinDerechoCreditoFiscalCabeceraBuilder, invoices.NewPrevaloradaSinDerechoCreditoFiscalDetalleBuilder))
+			b(newPrevaloradaSinDerechoCreditoFiscalBuilder, newPrevaloradaSinDerechoCreditoFiscalCabeceraBuilder, newPrevaloradaSinDerechoCreditoFiscalDetalleBuilder))
 		p.DetalleUnico = true
 		return p
 	}(),
 
 	sector(37, "Comercialización de GNV", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewComercializacionGnvBuilder, invoices.NewComercializacionGnvCabeceraBuilder, invoices.NewComercializacionGnvDetalleBuilder)),
+		b(newComercializacionGnvBuilder, newComercializacionGnvCabeceraBuilder, newComercializacionGnvDetalleBuilder)),
 
 	sector(38, "Hidrocarburos No Alcanzada IEHD", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewHidrocarburoNoAlcanzadaIehdBuilder, invoices.NewHidrocarburoNoAlcanzadaIehdCabeceraBuilder, invoices.NewHidrocarburoNoAlcanzadaIehdDetalleBuilder)),
+		b(newHidrocarburoNoAlcanzadaIehdBuilder, newHidrocarburoNoAlcanzadaIehdCabeceraBuilder, newHidrocarburoNoAlcanzadaIehdDetalleBuilder)),
 
 	sector(39, "Comercialización de GN y GLP", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewComercializacionGnGlpBuilder, invoices.NewComercializacionGnGlpCabeceraBuilder, invoices.NewComercializacionGnGlpDetalleBuilder)),
+		b(newComercializacionGnGlpBuilder, newComercializacionGnGlpCabeceraBuilder, newComercializacionGnGlpDetalleBuilder)),
 
 	sector(40, "Servicios Básicos Zona Franca", TipoDocumentoFacturaSinCredito, FachadaServicioBasico,
-		b(invoices.NewServicioBasicoZFBuilder, invoices.NewServicioBasicoZFCabeceraBuilder, invoices.NewServicioBasicoZFDetalleBuilder),
+		b(newServicioBasicoZFBuilder, newServicioBasicoZFCabeceraBuilder, newServicioBasicoZFDetalleBuilder),
 		camposServicioBasico()...),
 
 	sector(41, "Compra Venta Tasas", TipoDocumentoFacturaConCredito, FachadaCompraVenta,
-		b(invoices.NewCompraVentaTasasBuilder, invoices.NewCompraVentaTasasCabeceraBuilder, invoices.NewCompraVentaTasasDetalleBuilder)),
+		b(newCompraVentaTasasBuilder, newCompraVentaTasasCabeceraBuilder, newCompraVentaTasasDetalleBuilder)),
 
 	sector(42, "Alquiler Zona Franca", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewAlquilerZFBuilder, invoices.NewAlquilerZFCabeceraBuilder, invoices.NewAlquilerZFDetalleBuilder),
+		b(newAlquilerZFBuilder, newAlquilerZFCabeceraBuilder, newAlquilerZFDetalleBuilder),
 		campoE("periodo_facturado", "WithPeriodoFacturado", "string", true, "Período facturado", "2026-08")),
 
 	sector(43, "Comercial de Exportación Hidrocarburos", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewComercialExportacionHidroBuilder, invoices.NewComercialExportacionHidroCabeceraBuilder, invoices.NewComercialExportacionHidroDetalleBuilder)),
+		b(newComercialExportacionHidroBuilder, newComercialExportacionHidroCabeceraBuilder, newComercialExportacionHidroDetalleBuilder)),
 
 	sector(44, "Importación y Comercialización de Lubricantes", TipoDocumentoFacturaConCredito, FachadaPorModalidad,
-		b(invoices.NewImportacionComercializacionLubricantesBuilder, invoices.NewImportacionComercializacionLubricantesCabeceraBuilder, invoices.NewImportacionComercializacionLubricantesDetalleBuilder)),
+		b(newImportacionComercializacionLubricantesBuilder, newImportacionComercializacionLubricantesCabeceraBuilder, newImportacionComercializacionLubricantesDetalleBuilder)),
 
 	sector(45, "Comercial de Exportación Precio Venta", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewComercialExportacionPVentaBuilder, invoices.NewComercialExportacionPVentaCabeceraBuilder, invoices.NewComercialExportacionPVentaDetalleBuilder)),
+		b(newComercialExportacionPVentaBuilder, newComercialExportacionPVentaCabeceraBuilder, newComercialExportacionPVentaDetalleBuilder)),
 
 	sectorEducativoSinCredito(46, "Sector Educativo Zona Franca",
-		b(invoices.NewSectorEducativoZFBuilder, invoices.NewSectorEducativoZFCabeceraBuilder, invoices.NewSectorEducativoZFDetalleBuilder)),
+		b(newSectorEducativoZFBuilder, newSectorEducativoZFCabeceraBuilder, newSectorEducativoZFDetalleBuilder)),
 
 	func() *SectorProfile {
 		p := nota(47, "Nota Crédito Débito Descuentos",
-			invoices.NewNotaCreditoDebitoDescuentoBuilder, invoices.NewNotaCreditoDebitoDescuentoCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoDescuentoBuilder,
+			newNotaCreditoDebitoDescuentoBuilder, newNotaCreditoDebitoDescuentoCabeceraBuilder, newNotaDetalleCreditoDebitoDescuentoBuilder,
 			notasCampos()...)
 		p.DetallePar = true
 		return p
@@ -200,56 +196,48 @@ var catalogoSectores = []*SectorProfile{
 
 	func() *SectorProfile {
 		p := nota(48, "Nota Crédito Débito ICE",
-			invoices.NewNotaCreditoDebitoIceBuilder, invoices.NewNotaCreditoDebitoIceCabeceraBuilder, invoices.NewNotaDetalleCreditoDebitoIceBuilder,
+			newNotaCreditoDebitoIceBuilder, newNotaCreditoDebitoIceCabeceraBuilder, newNotaDetalleCreditoDebitoIceBuilder,
 			notasCampos()...)
 		p.DetallePar = true
 		return p
 	}(),
 
 	sector(49, "Telecomunicaciones Zona Franca", TipoDocumentoFacturaSinCredito, FachadaTelecomunicaciones,
-		b(invoices.NewTelecomunicacionesZFBuilder, invoices.NewTelecomunicacionesZFCabeceraBuilder, invoices.NewTelecomunicacionesZFDetalleBuilder),
+		b(newTelecomunicacionesZFBuilder, newTelecomunicacionesZFCabeceraBuilder, newTelecomunicacionesZFDetalleBuilder),
 		campo("nit_conjunto", "WithNitConjunto", "int", false)),
 
 	sector(50, "Hospitales / Clínicas Zona Franca", TipoDocumentoFacturaSinCredito, FachadaPorModalidad,
-		b(invoices.NewHospitalClinicaZFBuilder, invoices.NewHospitalClinicaZFCabeceraBuilder, invoices.NewHospitalClinicaZonaFrancaDetalleBuilder),
+		b(newHospitalClinicaZFBuilder, newHospitalClinicaZFCabeceraBuilder, newHospitalClinicaZonaFrancaDetalleBuilder),
 		campo("modalidad_servicio", "WithModalidadServicio", "string", false)),
 
 	experimental(51, "Engarrafadoras", TipoDocumentoFacturaConCredito,
-		b(invoices.NewEngarrafadorasBuilder, invoices.NewEngarrafadorasCabeceraBuilder, invoices.NewEngarrafadorasDetalleBuilder)),
+		b(newEngarrafadorasBuilder, newEngarrafadorasCabeceraBuilder, newEngarrafadorasDetalleBuilder)),
 
 	experimental(52, "Venta de Minerales al Banco Central (solo electrónica)", TipoDocumentoFacturaSinCredito,
-		b(invoices.NewVentaMineralBCBBuilder, invoices.NewVentaMineralBCBCabeceraBuilder, invoices.NewVentaMineralBCBDetalleBuilder)),
+		b(newVentaMineralBCBBuilder, newVentaMineralBCBCabeceraBuilder, newVentaMineralBCBDetalleBuilder)),
 
 	experimental(53, "Importación y Comercialización de Lubricantes IEHD", TipoDocumentoFacturaConCredito,
-		b(invoices.NewLubricantesIehdBuilder, invoices.NewLubricantesIehdCabeceraBuilder, invoices.NewLubricantesIehdDetalleBuilder)),
+		b(newLubricantesIehdBuilder, newLubricantesIehdCabeceraBuilder, newLubricantesIehdDetalleBuilder)),
 
 	experimental(54, "Compra-Venta de Insumos para Biodiésel", TipoDocumentoFacturaSinCredito,
-		b(invoices.NewBiodieselBuilder, invoices.NewBiodieselCabeceraBuilder, invoices.NewBiodieselDetalleBuilder)),
+		b(newBiodieselBuilder, newBiodieselCabeceraBuilder, newBiodieselDetalleBuilder)),
 
 	experimental(55, "Comercialización de Combustible", TipoDocumentoFacturaConCredito,
-		b(invoices.NewVentaCombustibleSinSubvencionBuilder, invoices.NewVentaCombustibleSinSubvencionCabeceraBuilder, invoices.NewVentaCombustibleSinSubvencionDetalleBuilder)),
+		b(newVentaCombustibleSinSubvencionBuilder, newVentaCombustibleSinSubvencionCabeceraBuilder, newVentaCombustibleSinSubvencionDetalleBuilder)),
 }
 
 // sector crea un perfil estándar de factura (recepcionFactura) con los metadatos
 // normativos del documento-sector.
 func sector(codigo int, nombre string, tipoDoc int, fachada FachadaSDK, bs buildersSector, campos ...CampoSector) *SectorProfile {
 	return &SectorProfile{
-		Codigo:               codigo,
-		Nombre:               nombre,
-		TipoFacturaDocumento: tipoDoc,
-		Operacion:            OperacionRecepcionFactura,
-		Fachada:              fachada,
-		// El boleto aéreo (30) es el único sector sin líneas de detalle: su XSD
-		// solo define cabecera y no tiene builder de detalle en el SDK.
-		ConDetalle: bs.detalle != nil,
-		Campos:     campos,
-		builders:   bs,
+		SectorProfile: &fiscal.SectorProfile{Codigo: codigo, Nombre: nombre, TipoFacturaDocumento: tipoDoc, Operacion: OperacionRecepcionFactura, Fachada: fachada, ConDetalle: bs.detalle != nil, Campos: campos},
+		builders:      bs,
 	}
 }
 
 // sectorAjuste crea el perfil de un documento de ajuste (notas): se envía por el
 // servicio DocumentoAjuste del SIAT en lugar de recepcionFactura.
-func sectorAjuste(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
+func sectorAjuste(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor func() *typedSDKBuilder, campos ...CampoSector) *SectorProfile {
 	p := sector(codigo, nombre, TipoDocumentoNotaCreditoDebito, FachadaDocumentoAjuste, b(facturaCtor, cabeceraCtor, detalleCtor), campos...)
 	p.Operacion = OperacionDocumentoAjuste
 	return p
@@ -257,7 +245,7 @@ func sectorAjuste(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleC
 
 // nota crea un documento de ajuste con los campos estándar de las notas de
 // crédito/débito (24, 47, 48).
-func nota(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
+func nota(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor func() *typedSDKBuilder, campos ...CampoSector) *SectorProfile {
 	p := sectorAjuste(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
 	if codigo == SectorNotaCreditoDebito {
 		p.Layout = string(LayoutNotaCreditoDebito)
@@ -265,7 +253,7 @@ func nota(codigo int, nombre string, facturaCtor, cabeceraCtor, detalleCtor any,
 	return p
 }
 
-func notaLayout(codigo int, nombre, layout string, facturaCtor, cabeceraCtor, detalleCtor any, campos ...CampoSector) *SectorProfile {
+func notaLayout(codigo int, nombre, layout string, facturaCtor, cabeceraCtor, detalleCtor func() *typedSDKBuilder, campos ...CampoSector) *SectorProfile {
 	p := nota(codigo, nombre, facturaCtor, cabeceraCtor, detalleCtor, campos...)
 	p.Layout = layout
 	return p
@@ -295,7 +283,7 @@ func sectorEducativoSinCredito(codigo int, nombre string, bs buildersSector) *Se
 		campoE("periodo_facturado", "WithPeriodoFacturado", "string", true, "Período facturado", "2026-08"))
 }
 
-func b(facturaCtor, cabeceraCtor, detalleCtor any) buildersSector {
+func b(facturaCtor, cabeceraCtor, detalleCtor func() *typedSDKBuilder) buildersSector {
 	bs := buildersSector{
 		factura: func(modalidad int) any {
 			root := invocarCtor(facturaCtor)
@@ -309,14 +297,6 @@ func b(facturaCtor, cabeceraCtor, detalleCtor any) buildersSector {
 		bs.detalle = func() any { return invocarCtor(detalleCtor) }
 	}
 	return bs
-}
-
-func invocarCtor(ctor any) any {
-	out := reflect.ValueOf(ctor).Call(nil)
-	if len(out) == 0 {
-		panic("el constructor no devolvió valor")
-	}
-	return out[0].Interface()
 }
 
 func campo(json, metodo, tipo string, requerido bool) CampoSector {

@@ -6,10 +6,12 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/brandsrx/supay/internal/adapters/siat/batch"
 	"github.com/brandsrx/supay/internal/ports"
 )
 
@@ -122,4 +124,42 @@ func recuperarDocumentosLote(archivo string, facturas []SolicitudFactura, cufs [
 		return fmt.Errorf("gzip de lote inválido: %w", err)
 	}
 	return nil
+}
+
+// prepararXMLLote is the single build/sign/pack implementation used by both
+// package and bulk transport. Persisted XML is passed through byte-for-byte.
+func (s *Service) prepararXMLLote(facturas []SolicitudFactura, emission int) (ports.PackedLot, []string, error) {
+	documents := make([][]byte, 0, len(facturas))
+	cufs := make([]string, 0, len(facturas))
+	for i := range facturas {
+		req := &facturas[i]
+		if req.XML != "" {
+			documents = append(documents, []byte(req.XML))
+			cufs = append(cufs, req.Cuf)
+			continue
+		}
+		if err := applyIdentityValues(s.sdk.Config(), &req.CodigoAmbiente, &req.CodigoSistema, &req.Nit); err != nil {
+			return ports.PackedLot{}, nil, err
+		}
+		built, cuf, _, err := buildFacturaSDK(*req, emission)
+		if err != nil {
+			return ports.PackedLot{}, nil, fmt.Errorf("factura %d: %w", i+1, err)
+		}
+		data, err := xml.Marshal(built)
+		if err != nil {
+			return ports.PackedLot{}, nil, err
+		}
+		data = removeEmptyOptionalFacturaFields(data)
+		if req.Modalidad == ModalidadElectronica {
+			data, err = s.sdk.Config().SignXML(data)
+			if err != nil {
+				return ports.PackedLot{}, nil, err
+			}
+		}
+		req.XML, req.Cuf = string(data), cuf
+		documents = append(documents, data)
+		cufs = append(cufs, cuf)
+	}
+	packed, err := (batch.Packer{}).PackLot(documents)
+	return packed, cufs, err
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/brandsrx/supay/internal/domain/fiscal"
 )
 
 // Exercise optional setters too: merely registering a builder or building its
@@ -80,7 +82,7 @@ func TestSectorDataRejectsFractionalIntegerAndWrongJSONObject(t *testing.T) {
 	if _, err := p.ValidarDatosSector(data); err == nil {
 		t.Fatal("accepted invalid SDK map")
 	}
-	if _, err := normalizarValorCampo(1, campo("code", "", "int", true), 1.5, true); err == nil {
+	if _, err := (&fiscal.SectorProfile{Codigo: 1, Campos: []fiscal.CampoSector{{JSON: "code", Tipo: "int", Requerido: true}}}).ValidarDatosSector(json.RawMessage(`{"code":1.5}`)); err == nil {
 		t.Fatal("fractional code truncated")
 	}
 }

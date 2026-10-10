@@ -1,21 +1,14 @@
 package siat
 
-import "context"
+import (
+	"context"
 
-type ctxKey string
+	"github.com/brandsrx/supay/internal/domain/fiscal"
+)
 
-const companyIDKey ctxKey = "siat_company_id"
-
-// WithCompanyID inyecta el CompanyId en el contexto (middleware auth).
-func WithCompanyID(ctx context.Context, companyID string) context.Context {
-	return context.WithValue(ctx, companyIDKey, companyID)
+func WithCompanyID(ctx context.Context, id string) context.Context {
+	return fiscal.WithCompanyID(ctx, id)
 }
-
-// CompanyIDFromContext extrae el CompanyId del contexto.
 func CompanyIDFromContext(ctx context.Context) (string, bool) {
-	v, ok := ctx.Value(companyIDKey).(string)
-	if !ok || v == "" {
-		return "", false
-	}
-	return v, true
+	return fiscal.CompanyIDFromContext(ctx)
 }

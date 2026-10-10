@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/brandsrx/supay/internal/adapters/siat/batch"
 	goSiat "github.com/ron86i/go-siat/v2"
 	"github.com/ron86i/go-siat/v2/pkg/models"
 	"github.com/ron86i/go-siat/v2/pkg/utils"
@@ -243,7 +244,10 @@ func (s *Service) EmitirFactura(ctx context.Context, req SolicitudFactura) (*Res
 	var archivo, hash string
 	var xmlSent []byte
 	tipoDoc = perfil.TipoDocumentoResuelto(req.CodigoTipoFactura)
-	if perfil.HasBuilder() {
+	if req.XML != "" && req.Archivo != "" && req.HashArchivo != "" && req.Cuf != "" {
+		xmlSent = []byte(req.XML)
+		archivo, hash, cuf = req.Archivo, req.HashArchivo, req.Cuf
+	} else if perfil.HasBuilder() {
 		factura, cuf, tipoDoc, err = buildFacturaSDK(req, goSiat.EmisionOnline)
 		if err != nil {
 			return nil, err
@@ -862,13 +866,10 @@ func resultadoDocumento(resp any, contexto string) (*ResultadoDocumento, error) 
 
 // empaquetaArchivo comprime los datos en GZip, los codifica en Base64 y calcula
 // el hash SHA-256 (hex) del archivo comprimido: el par archivo/hashArchivo que
-// exige recepcionFactura del SIAT. Delega a utils.CompressAndHash del SDK.
-func empaquetaArchivo(data []byte) (archivo, hash string, err error) {
-	hash, encoded, err := utils.CompressAndHash(data)
-	if err != nil {
-		return "", "", fmt.Errorf("no se pudo comprimir el XML: %w", err)
-	}
-	return encoded, hash, nil
+// exige recepcionFactura del SIAT. Usa el mismo packer que paquetes y masiva.
+func empaquetaArchivo(data []byte) (string, string, error) {
+	packed, err := (batch.Packer{}).PackDocument(data)
+	return packed.Archive, packed.Hash, err
 }
 
 func (s SolicitudDocumento) sector() int {

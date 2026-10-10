@@ -12,6 +12,7 @@ import (
 
 	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -41,8 +42,8 @@ type SiatClientProvider interface {
 }
 
 type provider struct {
-	companyRepo domain.CompanyRepository
-	certRepo    domain.CertificateRepository
+	companyRepo ports.CompanyRepository
+	certRepo    ports.CertificateRepository
 	crypto      *crypto.Service
 	certStorage CertStorageReader
 	infra       ProviderInfra
@@ -60,8 +61,8 @@ type cachedEntry struct {
 }
 
 func NewSiatClientProvider(
-	companyRepo domain.CompanyRepository,
-	certRepo domain.CertificateRepository,
+	companyRepo ports.CompanyRepository,
+	certRepo ports.CertificateRepository,
 	cryptoSvc *crypto.Service,
 	infra ProviderInfra,
 ) SiatClientProvider {
@@ -80,8 +81,8 @@ func NewSiatClientProvider(
 
 // NewSiatClientProviderWithStorage crea el provider con storage abstracto para .p12 (local/r2/memory).
 func NewSiatClientProviderWithStorage(
-	companyRepo domain.CompanyRepository,
-	certRepo domain.CertificateRepository,
+	companyRepo ports.CompanyRepository,
+	certRepo ports.CertificateRepository,
 	cryptoSvc *crypto.Service,
 	certStorage CertStorageReader,
 	infra ProviderInfra,

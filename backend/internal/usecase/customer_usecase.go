@@ -4,21 +4,21 @@ import (
 	"errors"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"gorm.io/gorm"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 type CustomerUsecase struct {
-	repo domain.CustomerRepository
+	repo ports.CustomerRepository
 }
 
-func NewCustomerUsecase(repo domain.CustomerRepository) *CustomerUsecase {
+func NewCustomerUsecase(repo ports.CustomerRepository) *CustomerUsecase {
 	return &CustomerUsecase{repo: repo}
 }
 
 func (uc *CustomerUsecase) GetByID(id string) (*domain.Customer, error) {
 	c, err := uc.repo.GetByID(id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewNotFoundError("cliente no encontrado")
 		}
 		return nil, err

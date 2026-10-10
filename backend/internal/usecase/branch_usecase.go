@@ -5,15 +5,15 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"gorm.io/gorm"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 type BranchUsecase struct {
-	repo        domain.BranchRepository
-	companyRepo domain.CompanyRepository
+	repo        ports.BranchRepository
+	companyRepo ports.CompanyRepository
 }
 
-func NewBranchUsecase(repo domain.BranchRepository, companyRepo domain.CompanyRepository) *BranchUsecase {
+func NewBranchUsecase(repo ports.BranchRepository, companyRepo ports.CompanyRepository) *BranchUsecase {
 	return &BranchUsecase{repo: repo, companyRepo: companyRepo}
 }
 
@@ -65,7 +65,7 @@ func (uc *BranchUsecase) Create(req CreateBranchRequest) (*domain.Branch, error)
 func (uc *BranchUsecase) GetByID(id string) (*domain.Branch, error) {
 	b, err := uc.repo.GetByID(id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewNotFoundError("sucursal no encontrada")
 		}
 		return nil, err

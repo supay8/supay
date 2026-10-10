@@ -7,24 +7,22 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
-type AccessTokenIssuer interface {
-	IssueAccessToken(userID, email string) (string, time.Time, error)
-}
+type AccessTokenIssuer = ports.AccessTokenIssuer
 
 type AuthUsecase struct {
-	repo      domain.AuthRepository
+	repo      ports.AuthRepository
 	companies *CompanyUsecase
 	tokens    AccessTokenIssuer
-	dummyHash []byte
+	dummyHash string
+	hasher    ports.SecretHasher
 }
 
-func NewAuthUsecase(repo domain.AuthRepository, companies *CompanyUsecase, tokens AccessTokenIssuer) *AuthUsecase {
-	dummyHash, _ := bcrypt.GenerateFromPassword([]byte("supay-invalid-password"), bcrypt.DefaultCost)
-	return &AuthUsecase{repo: repo, companies: companies, tokens: tokens, dummyHash: dummyHash}
+func NewAuthUsecase(repo ports.AuthRepository, companies *CompanyUsecase, tokens AccessTokenIssuer, hasher ports.SecretHasher) *AuthUsecase {
+	dummyHash, _ := hasher.Hash("supay-invalid-password")
+	return &AuthUsecase{repo: repo, companies: companies, tokens: tokens, dummyHash: dummyHash, hasher: hasher}
 }
 
 type SignupRequest struct {
@@ -59,11 +57,11 @@ func (uc *AuthUsecase) Signup(req SignupRequest) (*AuthResult, error) {
 	}
 	if existing, err := uc.repo.GetUserByEmail(email); err == nil && existing != nil {
 		return nil, domain.NewConflictError("ya existe un usuario registrado con este correo")
-	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	} else if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return nil, err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := uc.hasher.Hash(req.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +79,13 @@ func (uc *AuthUsecase) Login(req LoginRequest) (*AuthResult, error) {
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	user, err := uc.repo.GetUserByEmail(email)
 	if err != nil {
-		_ = bcrypt.CompareHashAndPassword(uc.dummyHash, []byte(req.Password))
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		_ = uc.hasher.Verify(req.Password, uc.dummyHash)
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewUnauthorizedError("correo o contraseña incorrectos")
 		}
 		return nil, err
 	}
-	if !user.IsActive || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
+	if !user.IsActive || !uc.hasher.Verify(req.Password, user.PasswordHash) {
 		return nil, domain.NewUnauthorizedError("correo o contraseña incorrectos")
 	}
 	return uc.authResult(user)
@@ -95,7 +93,7 @@ func (uc *AuthUsecase) Login(req LoginRequest) (*AuthResult, error) {
 
 func (uc *AuthUsecase) Me(userID string) (*domain.User, error) {
 	user, err := uc.repo.GetUserByID(userID)
-	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && !user.IsActive) {
+	if errors.Is(err, domain.ErrNotFound) || (err == nil && !user.IsActive) {
 		return nil, domain.NewUnauthorizedError("la sesión ya no es válida")
 	}
 	return user, err

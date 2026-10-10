@@ -10,49 +10,48 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
 	"github.com/brandsrx/supay/internal/ports"
-	"gorm.io/gorm"
 )
 
 type InvoiceUsecase struct {
-	invoiceRepo          domain.InvoiceRepository
-	syncStateRepo        domain.CatalogSyncStateRepository
-	customerRepo         domain.CustomerRepository
-	companyRepo          domain.CompanyRepository
-	posRepo              domain.PointOfSaleRepository
-	catalogRepo          domain.CatalogRepository
-	cufdRepo             domain.CufdRepository
-	leyendaRepo          domain.SiatLeyendaRepository
-	docSectorRepo        domain.SiatActividadDocSectorRepository
-	siatService          ports.FiscalService
-	siatProvider         siat.SiatClientProvider
-	credentials          CredentialProvider
-	contingencyRepo      domain.ContingencyEventRepository
+	invoiceRepo          ports.InvoiceRepository
+	syncStateRepo        ports.CatalogSyncStateRepository
+	customerRepo         ports.CustomerRepository
+	companyRepo          ports.CompanyRepository
+	posRepo              ports.PointOfSaleRepository
+	catalogRepo          ports.CatalogRepository
+	cufdRepo             ports.CufdRepository
+	leyendaRepo          ports.SiatLeyendaRepository
+	docSectorRepo        ports.SiatActividadDocSectorRepository
+	siatService          ports.FiscalSingle
+	siatProvider         ports.FiscalServiceProvider
+	credentials          ports.CredentialProvider
+	contingencyRepo      ports.ContingencyEventRepository
 	modalidad            int
-	pdfService           PdfGenerator
+	pdfService           ports.PdfGenerator
 	fileService          *InvoiceFileService
-	emailDispatcher      domain.InvoiceEmailTaskDispatcher
+	emailDispatcher      ports.InvoiceEmailTaskDispatcher
 	allowCustomIssueDate bool
 }
 
 func (uc *InvoiceUsecase) SetFileService(files *InvoiceFileService) { uc.fileService = files }
 
-func (uc *InvoiceUsecase) SetEmailDispatcher(dispatcher domain.InvoiceEmailTaskDispatcher) {
+func (uc *InvoiceUsecase) SetEmailDispatcher(dispatcher ports.InvoiceEmailTaskDispatcher) {
 	uc.emailDispatcher = dispatcher
 }
 
 // SetContingencyRepository enables the official offline contingency fallback
 // without expanding the constructor used by embedded consumers and tests.
-func (uc *InvoiceUsecase) SetContingencyRepository(repo domain.ContingencyEventRepository) {
+func (uc *InvoiceUsecase) SetContingencyRepository(repo ports.ContingencyEventRepository) {
 	uc.contingencyRepo = repo
 }
 
-func (uc *InvoiceUsecase) resolveEmissionService(ctx context.Context, companyID string) (ports.FiscalService, error) {
+func (uc *InvoiceUsecase) resolveEmissionService(ctx context.Context, companyID string) (ports.FiscalSingle, error) {
 	if uc.siatProvider != nil && companyID != "" {
 		if svc, err := uc.siatProvider.GetForCompany(ctx, companyID); err == nil {
-			return siat.NewFiscalAdapter(svc), nil
+			return svc, nil
 		} else if uc.siatService == nil {
 			return nil, err
 		}
@@ -70,30 +69,27 @@ func (uc *InvoiceUsecase) effectiveModalidadForCompany(company *domain.Company) 
 	if uc.modalidad != 0 {
 		return uc.modalidad
 	}
-	return siat.ModalidadElectronica
+	return fiscal.ModalidadElectronica
 }
 
-// PdfGenerator genera y persiste PDFs (interfaz para evitar import cycle con internal/pdf).
-type PdfGenerator interface {
-	GenerateAndPersist(ctx context.Context, invoiceID string)
-}
+// ports.PdfGenerator genera y persiste PDFs (interfaz para evitar import cycle con internal/pdf).
 
 func NewInvoiceUsecase(
-	invoiceRepo domain.InvoiceRepository,
-	customerRepo domain.CustomerRepository,
-	companyRepo domain.CompanyRepository,
-	posRepo domain.PointOfSaleRepository,
-	catalogRepo domain.CatalogRepository,
-	cufdRepo domain.CufdRepository,
-	siatService ports.FiscalService,
+	invoiceRepo ports.InvoiceRepository,
+	customerRepo ports.CustomerRepository,
+	companyRepo ports.CompanyRepository,
+	posRepo ports.PointOfSaleRepository,
+	catalogRepo ports.CatalogRepository,
+	cufdRepo ports.CufdRepository,
+	siatService ports.FiscalSingle,
 	modalidad int,
-	syncStateRepo domain.CatalogSyncStateRepository,
-	leyendaRepo domain.SiatLeyendaRepository,
-	docSectorRepo domain.SiatActividadDocSectorRepository,
-	credentials CredentialProvider,
-	pdfService PdfGenerator,
+	syncStateRepo ports.CatalogSyncStateRepository,
+	leyendaRepo ports.SiatLeyendaRepository,
+	docSectorRepo ports.SiatActividadDocSectorRepository,
+	credentials ports.CredentialProvider,
+	pdfService ports.PdfGenerator,
 	allowCustomIssueDate bool,
-	siatProvider siat.SiatClientProvider,
+	siatProvider ports.FiscalServiceProvider,
 ) *InvoiceUsecase {
 	return &InvoiceUsecase{
 		invoiceRepo:          invoiceRepo,
@@ -187,12 +183,12 @@ func parseFlexibleTime(s string) (time.Time, error) {
 		"2006-01-02T15:04:05Z07:00",
 	}
 	for _, layout := range layouts {
-		if t, err := time.ParseInLocation(layout, s, siat.LaPaz); err == nil {
+		if t, err := time.ParseInLocation(layout, s, fiscal.LaPaz); err == nil {
 			return t, nil
 		}
 	}
 	// fallback with SIAT helper (LaPaz .000)
-	if t, err := time.ParseInLocation("2006-01-02T15:04:05.000", s, siat.LaPaz); err == nil {
+	if t, err := time.ParseInLocation("2006-01-02T15:04:05.000", s, fiscal.LaPaz); err == nil {
 		return t, nil
 	}
 	return time.Time{}, fmt.Errorf("formato de fecha no soportado %q: use RFC3339 o YYYY-MM-DDTHH:mm:ss.SSS", s)
@@ -321,7 +317,7 @@ func (uc *InvoiceUsecase) resolveCustomer(companyID string, req CreateInvoiceReq
 	if err == nil && existingCustomer != nil {
 		return existingCustomer, nil
 	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return nil, err
 	}
 
@@ -347,18 +343,18 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 
 	pos, err := uc.posRepo.GetByID(req.PointOfSaleId)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewNotFoundError("punto de venta no encontrado")
 		}
 		return nil, err
 	}
-	if tenantID, ok := siat.CompanyIDFromContext(ctx); ok && pos.CompanyId != tenantID {
+	if tenantID, ok := fiscal.CompanyIDFromContext(ctx); ok && pos.CompanyId != tenantID {
 		return nil, domain.NewNotFoundError("punto de venta no encontrado")
 	}
 	if req.CompanyId == "" {
 		req.CompanyId = pos.CompanyId
 	}
-	if tenantID, ok := siat.CompanyIDFromContext(ctx); ok && req.CompanyId != tenantID {
+	if tenantID, ok := fiscal.CompanyIDFromContext(ctx); ok && req.CompanyId != tenantID {
 		return nil, domain.NewNotFoundError("punto de venta no encontrado")
 	}
 	if pos.CompanyId != req.CompanyId {
@@ -471,7 +467,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	// El perfil del documento-sector valida datos_sector (fail-fast, antes de
 	// tocar la base) y deriva el tipoFacturaDocumento real (1 con crédito, 2 sin
 	// crédito, 3 nota crédito/débito).
-	perfil, err := siat.PerfilSectorLayout(sector, req.Layout)
+	perfil, err := fiscal.PerfilSectorLayout(sector, req.Layout)
 	if err != nil {
 		return nil, domain.NewBadRequestError(fmt.Sprintf("documento-sector %d no soportado: %v", sector, err))
 	}
@@ -480,7 +476,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		modalidad = uc.modalidad
 	}
 	if modalidad <= 0 {
-		modalidad = siat.ModalidadElectronica
+		modalidad = fiscal.ModalidadElectronica
 	}
 	if err := perfil.ValidarModalidad(modalidad); err != nil {
 		return nil, domain.NewBadRequestError(err.Error())
@@ -497,7 +493,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	if !perfil.HasBuilder() && (strings.TrimSpace(req.Archivo) == "" || strings.TrimSpace(req.HashArchivo) == "" || strings.TrimSpace(req.Cuf) == "") {
 		return nil, domain.NewBadRequestError(fmt.Sprintf("el sector %d requiere archivo, hash_archivo y cuf", sector))
 	}
-	valoresSector, err := perfil.PrepararDatosSector(siat.SolicitudFactura{
+	valoresSector, err := perfil.PrepararDatosSector(fiscal.SolicitudFactura{
 		DatosSector:      req.DatosSector,
 		NombreEstudiante: cadenaOpcional(req.NombreEstudiante),
 		PeriodoFacturado: cadenaOpcional(req.PeriodoFacturado),
@@ -545,14 +541,14 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 	// En desarrollo (ALLOW_CUSTOM_ISSUE_DATE=true, ambientes PILOTO) se permite
 	// fijar issue_date arbitrario para simular ventas offline durante contingencia.
 	// En producción este flag debe ser false y se usa now.
-	issueDate := now.In(siat.LaPaz)
+	issueDate := now.In(fiscal.LaPaz)
 	if req.IssueDate != nil {
 		if !uc.allowCustomIssueDate {
 			slog.Warn("issue_date custom rechazado; ALLOW_CUSTOM_ISSUE_DATE=false", "requested", req.IssueDate.Time())
 			return nil, domain.NewBadRequestError("issue_date personalizado solo permitido en entorno de desarrollo (ALLOW_CUSTOM_ISSUE_DATE=true)")
 		}
 		t := req.IssueDate.Time()
-		issueDate = t.In(siat.LaPaz)
+		issueDate = t.In(fiscal.LaPaz)
 		slog.Info("issue_date custom aplicado (dev/contingencia)", "requested", t, "effective", issueDate)
 	}
 
@@ -585,7 +581,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 
 	var subtotal float64
 	for index, it := range req.Items {
-		it.Quantity, it.UnitPrice, it.Discount = siat.NormalizarImportesItem(sector, it.Quantity, it.UnitPrice, it.Discount)
+		it.Quantity, it.UnitPrice, it.Discount = fiscal.NormalizarImportesItem(sector, it.Quantity, it.UnitPrice, it.Discount)
 		code := strings.TrimSpace(it.Code)
 		if code == "" {
 			code = strings.TrimSpace(it.SKU)
@@ -654,7 +650,7 @@ func (uc *InvoiceUsecase) Create(ctx context.Context, req CreateInvoiceRequest) 
 		inv.Subtotal = round2(*req.Total)
 		inv.Total = inv.Subtotal
 	}
-	inv.Total, err = siat.TotalDocumento(inv.Subtotal, inv.SectorData)
+	inv.Total, err = fiscal.TotalDocumento(inv.Subtotal, inv.SectorData)
 	if err != nil {
 		return nil, domain.NewBadRequestError(err.Error())
 	}
@@ -697,13 +693,13 @@ func (uc *InvoiceUsecase) ensureCatalogReadiness(companyID, pointOfSaleID string
 }
 
 func (uc *InvoiceUsecase) GetByID(ctx context.Context, id string) (*domain.Invoice, error) {
-	tenantID, ok := siat.CompanyIDFromContext(ctx)
+	tenantID, ok := fiscal.CompanyIDFromContext(ctx)
 	if !ok {
 		return nil, domain.ErrMissingCompanyID
 	}
 	inv, err := uc.invoiceRepo.GetByID(tenantID, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewNotFoundError("factura no encontrada")
 		}
 		return nil, err
@@ -715,9 +711,9 @@ func (uc *InvoiceUsecase) resolveInvoiceSector(invoiceType string, company *doma
 	typeName := strings.ToLower(strings.TrimSpace(invoiceType))
 	switch typeName {
 	case "credit_note", "debit_note":
-		return siat.SectorNotaCreditoDebito, nil
+		return fiscal.SectorNotaCreditoDebito, nil
 	case "education":
-		return siat.SectorEducativo, nil
+		return fiscal.SectorEducativo, nil
 	case "sale", "":
 		actividad := ""
 		if company != nil && company.CodigoActividad != nil {

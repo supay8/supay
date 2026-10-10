@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
 )
 
@@ -228,7 +228,6 @@ func TestListCatalogTipos(t *testing.T) {
 		t.Error("catálogo desconocido; se esperaba error")
 	}
 }
-
 
 func toFiscalSyncResult(r *siat.RespuestaSincronizacion) *ports.FiscalSyncResult {
 	if r == nil {

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
+	siat "github.com/brandsrx/supay/internal/domain/fiscal"
 )
 
 func TestBuildDatosSectorNotaDescuentoCompletaCampos(t *testing.T) {

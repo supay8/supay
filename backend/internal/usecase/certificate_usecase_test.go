@@ -7,8 +7,8 @@ import (
 
 	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/storage"
-	"gorm.io/gorm"
 )
 
 type certificateRepoStub struct {
@@ -22,7 +22,7 @@ func (r *certificateRepoStub) Create(cert *domain.Certificate) error {
 }
 func (r *certificateRepoStub) GetByID(id string) (*domain.Certificate, error) {
 	if r.item == nil || r.item.ID != id {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return r.item, nil
 }
@@ -133,4 +133,12 @@ func testCertificateUpdateReplacesP12StorageRef(t *testing.T, driver string) {
 	if err != nil || string(plain) != "new-p12-signature-material" {
 		t.Fatalf("incorrect updated P12 content: %v", err)
 	}
+}
+
+func NewCertificateUsecaseWithPath(certRepo ports.CertificateRepository, companyRepo ports.CompanyRepository, cipher *crypto.Service, path string) *CertificateUsecase {
+	st, err := storage.NewLocalCertStorage(path)
+	if err != nil {
+		panic(err)
+	}
+	return NewCertificateUsecase(certRepo, companyRepo, cipher, st)
 }

@@ -11,17 +11,18 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 // InvoiceFileService owns fiscal key construction, tenant checks and the
 // object-before-database compensation policy.
 type InvoiceFileService struct {
-	storage    domain.Storage
-	repo       domain.InvoiceFileRepository
+	storage    ports.Storage
+	repo       ports.InvoiceFileRepository
 	presignTTL time.Duration
 }
 
-func NewInvoiceFileService(storage domain.Storage, repo domain.InvoiceFileRepository, ttl time.Duration) *InvoiceFileService {
+func NewInvoiceFileService(storage ports.Storage, repo ports.InvoiceFileRepository, ttl time.Duration) *InvoiceFileService {
 	return &InvoiceFileService{storage: storage, repo: repo, presignTTL: ttl}
 }
 

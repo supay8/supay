@@ -9,7 +9,6 @@ import (
 	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
-	"gorm.io/gorm"
 )
 
 // --- fakes locales del servicio de credenciales ---
@@ -35,7 +34,7 @@ func (f *fakeCredCufdStore) Create(c *domain.Cufd) error {
 
 func (f *fakeCredCufdStore) GetActiveByPos(string) (*domain.Cufd, error) {
 	if f.existing == nil {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return f.existing, nil
 }

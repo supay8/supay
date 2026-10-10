@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
 )
 
 const (
@@ -45,7 +45,7 @@ func (uc *InvoiceUsecase) autofillDocumentoAjusteDescuento(req *CreateInvoiceReq
 
 	if len(req.Items) == 0 {
 		req.Items = cloneItemsFromReferencia(ref.Items)
-		profile, profileErr := siat.PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
+		profile, profileErr := fiscal.PerfilSectorLayout(req.CodigoDocumentoSector, req.Layout)
 		if profileErr != nil {
 			return nil, domain.NewBadRequestError(profileErr.Error())
 		}
@@ -90,7 +90,7 @@ func esSectorAjuste(sector int) bool {
 
 // Keep only fields supported by the adjustment layout. Original sales may
 // contain unrelated sector data (student, hotel, etc.). ICE fields are retained.
-func datosDetalleOriginal(profile *siat.SectorProfile, data json.RawMessage) (json.RawMessage, error) {
+func datosDetalleOriginal(profile *fiscal.SectorProfile, data json.RawMessage) (json.RawMessage, error) {
 	values := map[string]json.RawMessage{}
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &values); err != nil {
@@ -142,14 +142,14 @@ func buildDatosSectorNotaDescuento(ref *domain.Invoice, existing json.RawMessage
 		return nil, domain.NewBadRequestError("numero_autorizacion_cuf no coincide con la factura referenciada")
 	}
 	valores["numero_autorizacion_cuf"] = expectedCUF
-	expectedDate := ref.IssueDate.In(siat.LaPaz).Format("2006-01-02")
+	expectedDate := ref.IssueDate.In(fiscal.LaPaz).Format("2006-01-02")
 	if value, ok := valores["fecha_emision_factura"]; ok {
 		text, isString := value.(string)
 		matches := false
 		if isString {
 			for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02"} {
-				date, err := time.ParseInLocation(layout, text, siat.LaPaz)
-				if err == nil && date.In(siat.LaPaz).Format("2006-01-02") == expectedDate {
+				date, err := time.ParseInLocation(layout, text, fiscal.LaPaz)
+				if err == nil && date.In(fiscal.LaPaz).Format("2006-01-02") == expectedDate {
 					matches = true
 					break
 				}

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"gorm.io/gorm"
 )
 
 type webhookCompanyRepo struct {
@@ -20,14 +19,14 @@ func (f *webhookCompanyRepo) Create(company *domain.Company) error {
 
 func (f *webhookCompanyRepo) GetByNit(string) (*domain.Company, error) {
 	if f.company == nil {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return f.company, nil
 }
 
 func (f *webhookCompanyRepo) GetByID(string) (*domain.Company, error) {
 	if f.company == nil {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return f.company, nil
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
-	"gorm.io/gorm"
 )
 
 type phase12CompanyRepo struct {
@@ -66,7 +65,7 @@ func (r *phase12CompanyRepo) GetByNit(nit string) (*domain.Company, error) {
 			return value, nil
 		}
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, domain.ErrNotFound
 }
 func (r *phase12CompanyRepo) GetByID(id string) (*domain.Company, error) {
 	if r.err != nil {
@@ -75,7 +74,7 @@ func (r *phase12CompanyRepo) GetByID(id string) (*domain.Company, error) {
 	if value := r.items[id]; value != nil {
 		return value, nil
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, domain.ErrNotFound
 }
 func (r *phase12CompanyRepo) Update(value *domain.Company) error {
 	if r.err != nil {
@@ -97,7 +96,7 @@ type phase12BranchRepo struct{ item *domain.Branch }
 func (r *phase12BranchRepo) Create(v *domain.Branch) error { v.ID = "branch-1"; r.item = v; return nil }
 func (r *phase12BranchRepo) GetByID(id string) (*domain.Branch, error) {
 	if r.item == nil || r.item.ID != id {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return r.item, nil
 }
@@ -105,7 +104,7 @@ func (r *phase12BranchRepo) GetByCompanyAndSucursal(companyID string, code int) 
 	if r.item != nil && r.item.CompanyID == companyID && r.item.CodigoSucursal == code {
 		return r.item, nil
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, domain.ErrNotFound
 }
 func (r *phase12BranchRepo) List(string) ([]*domain.Branch, error) {
 	if r.item == nil {
@@ -125,7 +124,7 @@ func (r *phase12CustomerRepo) Create(v *domain.Customer) error {
 }
 func (r *phase12CustomerRepo) GetByID(id string) (*domain.Customer, error) {
 	if r.item == nil || r.item.ID != id {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return r.item, nil
 }
@@ -133,7 +132,7 @@ func (r *phase12CustomerRepo) GetByCompanyAndFiscalIdentity(c, dt, dn string, _ 
 	if r.item != nil && r.item.CompanyId == c && r.item.DocumentType == dt && r.item.DocumentNumber == dn && r.item.Name == name {
 		return r.item, nil
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, domain.ErrNotFound
 }
 func (r *phase12CustomerRepo) List(string) ([]*domain.Customer, error) {
 	if r.item == nil {
@@ -147,7 +146,7 @@ type phase12POSRepo struct{ item *domain.PointOfSale }
 func (r *phase12POSRepo) Create(v *domain.PointOfSale) error { v.ID = "pos-1"; r.item = v; return nil }
 func (r *phase12POSRepo) GetByID(id string) (*domain.PointOfSale, error) {
 	if r.item == nil || r.item.ID != id {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return r.item, nil
 }

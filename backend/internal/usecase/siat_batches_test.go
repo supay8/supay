@@ -12,11 +12,10 @@ import (
 	"github.com/brandsrx/supay/internal/domain"
 	"github.com/brandsrx/supay/internal/ports"
 	"github.com/brandsrx/supay/internal/storage"
-	"gorm.io/gorm"
 )
 
 type batchTestRepository struct {
-	domain.SentPackageRepository
+	ports.SentPackageRepository
 	invoices              *fakeInvoiceRepo
 	packages              map[string]domain.SentPackage
 	reserves, updates     int
@@ -26,7 +25,7 @@ type batchTestRepository struct {
 func (r *batchTestRepository) GetByID(id string) (*domain.SentPackage, error) {
 	p, ok := r.packages[id]
 	if !ok {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	return &p, nil
 }

@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/storage"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 // CertificateInput contiene únicamente el material de firma digital recibido
@@ -22,25 +21,19 @@ type CertificateInput struct {
 }
 
 type CertificateUsecase struct {
-	certRepo             domain.CertificateRepository
-	companyRepo          domain.CompanyRepository
-	crypto               *crypto.Service
-	storage              storage.CertStorage
+	certRepo             ports.CertificateRepository
+	companyRepo          ports.CompanyRepository
+	crypto               ports.SecretCipher
+	storage              ports.CertificateStorage
 	invalidateSiatClient func(companyID string)
 }
 
-func NewCertificateUsecase(certRepo domain.CertificateRepository, companyRepo domain.CompanyRepository, cryptoSvc *crypto.Service, storage storage.CertStorage, invalidators ...func(string)) *CertificateUsecase {
+func NewCertificateUsecase(certRepo ports.CertificateRepository, companyRepo ports.CompanyRepository, cryptoSvc ports.SecretCipher, storage ports.CertificateStorage, invalidators ...func(string)) *CertificateUsecase {
 	uc := &CertificateUsecase{certRepo: certRepo, companyRepo: companyRepo, crypto: cryptoSvc, storage: storage}
 	if len(invalidators) > 0 {
 		uc.invalidateSiatClient = invalidators[0]
 	}
 	return uc
-}
-
-// NewCertificateUsecaseWithPath legado para tests con path directo (crea Local storage).
-func NewCertificateUsecaseWithPath(certRepo domain.CertificateRepository, companyRepo domain.CompanyRepository, cryptoSvc *crypto.Service, storagePath string) *CertificateUsecase {
-	st, _ := storage.NewLocalCertStorage(storagePath)
-	return NewCertificateUsecase(certRepo, companyRepo, cryptoSvc, st)
 }
 
 func (uc *CertificateUsecase) Create(companyID string, in CertificateInput) (*domain.Certificate, error) {

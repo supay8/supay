@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	authn "github.com/brandsrx/supay/internal/auth"
 	"github.com/brandsrx/supay/internal/domain"
-	"gorm.io/gorm"
 )
 
 type fakeAuthRepository struct {
@@ -32,7 +32,7 @@ func (r *fakeAuthRepository) CreateUser(user *domain.User) error {
 func (r *fakeAuthRepository) GetUserByEmail(email string) (*domain.User, error) {
 	user, ok := r.users[email]
 	if !ok {
-		return nil, gorm.ErrRecordNotFound
+		return nil, domain.ErrNotFound
 	}
 	copy := *user
 	return &copy, nil
@@ -45,7 +45,7 @@ func (r *fakeAuthRepository) GetUserByID(id string) (*domain.User, error) {
 			return &copy, nil
 		}
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, domain.ErrNotFound
 }
 
 func (r *fakeAuthRepository) HasCompanyAccess(userID, companyID string) (bool, error) {
@@ -80,10 +80,10 @@ type authCompanyRepository struct{}
 
 func (authCompanyRepository) Create(*domain.Company) error { return nil }
 func (authCompanyRepository) GetByNit(string) (*domain.Company, error) {
-	return nil, gorm.ErrRecordNotFound
+	return nil, domain.ErrNotFound
 }
 func (authCompanyRepository) GetByID(string) (*domain.Company, error) {
-	return nil, gorm.ErrRecordNotFound
+	return nil, domain.ErrNotFound
 }
 func (authCompanyRepository) Update(*domain.Company) error { return nil }
 func (authCompanyRepository) Delete(string) error          { return nil }
@@ -91,7 +91,7 @@ func (authCompanyRepository) Delete(string) error          { return nil }
 func TestAuthUsecaseSignupLoginAndMultipleCompanies(t *testing.T) {
 	repo := newFakeAuthRepository()
 	companies := NewCompanyUsecase(authCompanyRepository{}, nil, nil)
-	uc := NewAuthUsecase(repo, companies, fakeAccessTokenIssuer{})
+	uc := NewAuthUsecase(repo, companies, fakeAccessTokenIssuer{}, authn.BcryptHasher{})
 
 	signedUp, err := uc.Signup(SignupRequest{Name: " Ada ", Email: "ADA@example.com", Password: "correct-horse"})
 	if err != nil {
@@ -120,7 +120,7 @@ func TestAuthUsecaseSignupLoginAndMultipleCompanies(t *testing.T) {
 }
 
 func TestAuthUsecaseValidatesSignup(t *testing.T) {
-	uc := NewAuthUsecase(newFakeAuthRepository(), NewCompanyUsecase(authCompanyRepository{}, nil, nil), fakeAccessTokenIssuer{})
+	uc := NewAuthUsecase(newFakeAuthRepository(), NewCompanyUsecase(authCompanyRepository{}, nil, nil), fakeAccessTokenIssuer{}, authn.BcryptHasher{})
 	for _, req := range []SignupRequest{
 		{},
 		{Name: "Ada", Email: "bad", Password: "correct-horse"},

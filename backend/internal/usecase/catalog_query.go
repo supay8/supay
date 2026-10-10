@@ -5,31 +5,32 @@ import (
 	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/adapters/siat"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 // Slugs de dominio Supay → operación/tipo SIAT (solo paramétricos homogéneos).
 var catalogSlugToTipo = map[string]string{
-	"tipos-moneda":               string(siat.OpTipoMoneda),
-	"metodos-pago":               string(siat.OpTipoMetodoPago),
-	"unidades-medida":            string(siat.OpUnidadMedida),
-	"tipos-documento-identidad":  string(siat.OpTipoDocumentoIdentidad),
-	"motivos-anulacion":          string(siat.OpMotivoAnulacion),
-	"tipos-emision":              string(siat.OpTipoEmision),
-	"tipos-factura":              string(siat.OpTiposFactura),
-	"tipos-documento-sector":     string(siat.OpTipoDocumentoSector),
-	"tipos-punto-venta":          string(siat.OpTipoPuntoVenta),
-	"tipos-habitacion":           string(siat.OpTipoHabitacion),
-	"paises-origen":              string(siat.OpPaisOrigen),
-	"eventos-significativos":     string(siat.OpEventosSignificativos),
-	"mensajes-servicios":         string(siat.OpMensajesServicios),
+	"tipos-moneda":              string(ports.OpTipoMoneda),
+	"metodos-pago":              string(ports.OpTipoMetodoPago),
+	"unidades-medida":           string(ports.OpUnidadMedida),
+	"tipos-documento-identidad": string(ports.OpTipoDocumentoIdentidad),
+	"motivos-anulacion":         string(ports.OpMotivoAnulacion),
+	"tipos-emision":             string(ports.OpTipoEmision),
+	"tipos-factura":             string(ports.OpTiposFactura),
+	"tipos-documento-sector":    string(ports.OpTipoDocumentoSector),
+	"tipos-punto-venta":         string(ports.OpTipoPuntoVenta),
+	"tipos-habitacion":          string(ports.OpTipoHabitacion),
+	"paises-origen":             string(ports.OpPaisOrigen),
+	"eventos-significativos":    string(ports.OpEventosSignificativos),
+	"mensajes-servicios":        string(ports.OpMensajesServicios),
 }
 
 // CatalogItemsResult es la respuesta uniforme de catálogos paramétricos.
 type CatalogItemsResult struct {
-	Catalog string               `json:"catalog"`
-	Items   []CatalogCodigoDesc  `json:"items"`
-	Total   int                  `json:"total"`
+	Catalog string              `json:"catalog"`
+	Items   []CatalogCodigoDesc `json:"items"`
+	Total   int                 `json:"total"`
 }
 
 // CatalogCodigoDesc es el shape público de un ítem paramétrico.
@@ -80,25 +81,25 @@ type ProductosSinResult struct {
 
 // EmisionBootstrapResult agrupa catálogos pequeños para pantallas de emisión.
 type EmisionBootstrapResult struct {
-	Actividades               []*domain.SiatActividad `json:"actividades"`
-	DocumentosSector          []DocumentoSectorItem   `json:"documentos_sector"`
-	Leyendas                  []*domain.SiatLeyenda   `json:"leyendas"`
-	TiposMoneda               []CatalogCodigoDesc     `json:"tipos_moneda"`
-	MetodosPago               []CatalogCodigoDesc     `json:"metodos_pago"`
-	UnidadesMedida            []CatalogCodigoDesc     `json:"unidades_medida"`
-	TiposDocumentoIdentidad   []CatalogCodigoDesc     `json:"tipos_documento_identidad"`
-	MotivosAnulacion          []CatalogCodigoDesc     `json:"motivos_anulacion"`
+	Actividades             []*domain.SiatActividad `json:"actividades"`
+	DocumentosSector        []DocumentoSectorItem   `json:"documentos_sector"`
+	Leyendas                []*domain.SiatLeyenda   `json:"leyendas"`
+	TiposMoneda             []CatalogCodigoDesc     `json:"tipos_moneda"`
+	MetodosPago             []CatalogCodigoDesc     `json:"metodos_pago"`
+	UnidadesMedida          []CatalogCodigoDesc     `json:"unidades_medida"`
+	TiposDocumentoIdentidad []CatalogCodigoDesc     `json:"tipos_documento_identidad"`
+	MotivosAnulacion        []CatalogCodigoDesc     `json:"motivos_anulacion"`
 }
 
 // SincronizacionResumen es la respuesta pública del POST de sincronización:
 // solo estado del proceso, sin ítems de catálogo.
 type SincronizacionResumen struct {
-	Success         bool                        `json:"success"`
-	CompanyID       string                      `json:"company_id"`
-	PointOfSaleID   string                      `json:"point_of_sale_id"`
-	Operations      []SincronizacionOpResult     `json:"operations"`
-	Errors          []SincronizacionOpError      `json:"errors,omitempty"`
-	Readiness       *domain.CatalogReadiness     `json:"readiness,omitempty"`
+	Success       bool                     `json:"success"`
+	CompanyID     string                   `json:"company_id"`
+	PointOfSaleID string                   `json:"point_of_sale_id"`
+	Operations    []SincronizacionOpResult `json:"operations"`
+	Errors        []SincronizacionOpError  `json:"errors,omitempty"`
+	Readiness     *domain.CatalogReadiness `json:"readiness,omitempty"`
 }
 
 // ResolveCatalogTipo traduce un slug de dominio Supay al tipo SIAT almacenado.
@@ -265,7 +266,7 @@ func (uc *SiatUsecase) ListParametricCatalog(companyID, catalogSlug string) (*Ca
 		return nil, domain.NewBadRequestError("catálogo desconocido: " + catalogSlug)
 	}
 
-	if tipo == string(siat.OpTipoPuntoVenta) {
+	if tipo == string(ports.OpTipoPuntoVenta) {
 		if uc.tipoPVRepo == nil {
 			return nil, domain.NewBadRequestError("catálogo de tipos de punto de venta no disponible")
 		}
@@ -358,7 +359,7 @@ func mustParametricItems(uc *SiatUsecase, companyID, slug string) []CatalogCodig
 }
 
 func nombreDocumentoSector(codigo int) string {
-	for _, p := range siat.PerfilesSector() {
+	for _, p := range fiscal.PerfilesSector() {
 		if p.Codigo == codigo {
 			return p.Nombre
 		}

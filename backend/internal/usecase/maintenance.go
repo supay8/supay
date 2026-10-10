@@ -10,19 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
-	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
 	"github.com/brandsrx/supay/internal/ports"
 )
 
 var certificateAlertThresholds = [...]int{7, 15, 30}
-
-type CredentialMaintainer interface {
-	EnsureCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) error
-	EnsureCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*domain.Cufd, error)
-	RefreshCuis(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*ports.CuisResult, error)
-	RefreshCufd(ctx context.Context, company *domain.Company, pos *domain.PointOfSale) (*ports.CufdResult, *domain.Cufd, error)
-}
 
 type MaintenanceOptions struct {
 	CufdRenewalLead      time.Duration
@@ -32,8 +24,8 @@ type MaintenanceOptions struct {
 }
 
 type MaintenanceService struct {
-	repo        domain.MaintenanceRepository
-	credentials CredentialMaintainer
+	repo        ports.MaintenanceRepository
+	credentials ports.CredentialMaintainer
 	notifier    ports.Notifier
 	metrics     *MaintenanceMetrics
 	options     MaintenanceOptions
@@ -41,8 +33,8 @@ type MaintenanceService struct {
 }
 
 func NewMaintenanceService(
-	repo domain.MaintenanceRepository,
-	credentials CredentialMaintainer,
+	repo ports.MaintenanceRepository,
+	credentials ports.CredentialMaintainer,
 	notifier ports.Notifier,
 	metrics *MaintenanceMetrics,
 	options MaintenanceOptions,
@@ -62,7 +54,7 @@ func NewMaintenanceService(
 	return &MaintenanceService{
 		repo: repo, credentials: credentials, notifier: notifier, metrics: metrics,
 		options: options,
-		now:     func() time.Time { return time.Now().In(siat.LaPaz) },
+		now:     func() time.Time { return time.Now().In(fiscal.LaPaz) },
 	}
 }
 

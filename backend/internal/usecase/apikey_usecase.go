@@ -4,27 +4,23 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"github.com/brandsrx/supay/internal/models"
-	"github.com/brandsrx/supay/internal/repository/postgres"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type ApiKeyUsecase struct {
-	companyRepo domain.CompanyRepository
-	apiKeyRepo  *postgres.PostgresApiKeyRepository
-	db          *gorm.DB
+	companyRepo ports.CompanyRepository
+	apiKeyRepo  ports.APIKeyRepository
+	bootstrap   ports.CompanyBootstrap
+	hasher      ports.SecretHasher
 }
 
-func NewApiKeyUsecase(companyRepo domain.CompanyRepository, apiKeyRepo *postgres.PostgresApiKeyRepository, db *gorm.DB) *ApiKeyUsecase {
-	return &ApiKeyUsecase{
-		companyRepo: companyRepo,
-		apiKeyRepo:  apiKeyRepo,
-		db:          db,
-	}
+func NewApiKeyUsecase(companyRepo ports.CompanyRepository, apiKeyRepo ports.APIKeyRepository, bootstrap ports.CompanyBootstrap, hasher ports.SecretHasher) *ApiKeyUsecase {
+	return &ApiKeyUsecase{companyRepo: companyRepo, apiKeyRepo: apiKeyRepo, bootstrap: bootstrap, hasher: hasher}
 }
 
 type CreateApiKeyRequest struct {
@@ -48,13 +44,10 @@ type ListApiKeyResponse struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
-func (uc *ApiKeyUsecase) Generate(tenantID, name string) (string, *models.ApiKey, error) {
-	var config models.TenantConfig
-	if err := uc.db.Where("tenant_id = ?", tenantID).First(&config).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil, err
-		}
-		config.MaxAPIKeys = 10
+func (uc *ApiKeyUsecase) Generate(tenantID, name string) (string, *domain.ApiKey, error) {
+	maxKeys, err := uc.apiKeyRepo.MaxActiveKeys(tenantID)
+	if err != nil {
+		return "", nil, err
 	}
 
 	existingKeys, err := uc.apiKeyRepo.ListByTenant(tenantID)
@@ -67,8 +60,8 @@ func (uc *ApiKeyUsecase) Generate(tenantID, name string) (string, *models.ApiKey
 			activeCount++
 		}
 	}
-	if activeCount >= config.MaxAPIKeys {
-		return "", nil, domain.NewConflictError("límite de API keys alcanzado (" + string(rune(config.MaxAPIKeys+'0')) + ")")
+	if activeCount >= maxKeys {
+		return "", nil, domain.NewConflictError("límite de API keys alcanzado (" + strconv.Itoa(maxKeys) + ")")
 	}
 
 	env := "live"
@@ -90,12 +83,12 @@ func (uc *ApiKeyUsecase) Generate(tenantID, name string) (string, *models.ApiKey
 
 	plain := prefix + "_" + secret
 
-	hash, err := postgres.HashKey(plain)
+	hash, err := uc.hasher.Hash(plain)
 	if err != nil {
 		return "", nil, err
 	}
 
-	key := &models.ApiKey{
+	key := &domain.ApiKey{
 		CompanyId: tenantID,
 		KeyHash:   hash,
 		KeyPrefix: prefix,
@@ -214,14 +207,14 @@ func (uc *ApiKeyUsecase) BootstrapCompany(req BootstrapCompanyRequest) (Bootstra
 
 	var result BootstrapCompanyResponse
 
-	err := uc.db.Transaction(func(tx *gorm.DB) error {
-		if err := uc.companyRepo.Create(company); err != nil {
+	err := uc.bootstrap.WithinTransaction(func(companyRepo ports.CompanyRepository, keyRepo ports.APIKeyRepository) error {
+		if err := companyRepo.Create(company); err != nil {
 			return err
 		}
 
 		result.Company = company
 
-		plain, key, genErr := uc.Generate(company.ID, "default")
+		plain, key, genErr := NewApiKeyUsecase(companyRepo, keyRepo, nil, uc.hasher).Generate(company.ID, "default")
 		if genErr != nil {
 			return genErr
 		}

@@ -5,19 +5,18 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/brandsrx/supay/internal/crypto"
 	"github.com/brandsrx/supay/internal/domain"
+	"github.com/brandsrx/supay/internal/ports"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type CompanyUsecase struct {
-	repo                 domain.CompanyRepository
-	crypto               *crypto.Service
+	repo                 ports.CompanyRepository
+	crypto               ports.SecretCipher
 	invalidateSiatClient func(companyID string)
 }
 
-func NewCompanyUsecase(repo domain.CompanyRepository, cryptoSvc *crypto.Service, invalidateSiatClient func(string)) *CompanyUsecase {
+func NewCompanyUsecase(repo ports.CompanyRepository, cryptoSvc ports.SecretCipher, invalidateSiatClient func(string)) *CompanyUsecase {
 	return &CompanyUsecase{repo: repo, crypto: cryptoSvc, invalidateSiatClient: invalidateSiatClient}
 }
 
@@ -81,7 +80,7 @@ func (uc *CompanyUsecase) prepareRegistration(req RegisterCompanyRequest) (*doma
 	// Regla de negocio: Verificar si ya existe una empresa con el mismo NIT
 	existing, err := uc.repo.GetByNit(req.Nit)
 	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if !errors.Is(err, domain.ErrNotFound) {
 			return nil, err
 		}
 	} else if existing != nil {
@@ -151,7 +150,7 @@ func validWebhookURL(value string) bool {
 func (uc *CompanyUsecase) GetByNit(nit string) (*domain.Company, error) {
 	company, err := uc.repo.GetByNit(nit)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewNotFoundError("empresa no encontrada")
 		}
 		return nil, err
@@ -161,7 +160,7 @@ func (uc *CompanyUsecase) GetByNit(nit string) (*domain.Company, error) {
 
 func (uc *CompanyUsecase) GetByID(id string) (*domain.Company, error) {
 	company, err := uc.repo.GetByID(id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, domain.ErrNotFound) {
 		return nil, domain.NewNotFoundError("empresa no encontrada")
 	}
 	return company, err

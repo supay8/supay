@@ -8,9 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brandsrx/supay/internal/adapters/siat"
 	"github.com/brandsrx/supay/internal/domain"
-	"gorm.io/gorm"
+	"github.com/brandsrx/supay/internal/domain/fiscal"
 )
 
 // MinimalInvoiceRequest is the public v1 contract. Additional options are
@@ -124,12 +123,12 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 	}
 	pos, err := s.uc.posRepo.GetByID(pointOfSaleID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewNotFoundError("punto de venta no encontrado")
 		}
 		return nil, err
 	}
-	if tenantID, ok := siat.CompanyIDFromContext(ctx); ok && pos.CompanyId != tenantID {
+	if tenantID, ok := fiscal.CompanyIDFromContext(ctx); ok && pos.CompanyId != tenantID {
 		return nil, domain.NewNotFoundError("punto de venta no encontrado")
 	}
 	if !pos.IsActive {
@@ -175,7 +174,7 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		request.TipoCambio = input.Payment.ExchangeRate
 	}
 	if sector == 0 && (invoiceType == "credit_note" || invoiceType == "debit_note") {
-		request.CodigoDocumentoSector = siat.SectorNotaCreditoDebito
+		request.CodigoDocumentoSector = fiscal.SectorNotaCreditoDebito
 	}
 
 	customer, err := s.resolveCustomer(company.ID, input.Customer, &request)
@@ -241,7 +240,7 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 	}
 
 	if request.CodigoDocumentoSector > 0 {
-		p, err := siat.PerfilSectorLayout(request.CodigoDocumentoSector, request.Layout)
+		p, err := fiscal.PerfilSectorLayout(request.CodigoDocumentoSector, request.Layout)
 		if err != nil {
 			return nil, domain.NewBadRequestError(err.Error())
 		}
@@ -272,7 +271,7 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		}
 	}
 
-	profile, err := siat.PerfilSectorLayout(request.CodigoDocumentoSector, request.Layout)
+	profile, err := fiscal.PerfilSectorLayout(request.CodigoDocumentoSector, request.Layout)
 	if err != nil {
 		return nil, domain.NewBadRequestError(fmt.Sprintf("documento-sector %d no soportado: %v", request.CodigoDocumentoSector, err))
 	}
@@ -303,7 +302,7 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 	if !profile.EsAjuste() && (request.InvoiceType == "credit_note" || request.InvoiceType == "debit_note") {
 		return nil, domain.NewBadRequestError("invoice_type de nota requiere un sector de documento de ajuste")
 	}
-	values, err := profile.PrepararDatosSector(siat.SolicitudFactura{DatosSector: request.DatosSector})
+	values, err := profile.PrepararDatosSector(fiscal.SolicitudFactura{DatosSector: request.DatosSector})
 	if err != nil {
 		return nil, domain.NewBadRequestError(err.Error())
 	}
@@ -327,7 +326,7 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 	}
 	for index := range request.Items {
 		item := &request.Items[index]
-		item.Quantity, item.UnitPrice, item.Discount = siat.NormalizarImportesItem(profile.Codigo, item.Quantity, item.UnitPrice, item.Discount)
+		item.Quantity, item.UnitPrice, item.Discount = fiscal.NormalizarImportesItem(profile.Codigo, item.Quantity, item.UnitPrice, item.Discount)
 		if item.Quantity <= 0 {
 			return nil, domain.NewBadRequestError("quantity debe ser mayor a cero con la precisión del sector")
 		}
@@ -356,7 +355,7 @@ func (s *InvoiceRequestSimplifier) Simplify(ctx context.Context, input MinimalIn
 		preview.Subtotal = round2(*input.Total)
 		preview.Total = preview.Subtotal
 	}
-	preview.Total, err = siat.TotalDocumento(preview.Subtotal, request.DatosSector)
+	preview.Total, err = fiscal.TotalDocumento(preview.Subtotal, request.DatosSector)
 	if err != nil {
 		return nil, domain.NewBadRequestError(err.Error())
 	}

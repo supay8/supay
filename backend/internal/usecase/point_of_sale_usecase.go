@@ -5,15 +5,15 @@ import (
 	"time"
 
 	"github.com/brandsrx/supay/internal/domain"
-	"gorm.io/gorm"
+	"github.com/brandsrx/supay/internal/ports"
 )
 
 type PointOfSaleUsecase struct {
-	repo   domain.PointOfSaleRepository
-	branch domain.BranchRepository
+	repo   ports.PointOfSaleRepository
+	branch ports.BranchRepository
 }
 
-func NewPointOfSaleUsecase(repo domain.PointOfSaleRepository, branch domain.BranchRepository) *PointOfSaleUsecase {
+func NewPointOfSaleUsecase(repo ports.PointOfSaleRepository, branch ports.BranchRepository) *PointOfSaleUsecase {
 	return &PointOfSaleUsecase{repo: repo, branch: branch}
 }
 
@@ -84,7 +84,7 @@ func (uc *PointOfSaleUsecase) Register(req RegisterPointOfSaleRequest) (*domain.
 func (uc *PointOfSaleUsecase) GetByID(id string) (*domain.PointOfSale, error) {
 	pos, err := uc.repo.GetByID(id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil, domain.NewNotFoundError("punto de venta no encontrado")
 		}
 		return nil, err
